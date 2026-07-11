@@ -19,3 +19,6 @@ instance.key
 # OS / editor
 .DS_Store
 Thumbs.db
+
+# setuptools build artifacts
+backend/build/
