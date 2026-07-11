@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+venv/
+*.egg-info/
+
+# Node
+node_modules/
+frontend/dist/
+
+# Runtime data — never commit the DB or instance key
+data/
+backend/data/
+*.db
+instance.key
+
+# OS / editor
+.DS_Store
+Thumbs.db

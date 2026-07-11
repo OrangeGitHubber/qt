@@ -1,0 +1,10 @@
+services:
+  qt:
+    build: .
+    image: ghcr.io/OWNER/qt:latest
+    container_name: qt-autotrader
+    restart: unless-stopped
+    ports:
+      - "8420:8420"
+    volumes:
+      - ./data:/data
