@@ -1,11 +1,16 @@
 import { useCallback, useEffect, useState } from "react";
 import { getStatus, StatusResponse } from "./api";
 import Dashboard from "./pages/Dashboard";
+import Scanner from "./pages/Scanner";
 import Setup from "./pages/Setup";
+import Watchlist from "./pages/Watchlist";
+
+type Tab = "dashboard" | "scanner" | "watchlist";
 
 export default function App() {
   const [status, setStatus] = useState<StatusResponse | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [tab, setTab] = useState<Tab>("dashboard");
 
   const refresh = useCallback(() => {
     getStatus()
@@ -47,7 +52,18 @@ export default function App() {
         </span>
       </header>
       {status.alpaca_configured ? (
-        <Dashboard status={status} onRefresh={refresh} />
+        <>
+          <nav className="tabs">
+            {(["dashboard", "scanner", "watchlist"] as Tab[]).map((t) => (
+              <button key={t} className={tab === t ? "tab active" : "tab"} onClick={() => setTab(t)}>
+                {t.charAt(0).toUpperCase() + t.slice(1)}
+              </button>
+            ))}
+          </nav>
+          {tab === "dashboard" && <Dashboard status={status} onRefresh={refresh} />}
+          {tab === "scanner" && <Scanner />}
+          {tab === "watchlist" && <Watchlist />}
+        </>
       ) : (
         <Setup onDone={refresh} />
       )}

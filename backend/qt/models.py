@@ -32,6 +32,16 @@ class Secret(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
 
+class WatchlistItem(Base):
+    """A symbol the user pinned for the scanner/engine to always consider."""
+
+    __tablename__ = "watchlist"
+
+    symbol: Mapped[str] = mapped_column(String(32), primary_key=True)
+    asset_class: Mapped[str] = mapped_column(String(16), primary_key=True)  # stock | crypto
+    added_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class AuditLog(Base):
     """Append-only record of every consequential action the app takes."""
 

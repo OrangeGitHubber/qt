@@ -1,13 +1,9 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
-from qt import __version__, security
-from qt.broker.alpaca import (
-    SECRET_KEY_ID,
-    SECRET_KEY_SECRET,
-    AlpacaClient,
-    AlpacaError,
-)
+from qt import __version__
+from qt.broker.alpaca import AlpacaError
+from qt.broker.factory import get_client
 from qt.db import get_session
 from qt.settings_service import get_setting
 
@@ -29,13 +25,11 @@ async def status(session: Session = Depends(get_session)) -> dict:
         "market": None,
         "error": None,
     }
-    key_id = security.get_secret(session, SECRET_KEY_ID)
-    key_secret = security.get_secret(session, SECRET_KEY_SECRET)
-    if not key_id or not key_secret:
+    client = get_client(session)
+    if client is None:
         return result
 
     result["alpaca_configured"] = True
-    client = AlpacaClient(key_id=key_id, key_secret=key_secret)
     try:
         account = await client.account()
         clock = await client.clock()

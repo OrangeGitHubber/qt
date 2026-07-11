@@ -7,7 +7,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from qt import __version__
-from qt.api import setup, status
+from qt.api import market, setup, status
 from qt.db import init_db
 
 
@@ -20,6 +20,7 @@ async def lifespan(_: FastAPI):
 app = FastAPI(title="QT Auto-Trader", version=__version__, lifespan=lifespan)
 app.include_router(setup.router)
 app.include_router(status.router)
+app.include_router(market.router)
 
 
 def _static_dir() -> Path | None:

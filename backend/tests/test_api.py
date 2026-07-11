@@ -1,6 +1,8 @@
 from unittest.mock import AsyncMock, patch
 
-from qt.broker.alpaca import AlpacaError
+from qt import security
+from qt.broker.alpaca import SECRET_KEY_ID, SECRET_KEY_SECRET, AlpacaClient, AlpacaError
+from qt.db import session_scope
 
 FAKE_ACCOUNT = {
     "account_number": "PA123",
@@ -53,10 +55,15 @@ def test_save_keys_then_status(client):
     assert client.get("/api/setup/state").json()["alpaca_configured"] is True
 
     with (
-        patch("qt.api.status.AlpacaClient.account", new=AsyncMock(return_value=FAKE_ACCOUNT)),
-        patch("qt.api.status.AlpacaClient.clock", new=AsyncMock(return_value=FAKE_CLOCK)),
+        patch.object(AlpacaClient, "account", new=AsyncMock(return_value=FAKE_ACCOUNT)),
+        patch.object(AlpacaClient, "clock", new=AsyncMock(return_value=FAKE_CLOCK)),
     ):
         body = client.get("/api/status").json()
     assert body["alpaca_configured"] is True
     assert body["broker"]["equity"] == "100000"
     assert body["market"]["is_open"] is False
+
+    # Clean up so later tests start unconfigured.
+    with session_scope() as session:
+        security.delete_secret(session, SECRET_KEY_ID)
+        security.delete_secret(session, SECRET_KEY_SECRET)

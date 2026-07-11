@@ -196,3 +196,142 @@ footer {
   font-size: 0.8rem;
   text-align: center;
 }
+
+/* Tabs */
+.tabs {
+  display: flex;
+  gap: 0.25rem;
+  margin-bottom: 1.25rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.tab {
+  margin: 0;
+  padding: 0.55rem 1.1rem;
+  background: transparent;
+  color: var(--muted);
+  border: none;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  font-weight: 600;
+}
+
+.tab.active {
+  color: var(--text);
+  border-bottom-color: var(--accent);
+}
+
+/* Toolbar + tables */
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+
+.toolbar h2 {
+  margin: 0;
+  flex: 1;
+}
+
+button.small {
+  margin: 0;
+  padding: 0.35rem 0.8rem;
+  font-size: 0.85rem;
+}
+
+button.danger {
+  background: transparent;
+  border: 1px solid var(--err);
+  color: var(--err);
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.95rem;
+}
+
+th {
+  text-align: left;
+  color: var(--muted);
+  font-weight: 600;
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 0.4rem 0.6rem;
+  border-bottom: 1px solid var(--border);
+}
+
+td {
+  padding: 0.5rem 0.6rem;
+  border-bottom: 1px solid var(--border);
+  font-variant-numeric: tabular-nums;
+}
+
+tr:last-child td {
+  border-bottom: none;
+}
+
+.sym {
+  font-weight: 700;
+}
+
+.up {
+  color: var(--ok);
+}
+
+.down {
+  color: var(--err);
+}
+
+.note {
+  border-color: var(--accent);
+  margin-bottom: 1rem;
+  cursor: pointer;
+}
+
+.filters {
+  margin-bottom: 1rem;
+}
+
+.filter-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 0.5rem 1.25rem;
+}
+
+.filter-grid label {
+  margin: 0.4rem 0 0;
+}
+
+.addform {
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 1rem;
+}
+
+.addform input {
+  width: 200px;
+  margin: 0;
+}
+
+.addform select {
+  padding: 0.6rem 0.75rem;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 1rem;
+}
+
+.addform button {
+  margin: 0;
+}
+
+.spark-empty {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
