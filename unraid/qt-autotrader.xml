@@ -1,17 +1,17 @@
 <?xml version="1.0"?>
 <Container version="2">
   <Name>qt-autotrader</Name>
-  <Repository>ghcr.io/OWNER/qt:latest</Repository>
+  <Repository>ghcr.io/orangegithubber/qt:latest</Repository>
   <Registry>https://ghcr.io</Registry>
   <Network>bridge</Network>
   <Shell>sh</Shell>
   <Privileged>false</Privileged>
-  <Support>https://github.com/OWNER/qt/issues</Support>
-  <Project>https://github.com/OWNER/qt</Project>
+  <Support>https://github.com/OrangeGitHubber/qt/issues</Support>
+  <Project>https://github.com/OrangeGitHubber/qt</Project>
   <Overview>QT Auto-Trader: self-hosted momentum trading bot for stocks and crypto via Alpaca. Paper-trading first, all configuration through the web UI. GPLv3.</Overview>
   <Category>Tools:</Category>
   <WebUI>http://[IP]:[PORT:8420]/</WebUI>
-  <Icon>https://raw.githubusercontent.com/OWNER/qt/main/frontend/public/icon.png</Icon>
+  <Icon>https://raw.githubusercontent.com/OrangeGitHubber/qt/main/frontend/public/icon.png</Icon>
   <Config Name="WebUI Port" Target="8420" Default="8420" Mode="tcp" Description="Port for the QT web interface" Type="Port" Display="always" Required="true" Mask="false">8420</Config>
   <Config Name="Data" Target="/data" Default="/mnt/user/appdata/qt-autotrader" Mode="rw" Description="Database, encrypted API keys, trade history. BACK THIS UP." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/qt-autotrader</Config>
 </Container>

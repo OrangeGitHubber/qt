@@ -1,7 +1,7 @@
 services:
   qt:
     build: .
-    image: ghcr.io/OWNER/qt:latest
+    image: ghcr.io/orangegithubber/qt:latest
     container_name: qt-autotrader
     restart: unless-stopped
     ports:

@@ -27,7 +27,7 @@ docker run -d --name qt-autotrader \
   -p 8420:8420 \
   -v /mnt/user/appdata/qt-autotrader:/data \
   --restart unless-stopped \
-  ghcr.io/OWNER/qt:latest
+  ghcr.io/orangegithubber/qt:latest
 ```
 
 On unraid, add the template from `unraid/qt-autotrader.xml`, or create the
