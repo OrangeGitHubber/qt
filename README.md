@@ -14,11 +14,19 @@ graduate it, phase by phase, to real trading with human approval.
 
 ## Status
 
-**Phase 0 — walking skeleton.** Connects to your Alpaca *paper* account, shows
-account + market status in the web UI. No trading logic yet.
+**Phase 2 — paper-trading engine (in progress).** Scanner and watchlist are
+live; Google Sign-In, strategies, shadow mode, and paper execution are landing
+now. No real-money trading exists yet.
 
-Roadmap: 1) market scanner → 2) paper-trading engine → 3) reliability hardening
-→ 4) backtesting → 5) graduated live trading → 6) multi-user/sharing.
+Roadmap: ~~0) skeleton~~ → ~~1) market scanner~~ → **2) paper-trading engine**
+→ 2.5) minimal backtester → 3) reliability hardening → 4) full backtesting →
+5) graduated live trading → 6) multi-user/sharing.
+
+## Documentation
+
+- [What we've done](docs/CHANGELOG.md) — plain-English changelog
+- [How it works](docs/how-it-works.md) — the product, the strategies, the safety rails (all market terms linked to explainers)
+- [Decision log](docs/decisions.md) — why it's built this way
 
 ## Run on unraid (or any Docker host)
 

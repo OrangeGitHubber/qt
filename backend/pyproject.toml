@@ -12,9 +12,11 @@ dependencies = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.30",
     "sqlalchemy>=2.0",
+    "alembic>=1.13",
     "cryptography>=43.0",
     "httpx>=0.27",
     "apscheduler>=3.10",
+    "email-validator>=2.0",
 ]
 
 [project.optional-dependencies]
@@ -25,6 +27,9 @@ dev = [
 
 [tool.setuptools.packages.find]
 include = ["qt*"]
+
+[tool.setuptools.package-data]
+qt = ["alembic/*", "alembic/versions/*"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

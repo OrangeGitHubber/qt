@@ -23,6 +23,129 @@ export interface StatusResponse {
   error: string | null;
 }
 
+export interface StrategyParams {
+  entry: {
+    min_day_gain_pct: number;
+    require_above_vwap: boolean;
+    entry_window_start: string | null;
+    entry_window_end: string | null;
+  };
+  exit: {
+    trailing_stop_pct: number;
+    stop_loss_pct: number;
+    take_profit_pct: number;
+    max_holding_hours: number;
+    flatten_before_close: boolean;
+    exit_below_vwap: boolean;
+  };
+}
+
+export interface StrategyRow {
+  id: number;
+  name: string;
+  enabled: boolean;
+  asset_class: "stock" | "crypto";
+  universe: "scanner" | "watchlist" | "both";
+  preset: string;
+  params: StrategyParams;
+  sizing_usd: number;
+  sleeve_usd: number;
+  max_positions: number;
+  swing_mode: boolean;
+  ignore_regime: boolean;
+  open_trades?: number;
+  version?: number;
+}
+
+export interface Preset {
+  label: string;
+  description: string;
+  asset_class: "stock" | "crypto";
+  universe: string;
+  swing_mode: boolean;
+  params: StrategyParams;
+}
+
+export interface RiskConfig {
+  max_daily_loss_usd: number;
+  max_daily_loss_pct: number;
+  max_total_positions: number;
+  max_total_exposure_usd: number;
+  max_trades_per_day: number;
+  cooldown_hours_after_loss: number;
+  wash_sale_guard: "block" | "warn" | "off";
+  leverage_enabled: boolean;
+}
+
+export interface EngineState {
+  mode: string;
+  modes: string[];
+  risk: RiskConfig;
+  regime: { ok: boolean; detail: string; insufficient_data?: boolean } | null;
+  regime_filter_enabled: boolean;
+  leverage: { unlockable: boolean; enabled: boolean };
+  slack_configured: boolean;
+  today: { realized_pnl: number; open_positions: number; entries: number };
+}
+
+export interface JournalRow {
+  id: number;
+  strategy: string;
+  mode: string;
+  symbol: string;
+  asset_class: string;
+  status: string;
+  qty: number;
+  notional: number;
+  entry_price: number | null;
+  entry_at: string | null;
+  entry_reason: string;
+  exit_price: number | null;
+  exit_at: string | null;
+  exit_reason: string;
+  pnl: number | null;
+  config_version_id: number | null;
+}
+
+export interface Scoreboard {
+  days: string[];
+  bot: (number | null)[];
+  spy: (number | null)[];
+  btc: (number | null)[];
+  verdict: string | null;
+}
+
+const json = (body: unknown): RequestInit => ({
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify(body),
+});
+
+export const getStrategies = () => fetch("/api/strategies").then((r) => handle<StrategyRow[]>(r));
+export const getPresets = () => fetch("/api/strategies/presets").then((r) => handle<Record<string, Preset>>(r));
+export const createStrategy = (b: Partial<StrategyRow>) =>
+  fetch("/api/strategies", json(b)).then((r) => handle<StrategyRow>(r));
+export const updateStrategy = (id: number, b: Partial<StrategyRow>) =>
+  fetch(`/api/strategies/${id}`, { ...json(b), method: "PUT" }).then((r) => handle<StrategyRow>(r));
+export const toggleStrategy = (id: number) =>
+  fetch(`/api/strategies/${id}/toggle`, { method: "POST" }).then((r) => handle<StrategyRow>(r));
+export const deleteStrategy = (id: number) =>
+  fetch(`/api/strategies/${id}`, { method: "DELETE" }).then((r) => handle(r));
+
+export const getEngine = () => fetch("/api/engine").then((r) => handle<EngineState>(r));
+export const setEngineMode = (mode: string, confirm = false) =>
+  fetch("/api/engine/mode", json({ mode, confirm })).then((r) => handle<{ mode: string }>(r));
+export const setRisk = (risk: RiskConfig & { leverage_confirm?: string }) =>
+  fetch("/api/engine/risk", { ...json(risk), method: "PUT" }).then((r) => handle<RiskConfig>(r));
+export const setRegimeEnabled = (enabled: boolean) =>
+  fetch("/api/engine/regime", { ...json({ enabled }), method: "PUT" }).then((r) => handle(r));
+export const setSlack = (url: string) =>
+  fetch("/api/engine/slack", { ...json({ url }), method: "PUT" }).then((r) => handle(r));
+export const testSlack = () => fetch("/api/engine/slack/test", { method: "POST" }).then((r) => handle(r));
+export const getJournal = (mode?: string) =>
+  fetch(`/api/engine/journal${mode ? `?mode=${mode}` : ""}`).then((r) => handle<JournalRow[]>(r));
+export const getScoreboard = () => fetch("/api/engine/scoreboard").then((r) => handle<Scoreboard>(r));
+
 async function handle<T>(resp: Response): Promise<T> {
   if (!resp.ok) {
     let detail = resp.statusText;
@@ -42,6 +165,45 @@ export function getStatus(): Promise<StatusResponse> {
 
 export function getSetupState(): Promise<{ alpaca_configured: boolean }> {
   return fetch("/api/setup/state").then((r) => handle(r));
+}
+
+export interface AuthState {
+  configured: boolean;
+  email: string | null;
+  auth_disabled: boolean;
+  redirect_uri: string;
+}
+
+export function getAuthState(): Promise<AuthState> {
+  return fetch("/api/auth/state").then((r) => handle(r));
+}
+
+export function bootstrapAuth(clientId: string, clientSecret: string, ownerEmail: string) {
+  return fetch("/api/auth/bootstrap", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ client_id: clientId, client_secret: clientSecret, owner_email: ownerEmail }),
+  }).then((r) => handle<{ ok: boolean }>(r));
+}
+
+export function logout() {
+  return fetch("/api/auth/logout", { method: "POST" });
+}
+
+export function getAllowlist(): Promise<{ emails: string[]; owner: string }> {
+  return fetch("/api/auth/allowlist").then((r) => handle(r));
+}
+
+export function addAllowlist(email: string) {
+  return fetch("/api/auth/allowlist", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email }),
+  }).then((r) => handle<{ emails: string[] }>(r));
+}
+
+export function removeAllowlist(email: string) {
+  return fetch(`/api/auth/allowlist/${encodeURIComponent(email)}`, { method: "DELETE" }).then((r) => handle(r));
 }
 
 export interface ScannerRow {

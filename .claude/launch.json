@@ -5,7 +5,11 @@
       "name": "qt",
       "runtimeExecutable": ".venv/Scripts/python",
       "runtimeArgs": ["-m", "uvicorn", "qt.main:app", "--port", "8420"],
-      "port": 8420
+      "port": 8420,
+      "env": {
+        "QT_AUTH_DISABLED": "true",
+        "QT_NO_SCHEDULER": "true"
+      }
     }
   ]
 }

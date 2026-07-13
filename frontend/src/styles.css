@@ -335,3 +335,182 @@ tr:last-child td {
   color: var(--muted);
   font-size: 0.8rem;
 }
+
+.userbox {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 0.85rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.button-link {
+  display: inline-block;
+  margin-top: 1rem;
+  padding: 0.65rem 1.4rem;
+  border-radius: 8px;
+  background: var(--accent);
+  color: white;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.login {
+  text-align: center;
+}
+
+code {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0.1rem 0.4rem;
+  font-size: 0.85em;
+  word-break: break-all;
+}
+
+/* Info tooltips (glossary) */
+.infotip {
+  position: relative;
+  display: inline-block;
+}
+
+.infotip-btn {
+  margin: 0 0 0 0.3rem;
+  padding: 0;
+  width: 1.1rem;
+  height: 1.1rem;
+  border-radius: 50%;
+  background: var(--border);
+  color: var(--muted);
+  font-size: 0.7rem;
+  line-height: 1;
+  vertical-align: middle;
+}
+
+.infotip-pop {
+  position: absolute;
+  z-index: 20;
+  left: 0;
+  top: 1.5rem;
+  width: 280px;
+  padding: 0.75rem;
+  background: var(--bg);
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  font-size: 0.85rem;
+  font-weight: 400;
+  color: var(--text);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.5);
+  cursor: pointer;
+}
+
+/* Strategy editor */
+.editor h4 {
+  margin: 1.25rem 0 0.25rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  font-size: 0.78rem;
+  letter-spacing: 0.05em;
+}
+
+label.check {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 1.4rem;
+}
+
+select {
+  display: block;
+  width: 100%;
+  margin-top: 0.3rem;
+  padding: 0.55rem 0.75rem;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 0.95rem;
+}
+
+.toolbar select {
+  width: auto;
+  margin: 0;
+}
+
+label.check input {
+  width: auto;
+  margin: 0;
+}
+
+/* Engine + scoreboard */
+.mode-switch {
+  display: flex;
+  gap: 0.4rem;
+  margin-bottom: 0.9rem;
+}
+
+.mode-active {
+  outline: 2px solid var(--accent);
+}
+
+.scoreboard {
+  margin-top: 1rem;
+}
+
+.verdict {
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.linechart {
+  width: 100%;
+  max-width: 680px;
+}
+
+.chart-label {
+  fill: var(--muted);
+  font-size: 10px;
+}
+
+.legend {
+  display: flex;
+  gap: 1.25rem;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.swatch {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  margin-right: 0.3rem;
+}
+
+/* Journal */
+tr.clickable {
+  cursor: pointer;
+}
+
+td.detail {
+  background: var(--bg);
+  font-size: 0.9rem;
+}
+
+td.detail p {
+  margin: 0.4rem 0;
+}
+
+/* Danger zone (leverage) */
+.danger-zone {
+  border: 1px solid var(--err);
+  border-radius: 8px;
+  padding: 0.75rem 1rem;
+  margin: 1rem 0;
+}
+
+.danger-zone h4 {
+  color: var(--err);
+  margin: 0 0 0.5rem;
+}

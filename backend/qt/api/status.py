@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from qt import __version__
+from qt.api.deps import leverage_unlockable, require_user
 from qt.broker.alpaca import AlpacaError
 from qt.broker.factory import get_client
 from qt.db import get_session
@@ -16,11 +17,14 @@ def health() -> dict:
 
 
 @router.get("/status")
-async def status(session: Session = Depends(get_session)) -> dict:
+async def status(
+    session: Session = Depends(get_session), _user: str = Depends(require_user)
+) -> dict:
     result: dict = {
         "version": __version__,
         "trading_mode": get_setting(session, "trading_mode"),
         "alpaca_configured": False,
+        "leverage_unlockable": leverage_unlockable(),
         "broker": None,
         "market": None,
         "error": None,

@@ -39,10 +39,8 @@ class AlpacaClient:
             "APCA-API-SECRET-KEY": self.key_secret,
         }
 
-    async def _get(self, path: str, params: dict[str, Any] | None = None, base: str | None = None) -> Any:
-        url = f"{base or self.base_url}{path}"
-        async with httpx.AsyncClient(timeout=15) as client:
-            resp = await client.get(url, headers=self._headers(), params=params)
+    @staticmethod
+    def _check(resp: httpx.Response) -> Any:
         if resp.status_code >= 400:
             try:
                 message = resp.json().get("message", "")
@@ -51,7 +49,24 @@ class AlpacaClient:
             if not message or "<html" in message.lower():
                 message = resp.reason_phrase or f"HTTP {resp.status_code}"
             raise AlpacaError(resp.status_code, message[:300])
+        if resp.status_code == 204 or not resp.content:
+            return None
         return resp.json()
+
+    async def _get(self, path: str, params: dict[str, Any] | None = None, base: str | None = None) -> Any:
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.get(f"{base or self.base_url}{path}", headers=self._headers(), params=params)
+        return self._check(resp)
+
+    async def _post(self, path: str, payload: dict[str, Any]) -> Any:
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.post(f"{self.base_url}{path}", headers=self._headers(), json=payload)
+        return self._check(resp)
+
+    async def _delete(self, path: str) -> Any:
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.delete(f"{self.base_url}{path}", headers=self._headers())
+        return self._check(resp)
 
     # ---- Trading API ----
 
@@ -65,6 +80,35 @@ class AlpacaClient:
         """Active, tradable crypto pairs (symbols like 'BTC/USD')."""
         assets = await self._get("/v2/assets", params={"asset_class": "crypto", "status": "active"})
         return [a for a in assets if a.get("tradable")]
+
+    async def submit_order(
+        self,
+        symbol: str,
+        qty: float,
+        side: str,
+        limit_price: float,
+        client_order_id: str,
+        time_in_force: str = "day",
+    ) -> dict[str, Any]:
+        """Marketable LIMIT order — this app never sends plain market orders."""
+        return await self._post(
+            "/v2/orders",
+            {
+                "symbol": symbol,
+                "qty": str(qty),
+                "side": side,
+                "type": "limit",
+                "limit_price": str(limit_price),
+                "time_in_force": time_in_force,
+                "client_order_id": client_order_id,
+            },
+        )
+
+    async def get_order(self, order_id: str) -> dict[str, Any]:
+        return await self._get(f"/v2/orders/{order_id}")
+
+    async def cancel_order(self, order_id: str) -> None:
+        await self._delete(f"/v2/orders/{order_id}")
 
     # ---- Market data API ----
 

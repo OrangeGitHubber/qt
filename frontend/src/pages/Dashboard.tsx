@@ -1,4 +1,7 @@
-import { StatusResponse } from "../api";
+import { useCallback, useEffect, useState } from "react";
+import { EngineState, getEngine, getScoreboard, Scoreboard, setEngineMode, StatusResponse } from "../api";
+import InfoTip from "../components/InfoTip";
+import LineChart from "../components/LineChart";
 
 function money(v: string | undefined, currency = "USD") {
   if (v === undefined) return "—";
@@ -10,7 +13,7 @@ function when(iso: string | undefined) {
   return new Date(iso).toLocaleString();
 }
 
-export default function Dashboard({ status, onRefresh }: { status: StatusResponse; onRefresh: () => void }) {
+export default function Dashboard({ status }: { status: StatusResponse; onRefresh?: () => void }) {
   const { broker, market, error } = status;
   return (
     <>
@@ -54,15 +57,120 @@ export default function Dashboard({ status, onRefresh }: { status: StatusRespons
             <p>No data.</p>
           )}
         </div>
-        <div className="card">
-          <h3>Engine</h3>
-          <p>
-            Trading engine arrives in Phase 2. Next up (Phase 1): the market scanner that finds the day's rising
-            stocks and coins.
-          </p>
-          <button onClick={onRefresh}>Refresh now</button>
-        </div>
+        <EngineCard />
       </div>
+      <ScoreboardCard />
     </>
+  );
+}
+
+function EngineCard() {
+  const [engine, setEngine] = useState<EngineState | null>(null);
+  const [note, setNote] = useState<string | null>(null);
+
+  const refresh = useCallback(() => {
+    getEngine().then(setEngine).catch((e: Error) => setNote(e.message));
+  }, []);
+
+  useEffect(() => {
+    refresh();
+    const t = setInterval(refresh, 30_000);
+    return () => clearInterval(t);
+  }, [refresh]);
+
+  async function switchMode(mode: string) {
+    setNote(null);
+    try {
+      if (mode === "paper") {
+        const sure = window.confirm(
+          "Paper mode places SIMULATED orders on your Alpaca paper account (no real money). Continue?",
+        );
+        if (!sure) return;
+        await setEngineMode("paper", true);
+      } else {
+        await setEngineMode(mode);
+      }
+      refresh();
+    } catch (e) {
+      setNote((e as Error).message);
+    }
+  }
+
+  if (!engine) return <div className="card">Engine: loading…</div>;
+  return (
+    <div className="card">
+      <h3>
+        Engine <InfoTip k="shadow_mode" />
+      </h3>
+      <div className="mode-switch">
+        {engine.modes.map((m) => (
+          <button
+            key={m}
+            className={`small ${engine.mode === m ? "mode-active" : ""}`}
+            onClick={() => engine.mode !== m && switchMode(m)}
+          >
+            {m === "off" ? "Off" : m === "shadow" ? "Shadow" : "Paper"}
+          </button>
+        ))}
+      </div>
+      <dl>
+        <dt>Regime</dt>
+        <dd>
+          {engine.regime ? (
+            <>
+              <span className={`pill ${engine.regime.ok ? "ok" : "warn"}`}>
+                {engine.regime.ok ? "BULL — trading allowed" : "CAUTION — stock entries blocked"}
+              </span>{" "}
+              <span className="hint">{engine.regime.detail}</span>
+            </>
+          ) : (
+            "—"
+          )}
+        </dd>
+        <dt>Today</dt>
+        <dd>
+          {engine.today.entries} entries · {engine.today.open_positions} open ·{" "}
+          <span className={engine.today.realized_pnl >= 0 ? "up" : "down"}>
+            ${engine.today.realized_pnl.toFixed(2)} realized
+          </span>
+        </dd>
+        <dt>Leverage</dt>
+        <dd>
+          <span className={`pill ${engine.leverage.enabled ? "warn" : "ok"}`}>
+            {engine.leverage.enabled ? "ENABLED ⚠" : "locked off"}
+          </span>
+        </dd>
+      </dl>
+      {note && <div className="error">{note}</div>}
+    </div>
+  );
+}
+
+function ScoreboardCard() {
+  const [board, setBoard] = useState<Scoreboard | null>(null);
+
+  useEffect(() => {
+    getScoreboard().then(setBoard);
+  }, []);
+
+  return (
+    <div className="card scoreboard">
+      <h3>Scoreboard — bot vs. doing nothing</h3>
+      <p className="hint">
+        The honesty meter: the bot's account value against simply having bought and held SPY or Bitcoin on day one.
+        If the bot can't beat these lines in paper trading, it doesn't deserve real money.
+      </p>
+      {board && board.verdict && <p className="verdict">{board.verdict}</p>}
+      {board && (
+        <LineChart
+          labels={board.days}
+          series={[
+            { label: "QT bot", color: "var(--accent)", values: board.bot },
+            { label: "Hold SPY", color: "var(--ok)", values: board.spy },
+            { label: "Hold BTC", color: "var(--warn)", values: board.btc },
+          ]}
+        />
+      )}
+    </div>
   );
 }

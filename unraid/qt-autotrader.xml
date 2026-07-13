@@ -14,4 +14,5 @@
   <Icon>https://raw.githubusercontent.com/OrangeGitHubber/qt/main/frontend/public/icon.png</Icon>
   <Config Name="WebUI Port" Target="8420" Default="8420" Mode="tcp" Description="Port for the QT web interface" Type="Port" Display="always" Required="true" Mask="false">8420</Config>
   <Config Name="Data" Target="/data" Default="/mnt/user/appdata/qt-autotrader" Mode="rw" Description="Database, encrypted API keys, trade history. BACK THIS UP." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/qt-autotrader</Config>
+  <Config Name="Allow Leverage (DANGEROUS)" Target="QT_ALLOW_LEVERAGE" Default="false" Mode="" Description="Leave false. Setting true does NOT enable leverage - it only makes the option visible inside the app, where enabling still requires typed confirmation. Leverage multiplies losses; see docs/how-it-works.md." Type="Variable" Display="advanced" Required="false" Mask="false">false</Config>
 </Container>
