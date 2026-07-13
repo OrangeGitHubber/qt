@@ -3,6 +3,19 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Phase 2.5 — Minimal backtester (2026-07-13)
+
+A new **Backtest** tab replays any saved strategy over up to two years of
+historical prices — using the *same* decision code the live engine runs, so
+the test can't lie about what the bot would do. You get net P&L after
+[spread](https://www.investopedia.com/terms/s/spread.asp) costs, win rate,
+[profit factor](https://www.investopedia.com/terms/p/profit_factor.asp),
+[max drawdown](https://www.investopedia.com/terms/m/maximum-drawdown-mdd.asp),
+an equity curve charted against buy-and-hold SPY/BTC, and every simulated
+trade with its reason. Honest limits are stated in the UI: it replays a fixed
+symbol list (not the scanner's historical daily picks), and past performance
+predicts nothing — a backtest exists to kill bad ideas cheaply.
+
 ## Phase 2 (in progress — July 2026)
 
 The trading engine. Google Sign-In in front of everything, database

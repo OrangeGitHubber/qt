@@ -8,7 +8,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from qt import __version__
-from qt.api import auth, engine as engine_api, market, setup, status, strategies
+from qt.api import auth, backtest, engine as engine_api, market, setup, status, strategies
 from qt.api.deps import leverage_unlockable, require_user
 from qt.db import init_db
 
@@ -59,6 +59,7 @@ app.include_router(status.router)  # /api/health public; /api/status gated in-mo
 app.include_router(market.router, dependencies=[Depends(require_user)])
 app.include_router(strategies.router, dependencies=[Depends(require_user)])
 app.include_router(engine_api.router, dependencies=[Depends(require_user)])
+app.include_router(backtest.router, dependencies=[Depends(require_user)])
 
 
 def _static_dir() -> Path | None:

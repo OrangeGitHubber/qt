@@ -162,3 +162,40 @@ class AlpacaClient:
             base=DATA_BASE_URL,
         )
         return payload.get("bars", {})
+
+    async def historical_bars(
+        self,
+        symbols: list[str],
+        asset_class: str,
+        timeframe: str,
+        start_iso: str,
+        end_iso: str | None = None,
+    ) -> dict[str, list[dict[str, Any]]]:
+        """Full history between start and end, oldest-first, following pagination."""
+        if not symbols:
+            return {}
+        if asset_class == "crypto":
+            path, extra = "/v1beta3/crypto/us/bars", {}
+        else:
+            path, extra = "/v2/stocks/bars", {"feed": STOCK_FEED, "adjustment": "split"}
+        out: dict[str, list[dict[str, Any]]] = {s: [] for s in symbols}
+        page_token: str | None = None
+        while True:
+            params: dict[str, Any] = {
+                "symbols": ",".join(symbols),
+                "timeframe": timeframe,
+                "start": start_iso,
+                "limit": 10000,
+                "sort": "asc",
+                **extra,
+            }
+            if end_iso:
+                params["end"] = end_iso
+            if page_token:
+                params["page_token"] = page_token
+            payload = await self._get(path, params=params, base=DATA_BASE_URL)
+            for symbol, bars in (payload.get("bars") or {}).items():
+                out.setdefault(symbol, []).extend(bars)
+            page_token = payload.get("next_page_token")
+            if not page_token:
+                return out

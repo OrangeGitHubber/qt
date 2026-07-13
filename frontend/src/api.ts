@@ -146,6 +146,50 @@ export const getJournal = (mode?: string) =>
   fetch(`/api/engine/journal${mode ? `?mode=${mode}` : ""}`).then((r) => handle<JournalRow[]>(r));
 export const getScoreboard = () => fetch("/api/engine/scoreboard").then((r) => handle<Scoreboard>(r));
 
+export interface BacktestTrade {
+  symbol: string;
+  qty: number;
+  entry_price: number;
+  entry_at: string;
+  entry_reason: string;
+  exit_price: number;
+  exit_at: string | null;
+  exit_reason: string;
+  pnl: number | null;
+}
+
+export interface BacktestResult {
+  strategy_name: string;
+  symbols: string[];
+  timeframe: string;
+  days: number;
+  starting_cash: number;
+  final_equity: number;
+  net_pnl: number;
+  net_pnl_pct: number;
+  trades: number;
+  win_rate: number | null;
+  avg_win: number | null;
+  avg_loss: number | null;
+  profit_factor: number | null;
+  max_drawdown_pct: number;
+  spread_cost_pct_per_side: number;
+  equity_days: string[];
+  equity: number[];
+  benchmark: (number | null)[] | null;
+  benchmark_symbol: string | null;
+  trade_list: BacktestTrade[];
+}
+
+export const runBacktest = (body: {
+  strategy_id: number;
+  symbols: string[];
+  days: number;
+  timeframe: string;
+  starting_cash: number;
+  spread_pct: number;
+}) => fetch("/api/backtest", json(body)).then((r) => handle<BacktestResult>(r));
+
 async function handle<T>(resp: Response): Promise<T> {
   if (!resp.ok) {
     let detail = resp.statusText;
