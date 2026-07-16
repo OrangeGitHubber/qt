@@ -47,9 +47,12 @@ def _start_scheduler():
         daily_summary,
         CronTrigger(day_of_week="mon-fri", hour=16, minute=10, timezone="America/New_York"),
     )
-    # Symbol directory: shortly after boot (no-op unless empty/stale), then daily.
+    # Symbol directory: shortly after boot, then hourly. Each run is a no-op
+    # unless the directory is empty or >24h old, so this is really "refresh
+    # daily, but retry within the hour if a sync fails" rather than waiting a
+    # full day after one bad download.
     scheduler.add_job(sync_assets, "date", run_date=datetime.now(timezone.utc) + timedelta(seconds=20))
-    scheduler.add_job(sync_assets, CronTrigger(hour=8, minute=0, timezone="America/New_York"))
+    scheduler.add_job(sync_assets, IntervalTrigger(hours=1), max_instances=1)
     scheduler.start()
     return scheduler
 

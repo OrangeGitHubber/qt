@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { AssetRow, searchAssets } from "../api";
+import { AssetRow, getAssetStatus, searchAssets, syncAssets } from "../api";
 
 /** Type-ahead over the local symbol directory — matches ticker OR company
  *  name. `multi` mode keeps a chip list; single mode returns one symbol. */
@@ -20,7 +20,18 @@ export default function SymbolPicker({
   const [rows, setRows] = useState<AssetRow[]>([]);
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(0);
+  const [empty, setEmpty] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  const [syncError, setSyncError] = useState<string | null>(null);
   const ref = useRef<HTMLDivElement>(null);
+
+  // Say so up front when there's nothing to search — otherwise typing into a
+  // dead box looks like a broken feature.
+  useEffect(() => {
+    getAssetStatus()
+      .then((s) => setEmpty(s.count === 0))
+      .catch(() => setEmpty(false));
+  }, []);
 
   useEffect(() => {
     if (!q.trim()) {
@@ -106,6 +117,28 @@ export default function SymbolPicker({
         autoComplete="off"
       />
       {!multi && value.length > 0 && !q && <div className="picked">Selected: {value[0]}</div>}
+      {empty && (
+        <div className="picker-empty">
+          Symbol list not downloaded yet — search won't find anything.{" "}
+          <button
+            type="button"
+            className="small"
+            disabled={syncing}
+            onClick={(e) => {
+              e.preventDefault();
+              setSyncing(true);
+              setSyncError(null);
+              syncAssets()
+                .then((s) => setEmpty(s.count === 0))
+                .catch((err: Error) => setSyncError(err.message))
+                .finally(() => setSyncing(false));
+            }}
+          >
+            {syncing ? "Downloading…" : "Download now"}
+          </button>
+          {syncError && <span className="error"> {syncError}</span>}
+        </div>
+      )}
       {open && rows.length > 0 && (
         <ul className="picker-pop">
           {rows.map((r, i) => (

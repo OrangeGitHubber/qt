@@ -53,8 +53,14 @@ class AlpacaClient:
             return None
         return resp.json()
 
-    async def _get(self, path: str, params: dict[str, Any] | None = None, base: str | None = None) -> Any:
-        async with httpx.AsyncClient(timeout=15) as client:
+    async def _get(
+        self,
+        path: str,
+        params: dict[str, Any] | None = None,
+        base: str | None = None,
+        timeout: float = 15,
+    ) -> Any:
+        async with httpx.AsyncClient(timeout=timeout) as client:
             resp = await client.get(f"{base or self.base_url}{path}", headers=self._headers(), params=params)
         return self._check(resp)
 
@@ -82,9 +88,15 @@ class AlpacaClient:
 
     async def list_assets(self, alpaca_asset_class: str) -> list[dict[str, Any]]:
         """Tradable assets. `alpaca_asset_class` is 'us_equity' or 'crypto'.
-        Each item carries symbol, name, exchange, fractionable, tradable."""
+        Each item carries symbol, name, exchange, fractionable, tradable.
+
+        Generous timeout: us_equity is ~11k records / several MB, which the
+        default 15s can't reliably pull on a home connection.
+        """
         assets = await self._get(
-            "/v2/assets", params={"asset_class": alpaca_asset_class, "status": "active"}
+            "/v2/assets",
+            params={"asset_class": alpaca_asset_class, "status": "active"},
+            timeout=120,
         )
         return [a for a in assets if a.get("tradable")]
 

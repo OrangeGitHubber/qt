@@ -15,17 +15,21 @@ log = logging.getLogger("qt.jobs")
 
 
 async def sync_assets(force: bool = False) -> None:
-    """Refresh the symbol directory — daily, or on boot when empty/stale."""
+    """Refresh the symbol directory when empty or stale (>24h)."""
     try:
         with session_scope() as session:
             if not force and not assets.status(session)["stale"]:
                 return
             client = get_client(session)
             if client is None:
+                log.info("asset sync skipped: Alpaca not configured yet")
                 return
+            log.info("asset directory sync starting…")
             await assets.sync(session, client)
     except Exception:
-        log.exception("asset directory sync failed")
+        # Left stale on purpose: the hourly job retries, and the UI shows a
+        # "needs sync" badge with a manual button rather than failing silently.
+        log.exception("asset directory sync failed — will retry within the hour")
 
 
 async def snapshot_benchmarks() -> None:
