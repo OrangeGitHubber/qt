@@ -2,6 +2,25 @@
 
 Why QT is the way it is. Newest first.
 
+## 2026-07-16 — Symbol directory is local and per-instance
+Autocomplete searches a local mirror of Alpaca's asset list rather than
+calling the API per keystroke (rate limits, latency, and it must work when
+Alpaca is down). The mirror is reference data — rebuildable, non-sensitive —
+so it's safe to wipe, and each container keeps its own copy rather than
+sharing one across instances: SQLite over unraid's `/mnt/user` FUSE layer is
+a known corruption risk, sharing couples otherwise-isolated instances, and a
+second instance may run on another machine entirely. The savings would have
+been ~1 MB.
+
+## 2026-07-16 — Backtests report deployment, and benchmark the traded symbol
+A real backtest returned "+0.98%" for a strategy with a 2.04 profit factor —
+because only 4% of the account was ever invested, and the benchmark shown was
+SPY rather than the NVDA that was actually traded. Both were misleading by
+omission, so the result now separates account return from return on capital
+used, and charts buy-and-hold of the tested symbols alongside the market.
+Rule of thumb this encodes: a strategy that can't beat holding the same
+symbol is subtracting value.
+
 ## 2026-07-13 — Leverage is double-locked at the server level
 Margin/leverage stays off by default. The UI option to enable it is invisible
 unless the Docker container sets `QT_ALLOW_LEVERAGE=true`; even then, enabling

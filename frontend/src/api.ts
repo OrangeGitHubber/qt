@@ -146,6 +146,31 @@ export const getJournal = (mode?: string) =>
   fetch(`/api/engine/journal${mode ? `?mode=${mode}` : ""}`).then((r) => handle<JournalRow[]>(r));
 export const getScoreboard = () => fetch("/api/engine/scoreboard").then((r) => handle<Scoreboard>(r));
 
+export interface AssetRow {
+  symbol: string;
+  name: string;
+  asset_class: "stock" | "crypto";
+  exchange: string;
+  fractionable: boolean;
+}
+
+export interface AssetStatus {
+  count: number;
+  stocks: number;
+  crypto: number;
+  updated_at: string | null;
+  stale: boolean;
+}
+
+export function searchAssets(q: string, assetClass?: string): Promise<AssetRow[]> {
+  const params = new URLSearchParams({ q });
+  if (assetClass) params.set("asset_class", assetClass);
+  return fetch(`/api/assets/search?${params}`).then((r) => handle(r));
+}
+
+export const getAssetStatus = () => fetch("/api/assets/status").then((r) => handle<AssetStatus>(r));
+export const syncAssets = () => fetch("/api/assets/sync", { method: "POST" }).then((r) => handle<AssetStatus>(r));
+
 export interface BacktestTrade {
   symbol: string;
   qty: number;
@@ -174,6 +199,12 @@ export interface BacktestResult {
   profit_factor: number | null;
   max_drawdown_pct: number;
   spread_cost_pct_per_side: number;
+  max_deployed_usd: number;
+  pct_capital_deployed: number;
+  return_on_deployed_pct: number | null;
+  time_in_market_pct: number;
+  hold_benchmark: (number | null)[] | null;
+  hold_benchmark_label: string | null;
   diagnosis: {
     bars_evaluated: number;
     rejected_day_gain: number;

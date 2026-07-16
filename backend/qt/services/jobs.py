@@ -8,10 +8,24 @@ from sqlalchemy import func
 from qt.broker.factory import get_client
 from qt.db import session_scope
 from qt.models import Trade
-from qt.services import notify, scoreboard
+from qt.services import assets, notify, scoreboard
 from qt.services.engine import get_mode
 
 log = logging.getLogger("qt.jobs")
+
+
+async def sync_assets(force: bool = False) -> None:
+    """Refresh the symbol directory — daily, or on boot when empty/stale."""
+    try:
+        with session_scope() as session:
+            if not force and not assets.status(session)["stale"]:
+                return
+            client = get_client(session)
+            if client is None:
+                return
+            await assets.sync(session, client)
+    except Exception:
+        log.exception("asset directory sync failed")
 
 
 async def snapshot_benchmarks() -> None:

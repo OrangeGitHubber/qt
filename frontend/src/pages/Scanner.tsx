@@ -8,6 +8,7 @@ import {
   ScannerResult,
   ScannerRow,
 } from "../api";
+import SymbolPicker from "../components/SymbolPicker";
 
 function volume(v: number) {
   if (v >= 1e9) return `$${(v / 1e9).toFixed(1)}B`;
@@ -158,15 +159,15 @@ export default function Scanner() {
               Min daily $ volume
               <input type="number" min={0} step="100000" {...num("min_dollar_volume")} />
             </label>
-            <label>
-              Exclude symbols (comma-separated)
-              <input
-                value={cfg.exclude_symbols.join(", ")}
-                onChange={(e) =>
-                  setCfg({ ...cfg, exclude_symbols: e.target.value.split(",").map((s) => s.trim()).filter(Boolean) })
-                }
+            <div className="field">
+              Never trade these
+              <SymbolPicker
+                value={cfg.exclude_symbols}
+                onChange={(symbols) => setCfg({ ...cfg, exclude_symbols: symbols })}
+                multi
+                placeholder="Search a symbol to exclude"
               />
-            </label>
+            </div>
           </div>
           <button>Save filters</button>
           <p className="hint">

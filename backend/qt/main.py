@@ -1,6 +1,7 @@
 import logging
 import os
 from contextlib import asynccontextmanager
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from fastapi import Depends, FastAPI
@@ -8,7 +9,16 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from qt import __version__
-from qt.api import auth, backtest, engine as engine_api, market, setup, status, strategies
+from qt.api import (
+    assets as assets_api,
+    auth,
+    backtest,
+    engine as engine_api,
+    market,
+    setup,
+    status,
+    strategies,
+)
 from qt.api.deps import leverage_unlockable, require_user
 from qt.db import init_db
 
@@ -21,7 +31,7 @@ def _start_scheduler():
     from apscheduler.triggers.interval import IntervalTrigger
 
     from qt.services.engine import tick
-    from qt.services.jobs import daily_summary, snapshot_benchmarks
+    from qt.services.jobs import daily_summary, snapshot_benchmarks, sync_assets
 
     scheduler = AsyncIOScheduler(timezone="UTC")
 
@@ -37,6 +47,9 @@ def _start_scheduler():
         daily_summary,
         CronTrigger(day_of_week="mon-fri", hour=16, minute=10, timezone="America/New_York"),
     )
+    # Symbol directory: shortly after boot (no-op unless empty/stale), then daily.
+    scheduler.add_job(sync_assets, "date", run_date=datetime.now(timezone.utc) + timedelta(seconds=20))
+    scheduler.add_job(sync_assets, CronTrigger(hour=8, minute=0, timezone="America/New_York"))
     scheduler.start()
     return scheduler
 
@@ -60,6 +73,7 @@ app.include_router(market.router, dependencies=[Depends(require_user)])
 app.include_router(strategies.router, dependencies=[Depends(require_user)])
 app.include_router(engine_api.router, dependencies=[Depends(require_user)])
 app.include_router(backtest.router, dependencies=[Depends(require_user)])
+app.include_router(assets_api.router, dependencies=[Depends(require_user)])
 
 
 def _static_dir() -> Path | None:

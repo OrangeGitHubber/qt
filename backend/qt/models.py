@@ -119,6 +119,24 @@ class Trade(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
 
 
+class Asset(Base):
+    """Local mirror of Alpaca's tradable asset list, refreshed daily.
+
+    Reference data, not user data: rebuildable from the API at any time, so
+    it's safe to wipe. Exists so symbol autocomplete searches locally and
+    never spends an API request per keystroke.
+    """
+
+    __tablename__ = "assets"
+
+    symbol: Mapped[str] = mapped_column(String(32), primary_key=True)
+    asset_class: Mapped[str] = mapped_column(String(16), primary_key=True)  # stock | crypto
+    name: Mapped[str] = mapped_column(String(255), default="")
+    exchange: Mapped[str] = mapped_column(String(32), default="")
+    fractionable: Mapped[bool] = mapped_column(Boolean, default=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class BenchmarkSnapshot(Base):
     """Daily record for the scoreboard: bot equity vs buy-and-hold anchors."""
 

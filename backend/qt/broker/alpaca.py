@@ -78,7 +78,14 @@ class AlpacaClient:
 
     async def crypto_assets(self) -> list[dict[str, Any]]:
         """Active, tradable crypto pairs (symbols like 'BTC/USD')."""
-        assets = await self._get("/v2/assets", params={"asset_class": "crypto", "status": "active"})
+        return await self.list_assets("crypto")
+
+    async def list_assets(self, alpaca_asset_class: str) -> list[dict[str, Any]]:
+        """Tradable assets. `alpaca_asset_class` is 'us_equity' or 'crypto'.
+        Each item carries symbol, name, exchange, fractionable, tradable."""
+        assets = await self._get(
+            "/v2/assets", params={"asset_class": alpaca_asset_class, "status": "active"}
+        )
         return [a for a in assets if a.get("tradable")]
 
     async def submit_order(

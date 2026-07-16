@@ -85,6 +85,18 @@ export const GLOSSARY: Record<string, GlossaryEntry> = {
       "If today's realized losses reach this limit (in dollars or % of account, whichever is lower), the bot stops opening new positions until tomorrow and alerts you.",
     url: "https://www.investopedia.com/terms/d/dailytradinglimit.asp",
   },
+  capital_deployed: {
+    term: "Capital deployed",
+    explain:
+      "How much of your account was actually invested, versus sitting in cash. A bot with $200 per trade on a $5,000 account only ever risks 4% — so even a great return on those trades barely moves the account. Judge the strategy by the return on money used; judge your settings by how much you deployed.",
+    url: "https://www.investopedia.com/terms/c/capital-allocation.asp",
+  },
+  hold_benchmark: {
+    term: "Buy-and-hold benchmark",
+    explain:
+      "What you'd have made by simply buying the same symbols on day one and doing nothing. If a trading strategy can't beat this, the trading is destroying value — you'd be better off just holding.",
+    url: "https://www.investopedia.com/terms/b/buyandhold.asp",
+  },
   trade_rate: {
     term: "Trade-rate limit",
     explain:

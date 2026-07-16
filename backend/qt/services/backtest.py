@@ -95,6 +95,36 @@ def _max_drawdown(equity: list[float]) -> float:
     return round(worst, 2)
 
 
+def _hold_benchmark(prepared: dict[str, list[dict]], days_index: list[str]) -> list[float | None]:
+    """Equal-weight buy-and-hold of the SAME symbols the strategy traded,
+    computed from the bars we already downloaded (no extra API calls).
+
+    This is the comparison that actually answers "should I have just held it?"
+    — the market benchmark (SPY/BTC) answers a different question.
+    """
+    per_symbol_days: dict[str, dict[str, float]] = {}
+    for symbol, series in prepared.items():
+        per_day: dict[str, float] = {}
+        for bar in series:
+            per_day[bar["day"]] = bar["close"]  # last bar of that day wins
+        per_symbol_days[symbol] = per_day
+
+    bases: dict[str, float] = {}
+    last_seen: dict[str, float] = {}
+    out: list[float | None] = []
+    for day in days_index:
+        returns = []
+        for symbol, per_day in per_symbol_days.items():
+            price = per_day.get(day, last_seen.get(symbol))
+            if price is None:
+                continue  # symbol hadn't started trading yet
+            last_seen[symbol] = price
+            bases.setdefault(symbol, price)
+            returns.append(price / bases[symbol] - 1)
+        out.append(round(sum(returns) / len(returns) * 100, 2) if returns else None)
+    return out
+
+
 def run_backtest(
     strategy: dict,
     bars_by_symbol: dict[str, list[dict]],
@@ -121,6 +151,9 @@ def run_backtest(
     state = SimState(cash=starting_cash)
     equity_curve: list[tuple[str, float]] = []
     last_price: dict[str, float] = {}
+    max_deployed = 0.0
+    bars_with_position = 0
+    total_bar_ticks = 0
     diag = {
         "bars_evaluated": 0,
         "rejected_day_gain": 0,
@@ -234,6 +267,13 @@ def run_backtest(
                 entry_reason=entry_reason, high_water=fill,
             )
 
+        # How much of the account was actually working? (the dilution story)
+        deployed = sum(t.entry_price * t.qty for t in state.open_trades.values())
+        max_deployed = max(max_deployed, deployed)
+        total_bar_ticks += 1
+        if state.open_trades:
+            bars_with_position += 1
+
         mark = state.cash + sum(t.qty * last_price.get(t.symbol, t.entry_price) for t in state.open_trades.values())
         if not equity_curve or equity_curve[-1][0] != day:
             equity_curve.append((day, mark))
@@ -289,11 +329,19 @@ def run_backtest(
     gross_loss = -sum(t.pnl or 0 for t in losses)
     final_equity = state.cash
     equity_values = [v for _, v in equity_curve]
+    net_pnl = round(final_equity - starting_cash, 2)
+    days_index = [d for d, _ in equity_curve]
+
+    # Capital deployment: a great return on 4% of the account is a small
+    # return on the account. Surface both so they can't be confused.
+    pct_deployed = round(max_deployed / starting_cash * 100, 2) if starting_cash else 0.0
+    return_on_deployed = round(net_pnl / max_deployed * 100, 2) if max_deployed > 0 else None
+    time_in_market = round(bars_with_position / total_bar_ticks * 100, 1) if total_bar_ticks else 0.0
 
     return {
         "starting_cash": starting_cash,
         "final_equity": round(final_equity, 2),
-        "net_pnl": round(final_equity - starting_cash, 2),
+        "net_pnl": net_pnl,
         "net_pnl_pct": round((final_equity / starting_cash - 1) * 100, 2),
         "trades": len(closed),
         "win_rate": round(len(wins) / len(closed) * 100, 1) if closed else None,
@@ -302,9 +350,17 @@ def run_backtest(
         "profit_factor": round(gross_win / gross_loss, 2) if gross_loss > 0 else None,
         "max_drawdown_pct": _max_drawdown(equity_values),
         "spread_cost_pct_per_side": spread_pct,
+        "max_deployed_usd": round(max_deployed, 2),
+        "pct_capital_deployed": pct_deployed,
+        "return_on_deployed_pct": return_on_deployed,
+        "time_in_market_pct": time_in_market,
         "diagnosis": diag,
-        "equity_days": [d for d, _ in equity_curve],
+        "equity_days": days_index,
         "equity": [round((v / starting_cash - 1) * 100, 2) for _, v in equity_curve],
+        "hold_benchmark": _hold_benchmark(prepared, days_index),
+        "hold_benchmark_label": (
+            list(prepared)[0] if len(prepared) == 1 else f"{len(prepared)} symbols (equal weight)"
+        ),
         "trade_list": [
             {
                 "symbol": t.symbol, "qty": t.qty,

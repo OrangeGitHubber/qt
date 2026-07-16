@@ -1,14 +1,17 @@
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import {
   addAllowlist,
+  AssetStatus,
   EngineState,
   getAllowlist,
+  getAssetStatus,
   getEngine,
   removeAllowlist,
   RiskConfig,
   setRegimeEnabled,
   setRisk,
   setSlack,
+  syncAssets,
   testSlack,
 } from "../api";
 import InfoTip from "../components/InfoTip";
@@ -20,6 +23,8 @@ export default function Settings() {
   const [newEmail, setNewEmail] = useState("");
   const [slackUrl, setSlackUrl] = useState("");
   const [leverageConfirm, setLeverageConfirm] = useState("");
+  const [assetStatus, setAssetStatus] = useState<AssetStatus | null>(null);
+  const [syncing, setSyncing] = useState(false);
   const [note, setNote] = useState<string | null>(null);
 
   const refresh = useCallback(() => {
@@ -28,6 +33,7 @@ export default function Settings() {
       setRiskLocal(e.risk);
     });
     getAllowlist().then(setAllow).catch(() => setAllow(null));
+    getAssetStatus().then(setAssetStatus).catch(() => setAssetStatus(null));
   }, []);
 
   useEffect(refresh, [refresh]);
@@ -147,6 +153,41 @@ export default function Settings() {
         )}
         <button>Save risk settings</button>
       </form>
+
+      <div className="card">
+        <h3>Symbol directory</h3>
+        <p className="hint">
+          A local copy of Alpaca's tradable symbols and company names, so search boxes autocomplete instantly without
+          calling Alpaca on every keystroke. Refreshes automatically once a day.
+        </p>
+        {assetStatus && (
+          <dl>
+            <dt>Symbols</dt>
+            <dd>
+              {assetStatus.stocks.toLocaleString()} stocks · {assetStatus.crypto} crypto pairs{" "}
+              {assetStatus.stale && <span className="pill warn">needs sync</span>}
+            </dd>
+            <dt>Updated</dt>
+            <dd>{assetStatus.updated_at ? new Date(assetStatus.updated_at).toLocaleString() : "never"}</dd>
+          </dl>
+        )}
+        <button
+          className="small"
+          disabled={syncing}
+          onClick={() => {
+            setSyncing(true);
+            syncAssets()
+              .then((s) => {
+                setAssetStatus(s);
+                setNote(`Symbol directory synced: ${s.stocks.toLocaleString()} stocks, ${s.crypto} crypto pairs.`);
+              })
+              .catch((e: Error) => setNote(e.message))
+              .finally(() => setSyncing(false));
+          }}
+        >
+          {syncing ? "Syncing…" : "Sync now"}
+        </button>
+      </div>
 
       <div className="card">
         <h3>Slack notifications</h3>

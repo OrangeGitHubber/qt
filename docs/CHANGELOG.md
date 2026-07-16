@@ -3,6 +3,29 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Symbol search, honest backtest metrics (2026-07-16)
+
+**Type a company name, not a ticker.** Every place you used to type raw
+symbols — watchlist, backtest, the scanner's exclude list — now autocompletes
+on **ticker or company name** ("nvidia" finds NVDA). It's backed by a local
+copy of Alpaca's ~11,000 tradable symbols, refreshed daily, so search is
+instant, costs no API calls, and works even if Alpaca is unreachable. Adding
+a known symbol no longer needs a live quote check either. Sync status and a
+manual "Sync now" button live in Settings.
+
+**The backtest stops flattering itself.** Two additions after a real result
+was easy to misread:
+
+- **Buy-and-hold benchmark of the symbols you actually tested**, not just
+  SPY. If you backtest NVDA, the honest question is "would I have done better
+  just holding NVDA?" — now the chart answers it, with the broad market shown
+  as a secondary line.
+- **Capital deployment**: how much of your account was ever really invested,
+  how long it held anything, and the return on the money actually used. A
+  strategy risking $200 of a $5,000 account can post a great trade record and
+  a ~1% account return — those are different facts, and the UI now says so
+  instead of letting them blur.
+
 ## Phase 2.5 — Minimal backtester (2026-07-13)
 
 A new **Backtest** tab replays any saved strategy over up to two years of

@@ -1,7 +1,9 @@
 """Backtester tests on synthetic bars — deterministic price paths whose
 correct trades are known by construction."""
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
+
+import pytest
 
 from qt.services.backtest import run_backtest
 from qt.services.engine import RISK_DEFAULTS
@@ -133,6 +135,49 @@ def test_forced_liquidation_marks_open_positions():
     assert result["trade_list"][0]["exit_reason"] == "end of backtest (forced liquidation)"
     assert result["net_pnl"] > 0  # rode 104 → 108
     assert result["equity"][-1] > 0
+
+
+def test_capital_deployment_metrics_expose_dilution():
+    # $1000 per trade on a $50,000 account: a good trade return is a tiny
+    # account return. Both numbers must be visible.
+    strategy = dict(STRATEGY, sizing_usd=1000.0)
+    series = _spread_day([100, 100, 100], [104, 99, 99])  # entry then stop-loss
+    result = run_backtest(strategy, {"TEST": series}, RISK, starting_cash=50_000, spread_pct=0)
+
+    assert result["trades"] == 1
+    assert result["max_deployed_usd"] == pytest.approx(936.0, abs=1)  # 9 shares @ $104
+    assert result["pct_capital_deployed"] == pytest.approx(1.87, abs=0.1)  # ~2% of the account
+    # account return is tiny, but return on the money actually used is ~5x bigger
+    assert abs(result["net_pnl_pct"]) < 0.1
+    assert abs(result["return_on_deployed_pct"]) > 4
+    assert 0 < result["time_in_market_pct"] <= 100
+
+
+def test_no_trades_reports_zero_deployment_not_a_crash():
+    series = _spread_day([100, 100, 100], [101, 101.5, 102])  # never qualifies
+    result = run_backtest(STRATEGY, {"TEST": series}, RISK, starting_cash=5000, spread_pct=0)
+    assert result["trades"] == 0
+    assert result["max_deployed_usd"] == 0
+    assert result["pct_capital_deployed"] == 0
+    assert result["return_on_deployed_pct"] is None  # no division by zero
+    assert result["time_in_market_pct"] == 0
+
+
+def test_hold_benchmark_tracks_the_tested_symbol():
+    # TEST goes 100 → 108 across the window; buy-and-hold should show +8%
+    series = _spread_day([100, 100, 100], [104, 106, 108])
+    result = run_backtest(STRATEGY, {"TEST": series}, RISK, starting_cash=5000, spread_pct=0)
+    assert result["hold_benchmark_label"] == "TEST"
+    assert result["hold_benchmark"][0] == 0.0  # day 1 baseline
+    assert result["hold_benchmark"][-1] == pytest.approx(8.0, abs=0.01)
+
+
+def test_hold_benchmark_equal_weights_multiple_symbols():
+    up = _spread_day([100, 100, 100], [104, 106, 110])      # +10%
+    flat = _spread_day([50, 50, 50], [50, 50, 50])          # 0%
+    result = run_backtest(STRATEGY, {"UP": up, "FLAT": flat}, RISK, starting_cash=5000, spread_pct=0)
+    assert result["hold_benchmark_label"] == "2 symbols (equal weight)"
+    assert result["hold_benchmark"][-1] == pytest.approx(5.0, abs=0.01)  # (10 + 0) / 2
 
 
 def test_equity_curve_daily_and_metrics_shape():

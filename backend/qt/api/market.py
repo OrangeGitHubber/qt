@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from qt.broker.alpaca import AlpacaClient, AlpacaError
 from qt.broker.factory import get_client
 from qt.db import get_session
-from qt.models import AuditLog, WatchlistItem
+from qt.models import Asset, AuditLog, WatchlistItem
 from qt.services import scanner
 from qt.settings_service import set_setting
 
@@ -122,13 +122,17 @@ async def add_to_watchlist(
     if session.get(WatchlistItem, (symbol, body.asset_class)):
         raise HTTPException(status_code=409, detail=f"{symbol} is already on the watchlist.")
 
-    try:
-        snapshot = await _snapshot_for(client, symbol, body.asset_class)
-    except AlpacaError as exc:
-        raise HTTPException(status_code=502, detail=f"Could not verify symbol ({exc.status_code}): {exc}")
-    if not snapshot:
-        hint = "use BTC/USD format" if body.asset_class == "crypto" else "check the ticker"
-        raise HTTPException(status_code=404, detail=f"Alpaca has no data for '{symbol}' — {hint}.")
+    # The local symbol directory is authoritative when it knows the symbol —
+    # no API round-trip, and adding still works if market data is hiccuping.
+    # Fall back to a live quote check for symbols it hasn't heard of.
+    if session.get(Asset, (symbol, body.asset_class)) is None:
+        try:
+            snapshot = await _snapshot_for(client, symbol, body.asset_class)
+        except AlpacaError as exc:
+            raise HTTPException(status_code=502, detail=f"Could not verify symbol ({exc.status_code}): {exc}")
+        if not snapshot:
+            hint = "use BTC/USD format" if body.asset_class == "crypto" else "check the ticker"
+            raise HTTPException(status_code=404, detail=f"Alpaca has no data for '{symbol}' — {hint}.")
 
     session.add(WatchlistItem(symbol=symbol, asset_class=body.asset_class))
     session.add(AuditLog(category="watchlist", message=f"Added {symbol} ({body.asset_class})"))

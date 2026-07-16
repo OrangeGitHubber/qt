@@ -67,6 +67,25 @@ def test_watchlist_rejects_unknown_symbol(client, configured):
     assert resp.status_code == 404
 
 
+def test_watchlist_add_trusts_local_directory_without_api_call(client, configured):
+    """A symbol in the directory is added without any quote round-trip — so it
+    works even when market data is down."""
+    from qt.models import Asset
+
+    with session_scope() as s:
+        s.add(Asset(symbol="MSFT", asset_class="stock", name="Microsoft Corp", exchange="NASDAQ", fractionable=True))
+
+    boom = AsyncMock(side_effect=AssertionError("must not call Alpaca for a known symbol"))
+    with patch.object(AlpacaClient, "stock_snapshots", new=boom):
+        resp = client.post("/api/watchlist", json={"symbol": "msft", "asset_class": "stock"})
+    assert resp.status_code == 200
+    assert resp.json()["symbol"] == "MSFT"
+
+    client.delete("/api/watchlist/stock/MSFT")
+    with session_scope() as s:
+        s.query(Asset).delete()
+
+
 def test_bars_endpoint(client, configured):
     bars = {"AAPL": [{"t": "2026-07-11T15:00:00Z", "c": 202.0, "v": 10}, {"t": "2026-07-11T14:45:00Z", "c": 201.0, "v": 12}]}
     with patch.object(AlpacaClient, "stock_bars", new=AsyncMock(return_value=bars)):

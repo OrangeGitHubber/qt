@@ -44,6 +44,10 @@ The bot earns trust in rungs. Each rung is a deliberate switch you flip:
   slice of total US volume — the UI labels volumes accordingly.
 - The **watchlist** is your manual list of symbols to always consider.
 - Each **strategy** chooses its universe: scanner, watchlist, or both.
+- Anywhere you choose symbols, search by **ticker or company name**. QT keeps
+  a local, daily-refreshed copy of Alpaca's tradable asset list, so
+  autocomplete is instant and costs no API calls. It's reference data —
+  rebuildable at any time from Settings → Symbol directory → Sync now.
 
 ## Strategies
 
@@ -94,6 +98,21 @@ version made it — so performance stats always know which rules produced them.
   It can only see this app's trades — trades in other accounts (e.g. a
   personal Robinhood) count too in the IRS's eyes.
 - **Audit log** — every decision, config change, and mode switch is recorded.
+
+## Reading a backtest honestly
+
+Two numbers are deliberately kept apart, because conflating them is the
+easiest way to fool yourself:
+
+- **Account return** — what your whole balance did. If the bot only ever
+  invests $200 of $5,000, this is dominated by the 96% sitting in cash.
+- **Return on money used** — what the trades themselves achieved. This judges
+  the *strategy*; the account return judges your *sizing*.
+
+The chart also plots **buy-and-hold of the symbols you tested**, not just the
+broad market. If a trading strategy can't beat simply holding the same stock,
+the trading is subtracting value — that's the bar to clear, and it's a high
+one for anything in a strong uptrend.
 
 ## The scoreboard
 

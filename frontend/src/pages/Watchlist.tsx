@@ -1,11 +1,11 @@
-import { FormEvent, useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { addWatchlist, getWatchlist, removeWatchlist, WatchlistRow } from "../api";
 import Sparkline from "../components/Sparkline";
+import SymbolPicker from "../components/SymbolPicker";
 
 export default function Watchlist() {
   const [rows, setRows] = useState<WatchlistRow[] | null>(null);
   const [errors, setErrors] = useState<string[]>([]);
-  const [symbol, setSymbol] = useState("");
   const [assetClass, setAssetClass] = useState<"stock" | "crypto">("stock");
   const [note, setNote] = useState<string | null>(null);
 
@@ -24,12 +24,12 @@ export default function Watchlist() {
     return () => clearInterval(t);
   }, [refresh]);
 
-  async function add(e: FormEvent) {
-    e.preventDefault();
+  async function addPicked(symbols: string[]) {
+    const chosen = symbols[0];
+    if (!chosen) return;
     setNote(null);
     try {
-      await addWatchlist(symbol.trim(), assetClass);
-      setSymbol("");
+      await addWatchlist(chosen, assetClass);
       refresh();
     } catch (err) {
       setNote((err as Error).message);
@@ -46,20 +46,15 @@ export default function Watchlist() {
       <div className="toolbar">
         <h2>Watchlist</h2>
       </div>
-      <form className="card addform" onSubmit={add}>
-        <input
-          placeholder={assetClass === "crypto" ? "e.g. BTC/USD" : "e.g. NVDA"}
-          value={symbol}
-          onChange={(e) => setSymbol(e.target.value)}
-          required
-        />
+      <div className="card addform">
         <select value={assetClass} onChange={(e) => setAssetClass(e.target.value as "stock" | "crypto")}>
           <option value="stock">Stock</option>
           <option value="crypto">Crypto</option>
         </select>
-        <button>Add</button>
+        <SymbolPicker assetClass={assetClass} value={[]} onChange={addPicked} />
+        <span className="hint">Search by ticker or company name — picking adds it straight to the list.</span>
         {note && <span className="error">{note}</span>}
-      </form>
+      </div>
       {errors.map((e) => (
         <div className="card error" key={e}>
           {e}

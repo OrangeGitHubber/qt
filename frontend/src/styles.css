@@ -135,7 +135,8 @@ dd {
   margin-bottom: 0.5rem;
 }
 
-form label {
+form label,
+.field {
   display: block;
   margin: 0.9rem 0 0;
   color: var(--muted);
@@ -301,7 +302,8 @@ tr:last-child td {
   gap: 0.5rem 1.25rem;
 }
 
-.filter-grid label {
+.filter-grid label,
+.filter-grid .field {
   margin: 0.4rem 0 0;
 }
 
@@ -528,6 +530,133 @@ td.detail p {
   font-size: 1.15rem;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
+}
+
+/* Symbol picker */
+.picker {
+  position: relative;
+}
+
+.picker input {
+  margin-top: 0.3rem;
+}
+
+.picker-pop {
+  position: absolute;
+  z-index: 30;
+  top: 100%;
+  left: 0;
+  right: 0;
+  margin: 0.25rem 0 0;
+  padding: 0;
+  list-style: none;
+  max-height: 280px;
+  overflow-y: auto;
+  background: var(--bg);
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.55);
+}
+
+.picker-pop li {
+  display: grid;
+  grid-template-columns: 5.5rem 1fr;
+  gap: 0.1rem 0.6rem;
+  padding: 0.45rem 0.7rem;
+  cursor: pointer;
+  border-bottom: 1px solid var(--border);
+}
+
+.picker-pop li:last-child {
+  border-bottom: none;
+}
+
+.picker-pop li.active {
+  background: #1d2836;
+}
+
+.picker-pop li.empty {
+  display: block;
+  color: var(--muted);
+  cursor: default;
+  font-size: 0.85rem;
+}
+
+.asset-name {
+  color: var(--text);
+  font-size: 0.9rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.picker-pop .hint {
+  grid-column: 2;
+  font-size: 0.75rem;
+  margin: 0;
+}
+
+.picked {
+  margin-top: 0.3rem;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  margin-top: 0.3rem;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+  background: #1d2836;
+  border: 1px solid var(--border);
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.chip button {
+  margin: 0;
+  padding: 0;
+  width: 1rem;
+  height: 1rem;
+  line-height: 1;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+/* Capital deployment panel */
+.deployment {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.5rem 1rem 1rem;
+  margin-bottom: 1rem;
+}
+
+.deployment h4 {
+  margin: 0.6rem 0 0;
+  color: var(--muted);
+  text-transform: uppercase;
+  font-size: 0.78rem;
+  letter-spacing: 0.05em;
+}
+
+.verdicts .verdict {
+  margin: 0.3rem 0;
+}
+
+.muted-verdict {
+  color: var(--muted) !important;
+  font-weight: 400;
+  font-size: 0.9rem;
 }
 
 /* Danger zone (leverage) */

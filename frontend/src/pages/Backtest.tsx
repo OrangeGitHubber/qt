@@ -1,6 +1,8 @@
 import { FormEvent, useEffect, useState } from "react";
 import { BacktestResult, getStrategies, runBacktest, StrategyRow } from "../api";
+import InfoTip from "../components/InfoTip";
 import LineChart from "../components/LineChart";
+import SymbolPicker from "../components/SymbolPicker";
 
 function Stat({ label, value, tone }: { label: string; value: string; tone?: "up" | "down" }) {
   return (
@@ -14,7 +16,7 @@ function Stat({ label, value, tone }: { label: string; value: string; tone?: "up
 export default function Backtest() {
   const [strategies, setStrategies] = useState<StrategyRow[]>([]);
   const [strategyId, setStrategyId] = useState<number | null>(null);
-  const [symbols, setSymbols] = useState("");
+  const [symbols, setSymbols] = useState<string[]>([]);
   const [days, setDays] = useState(90);
   const [timeframe, setTimeframe] = useState("1Hour");
   const [cash, setCash] = useState(5000);
@@ -40,7 +42,7 @@ export default function Backtest() {
     try {
       const r = await runBacktest({
         strategy_id: strategyId,
-        symbols: symbols.split(",").map((s) => s.trim()).filter(Boolean),
+        symbols,
         days,
         timeframe,
         starting_cash: cash,
@@ -80,10 +82,17 @@ export default function Backtest() {
                 ))}
               </select>
             </label>
-            <label>
-              Symbols (comma-separated; blank = your watchlist)
-              <input value={symbols} onChange={(e) => setSymbols(e.target.value)} placeholder="NVDA, AMD, TSLA" />
-            </label>
+            {/* a composite widget, not a single control — <label> would
+                re-dispatch clicks into it */}
+            <div className="field">
+              Symbols (none picked = your watchlist)
+              <SymbolPicker
+                assetClass={strategies.find((s) => s.id === strategyId)?.asset_class}
+                value={symbols}
+                onChange={setSymbols}
+                multi
+              />
+            </div>
             <label>
               History (days)
               <input type="number" min={7} max={730} value={days} onChange={(e) => setDays(Number(e.target.value))} />
@@ -140,26 +149,82 @@ export default function Backtest() {
               <Stat label="Profit factor" value={result.profit_factor != null ? String(result.profit_factor) : "—"} />
               <Stat label="Max drawdown" value={`${result.max_drawdown_pct}%`} tone={result.max_drawdown_pct > 10 ? "down" : undefined} />
             </div>
+
+            {result.trades > 0 && (
+              <div className="deployment">
+                <h4>
+                  How much of your money actually worked? <InfoTip k="capital_deployed" />
+                </h4>
+                <div className="stats">
+                  <Stat
+                    label="Most ever invested"
+                    value={`$${result.max_deployed_usd.toLocaleString()} (${result.pct_capital_deployed}%)`}
+                    tone={result.pct_capital_deployed < 20 ? "down" : undefined}
+                  />
+                  <Stat label="Time holding anything" value={`${result.time_in_market_pct}%`} />
+                  <Stat
+                    label="Return on money used"
+                    value={result.return_on_deployed_pct != null ? `${result.return_on_deployed_pct}%` : "—"}
+                    tone={(result.return_on_deployed_pct ?? 0) >= 0 ? "up" : "down"}
+                  />
+                </div>
+                {result.pct_capital_deployed < 20 && (
+                  <p className="hint">
+                    Only <strong>{result.pct_capital_deployed}%</strong> of your ${result.starting_cash.toLocaleString()}{" "}
+                    was ever at risk — the rest sat in cash. That's why the account return (
+                    {result.net_pnl_pct}%) is so much smaller than the return on the money actually used (
+                    {result.return_on_deployed_pct}%). To deploy more: raise <em>$ per trade</em>, or test more
+                    symbols so the bot can hold several positions at once.
+                  </p>
+                )}
+              </div>
+            )}
+
             <LineChart
               labels={result.equity_days}
               series={[
                 { label: "Strategy", color: "var(--accent)", values: result.equity },
+                ...(result.hold_benchmark
+                  ? [
+                      {
+                        label: `Hold ${result.hold_benchmark_label}`,
+                        color: "var(--warn)",
+                        values: result.hold_benchmark,
+                      },
+                    ]
+                  : []),
                 ...(result.benchmark
                   ? [{ label: `Hold ${result.benchmark_symbol}`, color: "var(--ok)", values: result.benchmark }]
                   : []),
               ]}
             />
-            {result.benchmark && result.benchmark.length > 0 && (
-              <p className="verdict">
-                {(() => {
-                  const bot = result.equity[result.equity.length - 1] ?? 0;
-                  const bench = result.benchmark[result.benchmark.length - 1];
-                  if (bench == null) return null;
-                  return bot > bench
-                    ? `Strategy beat buy-and-hold ${result.benchmark_symbol} by ${(bot - bench).toFixed(2)} points over this window.`
-                    : `Buy-and-hold ${result.benchmark_symbol} beat the strategy by ${(bench - bot).toFixed(2)} points — the bar to clear.`;
-                })()}
-              </p>
+            {result.trades > 0 && (
+              <div className="verdicts">
+                {result.hold_benchmark && (
+                  <p className="verdict">
+                    {(() => {
+                      const bot = result.equity[result.equity.length - 1] ?? 0;
+                      const hold = result.hold_benchmark[result.hold_benchmark.length - 1];
+                      if (hold == null) return null;
+                      return bot > hold
+                        ? `Beat simply holding ${result.hold_benchmark_label} by ${(bot - hold).toFixed(2)} points — trading the symbol was worth it.`
+                        : `Simply holding ${result.hold_benchmark_label} beat the strategy by ${(hold - bot).toFixed(2)} points — trading in and out cost you.`;
+                    })()}
+                  </p>
+                )}
+                {result.benchmark && (
+                  <p className="verdict muted-verdict">
+                    {(() => {
+                      const bot = result.equity[result.equity.length - 1] ?? 0;
+                      const bench = result.benchmark[result.benchmark.length - 1];
+                      if (bench == null) return null;
+                      return bot > bench
+                        ? `Also beat the broad market (${result.benchmark_symbol}) by ${(bot - bench).toFixed(2)} points.`
+                        : `The broad market (${result.benchmark_symbol}) returned ${(bench - bot).toFixed(2)} points more.`;
+                    })()}
+                  </p>
+                )}
+              </div>
             )}
           </div>
           <div className="card">
