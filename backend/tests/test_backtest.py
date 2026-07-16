@@ -81,6 +81,38 @@ def test_no_entry_when_gain_too_small():
     result = run_backtest(STRATEGY, {"TEST": series}, RISK, starting_cash=5000, spread_pct=0)
     assert result["trades"] == 0
     assert result["net_pnl"] == 0
+    # zero-trade runs must explain themselves
+    diag = result["diagnosis"]
+    assert diag["max_day_gain_pct"] == 2.0
+    assert diag["days_reaching_min_gain"] == 0
+    assert "day-gain threshold" in diag["summary"]
+    assert "2.0%" in diag["summary"]
+
+
+def test_diagnosis_identifies_vwap_as_blocker():
+    # +4% gain but every close sits below the running VWAP → VWAP is the blocker
+    strategy = {**STRATEGY, "params": {
+        "entry": {**STRATEGY["params"]["entry"], "require_above_vwap": True},
+        "exit": STRATEGY["params"]["exit"],
+    }}
+    day1 = bars_from([100, 100, 100], "2026-05-04T14:00:00Z")
+    t0 = "2026-05-05T14:00:00Z"
+    day2 = bars_from([104, 104, 104], t0)
+    for b in day2:
+        b["vw"] = 105.0  # VWAP above close all day
+    result = run_backtest(strategy, {"TEST": day1 + day2}, RISK, starting_cash=5000, spread_pct=0)
+    assert result["trades"] == 0
+    diag = result["diagnosis"]
+    assert diag["days_reaching_min_gain"] == 1
+    assert diag["rejected_vwap"] > 0
+    assert "VWAP" in diag["summary"]
+
+
+def test_diagnosis_none_when_trades_exist():
+    series = _spread_day([100, 100, 100], [104, 99, 99])
+    result = run_backtest(STRATEGY, {"TEST": series}, RISK, starting_cash=5000, spread_pct=0)
+    assert result["trades"] == 1
+    assert result["diagnosis"]["summary"] is None
 
 
 def test_rails_respected_in_backtest():

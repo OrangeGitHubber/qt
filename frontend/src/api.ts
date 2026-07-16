@@ -174,6 +174,17 @@ export interface BacktestResult {
   profit_factor: number | null;
   max_drawdown_pct: number;
   spread_cost_pct_per_side: number;
+  diagnosis: {
+    bars_evaluated: number;
+    rejected_day_gain: number;
+    rejected_vwap: number;
+    rejected_entry_window: number;
+    entry_ok_but_rail_blocked: number;
+    too_small_or_no_cash: number;
+    max_day_gain_pct: number | null;
+    days_reaching_min_gain: number;
+    summary: string | null;
+  };
   equity_days: string[];
   equity: number[];
   benchmark: (number | null)[] | null;

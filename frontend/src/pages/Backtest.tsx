@@ -116,6 +116,18 @@ export default function Backtest() {
             <h3>
               {result.strategy_name} · {result.symbols.join(", ")} · last {result.days} days ({result.timeframe})
             </h3>
+            {result.trades === 0 && result.diagnosis?.summary && (
+              <div className="card note" style={{ cursor: "default" }}>
+                <strong>Why zero trades?</strong> {result.diagnosis.summary}
+                <p className="hint">
+                  {result.diagnosis.bars_evaluated.toLocaleString()} bars evaluated · biggest day-gain seen:{" "}
+                  {result.diagnosis.max_day_gain_pct ?? "—"}% · days reaching your gain threshold:{" "}
+                  {result.diagnosis.days_reaching_min_gain} · rejected by gain/VWAP/time-window:{" "}
+                  {result.diagnosis.rejected_day_gain}/{result.diagnosis.rejected_vwap}/
+                  {result.diagnosis.rejected_entry_window} · blocked by rails: {result.diagnosis.entry_ok_but_rail_blocked}
+                </p>
+              </div>
+            )}
             <div className="stats">
               <Stat
                 label="Net P&L"

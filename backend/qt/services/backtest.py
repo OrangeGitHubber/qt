@@ -121,6 +121,16 @@ def run_backtest(
     state = SimState(cash=starting_cash)
     equity_curve: list[tuple[str, float]] = []
     last_price: dict[str, float] = {}
+    diag = {
+        "bars_evaluated": 0,
+        "rejected_day_gain": 0,
+        "rejected_vwap": 0,
+        "rejected_entry_window": 0,
+        "entry_ok_but_rail_blocked": 0,
+        "too_small_or_no_cash": 0,
+        "max_day_gain_pct": None,
+        "days_reaching_min_gain": set(),
+    }
 
     for ts in sorted(events):
         bars = events[ts]
@@ -157,6 +167,11 @@ def run_backtest(
         for symbol, bar in bars.items():
             if bar["change_pct"] is None:
                 continue
+            diag["bars_evaluated"] += 1
+            if diag["max_day_gain_pct"] is None or bar["change_pct"] > diag["max_day_gain_pct"]:
+                diag["max_day_gain_pct"] = round(bar["change_pct"], 2)
+            if bar["change_pct"] >= params.get("entry", {}).get("min_day_gain_pct", 0):
+                diag["days_reaching_min_gain"].add(day)
             # recompute inside the loop: an entry this bar must count against
             # the rails for the next candidate in the same bar
             open_exposure = sum(t.entry_price * t.qty for t in state.open_trades.values())
@@ -167,6 +182,12 @@ def run_backtest(
             )
             ok, entry_reason = evaluate_entry(params, cand, ts.astimezone(ET))
             if not ok:
+                if "< required" in entry_reason:
+                    diag["rejected_day_gain"] += 1
+                elif "VWAP" in entry_reason:
+                    diag["rejected_vwap"] += 1
+                elif "entry window" in entry_reason:
+                    diag["rejected_entry_window"] += 1
                 continue
             daily_loss = max(0.0, -state.realized_by_day.get(day, 0.0))
             ctx = RailContext(
@@ -199,10 +220,12 @@ def run_backtest(
                 if ts - last_loss < cooldown:
                     rails_ok = False
             if not rails_ok:
+                diag["entry_ok_but_rail_blocked"] += 1
                 continue
             fill = bar["close"] * (1 + slip)
             qty = float(int(sizing // fill)) if strategy["asset_class"] == "stock" else round(sizing / fill, 6)
             if qty <= 0 or fill * qty > state.cash:
+                diag["too_small_or_no_cash"] += 1
                 continue
             state.cash -= fill * qty
             state.entries_by_day[day] = state.entries_by_day.get(day, 0) + 1
@@ -228,6 +251,37 @@ def run_backtest(
         state.closed.append(trade)
     state.open_trades.clear()
 
+    min_gain = params.get("entry", {}).get("min_day_gain_pct", 0)
+    qualifying_days = len(diag.pop("days_reaching_min_gain"))
+    diag["days_reaching_min_gain"] = qualifying_days
+    if not state.closed:
+        if diag["max_day_gain_pct"] is not None and diag["max_day_gain_pct"] < min_gain:
+            diag["summary"] = (
+                f"No bar ever reached the {min_gain}% day-gain threshold — the biggest day-gain "
+                f"seen at any evaluated bar was {diag['max_day_gain_pct']}%. Lower the minimum gain "
+                "or pick more volatile symbols."
+            )
+        elif qualifying_days and diag["rejected_vwap"] >= max(diag["rejected_entry_window"], 1):
+            diag["summary"] = (
+                f"The gain threshold was reached on {qualifying_days} day(s), but the 'price above "
+                "VWAP' condition rejected the qualifying bars. Try disabling the VWAP rule to see "
+                "the difference."
+            )
+        elif qualifying_days and diag["rejected_entry_window"] > 0:
+            diag["summary"] = (
+                f"The gain threshold was reached on {qualifying_days} day(s), but only outside the "
+                "entry time window. Consider widening the window."
+            )
+        elif diag["entry_ok_but_rail_blocked"] or diag["too_small_or_no_cash"]:
+            diag["summary"] = (
+                "Entries qualified but were blocked by risk rails or position sizing "
+                "(sleeve/exposure/cash — check $ per trade vs share price)."
+            )
+        else:
+            diag["summary"] = "No bars satisfied all entry conditions simultaneously."
+    else:
+        diag["summary"] = None
+
     closed = state.closed
     wins = [t for t in closed if (t.pnl or 0) > 0]
     losses = [t for t in closed if (t.pnl or 0) <= 0]
@@ -248,6 +302,7 @@ def run_backtest(
         "profit_factor": round(gross_win / gross_loss, 2) if gross_loss > 0 else None,
         "max_drawdown_pct": _max_drawdown(equity_values),
         "spread_cost_pct_per_side": spread_pct,
+        "diagnosis": diag,
         "equity_days": [d for d, _ in equity_curve],
         "equity": [round((v / starting_cash - 1) * 100, 2) for _, v in equity_curve],
         "trade_list": [
