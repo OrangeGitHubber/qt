@@ -176,9 +176,11 @@ export interface BacktestTrade {
   qty: number;
   entry_price: number;
   entry_at: string;
+  entry_day: string;
   entry_reason: string;
   exit_price: number;
   exit_at: string | null;
+  exit_day: string | null;
   exit_reason: string;
   pnl: number | null;
 }

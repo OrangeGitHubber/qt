@@ -3,6 +3,23 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Readable backtest charts (2026-07-17)
+
+- **Fixed: the same asset was drawn twice.** For a crypto strategy the
+  "broad market" benchmark was hardcoded to BTC/USD — so a BTC/USD backtest
+  charted BTC/USD as both "the symbol you tested" and "the market", with two
+  legend entries reading *Hold BTC/USD*, disagreeing slightly because they
+  were sampled differently. The market line is now skipped when it's the same
+  asset being traded (which also saves an API call). A basket like BTC+ETH
+  still gets a BTC market line, because "hold the basket" and "hold BTC" are
+  genuinely different facts.
+- **Hover the chart** for the date and every line's value at that point,
+  colour-matched to the legend — no more decoding lines by eye.
+- **Trade markers**: ▲ where the strategy bought, ▼ where it sold, drawn on
+  its equity line. Hovering a marker shows the size, price, P&L and the exit
+  reason, so you can see *where* in the window the trades happened.
+- Clearer labels: "This strategy" / "Buy & hold X" / "Broad market (X)".
+
 ## Watchlist stats & price history (2026-07-17)
 
 The watchlist now answers "is this symbol worth trading, and can my settings

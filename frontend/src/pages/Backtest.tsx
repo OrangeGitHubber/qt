@@ -1,7 +1,7 @@
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 import { BacktestResult, getStrategies, runBacktest, StrategyRow } from "../api";
 import InfoTip from "../components/InfoTip";
-import LineChart from "../components/LineChart";
+import LineChart, { ChartMarker } from "../components/LineChart";
 import NumberField from "../components/NumberField";
 import SymbolPicker from "../components/SymbolPicker";
 
@@ -25,6 +25,28 @@ export default function Backtest() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<BacktestResult | null>(null);
+
+  // Place each buy/sell on the equity curve's day index.
+  const markers = useMemo<ChartMarker[]>(() => {
+    if (!result) return [];
+    const dayIndex = new Map(result.equity_days.map((d, i) => [d, i]));
+    const out: ChartMarker[] = [];
+    for (const t of result.trade_list) {
+      const entry = dayIndex.get(t.entry_day);
+      if (entry !== undefined) {
+        out.push({ index: entry, kind: "buy", text: `Bought ${t.qty} ${t.symbol} @ $${t.entry_price}` });
+      }
+      const exit = t.exit_day ? dayIndex.get(t.exit_day) : undefined;
+      if (exit !== undefined) {
+        out.push({
+          index: exit,
+          kind: "sell",
+          text: `Sold ${t.symbol} @ $${t.exit_price} → ${(t.pnl ?? 0) >= 0 ? "+" : ""}$${t.pnl?.toFixed(2)} (${t.exit_reason})`,
+        });
+      }
+    }
+    return out;
+  }, [result]);
 
   useEffect(() => {
     getStrategies().then((rows) => {
@@ -183,22 +205,32 @@ export default function Backtest() {
 
             <LineChart
               labels={result.equity_days}
+              markers={markers}
               series={[
-                { label: "Strategy", color: "var(--accent)", values: result.equity },
+                { label: "This strategy", color: "var(--accent)", values: result.equity },
                 ...(result.hold_benchmark
                   ? [
                       {
-                        label: `Hold ${result.hold_benchmark_label}`,
+                        label: `Buy & hold ${result.hold_benchmark_label}`,
                         color: "var(--warn)",
                         values: result.hold_benchmark,
                       },
                     ]
                   : []),
                 ...(result.benchmark
-                  ? [{ label: `Hold ${result.benchmark_symbol}`, color: "var(--ok)", values: result.benchmark }]
+                  ? [
+                      {
+                        label: `Broad market (${result.benchmark_symbol})`,
+                        color: "var(--ok)",
+                        values: result.benchmark,
+                      },
+                    ]
                   : []),
               ]}
             />
+            <p className="hint">
+              Hover the chart for the date and each line's value. ▲/▼ mark where this strategy bought and sold.
+            </p>
             {result.trades > 0 && (
               <div className="verdicts">
                 {result.hold_benchmark && (

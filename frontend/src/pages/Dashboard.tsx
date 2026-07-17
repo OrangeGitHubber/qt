@@ -166,8 +166,8 @@ function ScoreboardCard() {
           labels={board.days}
           series={[
             { label: "QT bot", color: "var(--accent)", values: board.bot },
-            { label: "Hold SPY", color: "var(--ok)", values: board.spy },
-            { label: "Hold BTC", color: "var(--warn)", values: board.btc },
+            { label: "Buy & hold SPY", color: "var(--ok)", values: board.spy },
+            { label: "Buy & hold BTC", color: "var(--warn)", values: board.btc },
           ]}
         />
       )}

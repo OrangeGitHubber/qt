@@ -180,6 +180,14 @@ def test_hold_benchmark_equal_weights_multiple_symbols():
     assert result["hold_benchmark"][-1] == pytest.approx(5.0, abs=0.01)  # (10 + 0) / 2
 
 
+def test_trades_carry_et_day_strings_for_chart_markers():
+    series = _spread_day([100, 100, 100], [104, 99, 99])
+    result = run_backtest(STRATEGY, {"TEST": series}, RISK, starting_cash=5000, spread_pct=0)
+    trade = result["trade_list"][0]
+    assert trade["entry_day"] in result["equity_days"]
+    assert trade["exit_day"] in result["equity_days"]
+
+
 def test_equity_curve_daily_and_metrics_shape():
     series = _spread_day([100, 100, 100], [104, 99, 99])
     result = run_backtest(STRATEGY, {"TEST": series}, RISK, starting_cash=5000, spread_pct=0.1)

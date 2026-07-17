@@ -81,14 +81,22 @@ async def run(
     if "error" in result:
         raise HTTPException(status_code=422, detail=result["error"])
 
-    try:
-        result["benchmark"] = await backtest.fetch_benchmark(
-            client, strategy.asset_class, start, result["equity_days"]
-        )
-        result["benchmark_symbol"] = "SPY" if strategy.asset_class == "stock" else "BTC/USD"
-    except Exception:
-        result["benchmark"] = None
-        result["benchmark_symbol"] = None
+    # The market benchmark is only informative when it's a DIFFERENT asset from
+    # the one being traded. Testing BTC/USD against a "market" of BTC/USD drew
+    # the same asset twice (and disagreed with itself, being sampled from daily
+    # bars rather than the strategy's own). Skip it — and save the API call.
+    market_symbol = "SPY" if strategy.asset_class == "stock" else "BTC/USD"
+    result["benchmark"] = None
+    result["benchmark_symbol"] = None
+    if [market_symbol] != symbols:
+        try:
+            result["benchmark"] = await backtest.fetch_benchmark(
+                client, strategy.asset_class, start, result["equity_days"]
+            )
+            result["benchmark_symbol"] = market_symbol
+        except Exception:
+            result["benchmark"] = None
+            result["benchmark_symbol"] = None
 
     result["strategy_name"] = strategy.name
     result["symbols"] = symbols

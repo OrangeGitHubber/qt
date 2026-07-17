@@ -365,9 +365,13 @@ def run_backtest(
             {
                 "symbol": t.symbol, "qty": t.qty,
                 "entry_price": round(t.entry_price, 4), "entry_at": t.entry_at.isoformat(),
+                # ET day strings so the chart can place markers without the
+                # frontend re-deriving timezones and drifting off by a day
+                "entry_day": _et_day(t.entry_at),
                 "entry_reason": t.entry_reason,
                 "exit_price": round(t.exit_price or 0, 4),
                 "exit_at": t.exit_at.isoformat() if t.exit_at else None,
+                "exit_day": _et_day(t.exit_at) if t.exit_at else None,
                 "exit_reason": t.exit_reason, "pnl": t.pnl,
             }
             for t in closed
