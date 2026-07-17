@@ -58,11 +58,39 @@ export default function LineChart({
   }
 
   const hoverMarkers = hover !== null ? markers.filter((m) => m.index === hover) : [];
-  const tipLeftPct = hover !== null ? (model.x(hover) / W) * 100 : 0;
-  const flip = tipLeftPct > 60;
 
   return (
     <div className="pricechart">
+      {/* fixed strip above the plot: never covers the data, never chases the
+          cursor. min-height reserves the space so nothing jumps. */}
+      <div className="chart-readout">
+        {hover === null ? (
+          <span className="hint">
+            Hover the chart for the date and each line's value
+            {markers.length > 0 ? " — ▲ bought, ▼ sold" : ""}.
+          </span>
+        ) : (
+          <>
+            <strong>{labels[hover]}</strong>
+            {series.map((s) => (
+              <span key={s.label} className="tip-row">
+                <span className="swatch" style={{ background: s.color }} />
+                {s.label}:{" "}
+                <b className={(s.values[hover] ?? 0) >= 0 ? "up" : "down"}>
+                  {s.values[hover] == null ? "—" : `${s.values[hover]! >= 0 ? "+" : ""}${s.values[hover]}%`}
+                </b>
+              </span>
+            ))}
+            {hoverMarkers.map((m, i) => (
+              <span key={i} className={m.kind === "buy" ? "up" : "down"}>
+                {m.kind === "buy" ? "▲ " : "▼ "}
+                {m.text}
+              </span>
+            ))}
+          </>
+        )}
+      </div>
+
       <svg
         ref={svgRef}
         viewBox={`0 0 ${W} ${H}`}
@@ -113,26 +141,6 @@ export default function LineChart({
         <text x={padL} y={H - 8} className="chart-label">{labels[0]}</text>
         <text x={W - padR} y={H - 8} textAnchor="end" className="chart-label">{labels[labels.length - 1]}</text>
       </svg>
-
-      {hover !== null && (
-        <div className={`pc-tip ${flip ? "flip" : ""}`} style={{ left: `${tipLeftPct}%` }}>
-          <strong>{labels[hover]}</strong>
-          {series.map((s) => (
-            <span key={s.label} className="tip-row">
-              <span className="swatch" style={{ background: s.color }} />
-              {s.label}: <b className={(s.values[hover] ?? 0) >= 0 ? "up" : "down"}>
-                {s.values[hover] == null ? "—" : `${s.values[hover]! >= 0 ? "+" : ""}${s.values[hover]}%`}
-              </b>
-            </span>
-          ))}
-          {hoverMarkers.map((m, i) => (
-            <span key={i} className={m.kind === "buy" ? "up" : "down"}>
-              {m.kind === "buy" ? "▲ " : "▼ "}
-              {m.text}
-            </span>
-          ))}
-        </div>
-      )}
 
       <div className="legend">
         {series.map((s) => (

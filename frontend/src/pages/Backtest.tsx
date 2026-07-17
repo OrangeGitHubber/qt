@@ -228,9 +228,6 @@ export default function Backtest() {
                   : []),
               ]}
             />
-            <p className="hint">
-              Hover the chart for the date and each line's value. ▲/▼ mark where this strategy bought and sold.
-            </p>
             {result.trades > 0 && (
               <div className="verdicts">
                 {result.hold_benchmark && (

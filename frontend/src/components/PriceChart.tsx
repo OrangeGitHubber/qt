@@ -49,12 +49,27 @@ export default function PriceChart({ points, height = 320 }: { points: PricePoin
 
   const hp = hover !== null ? points[hover] : null;
   const hoverChange = hp ? ((hp.c / first - 1) * 100).toFixed(2) : null;
-  // keep the tooltip inside the chart near the right edge
-  const tipLeftPct = hover !== null ? (model.x(hover) / W) * 100 : 0;
-  const flip = tipLeftPct > 62;
 
   return (
     <div className="pricechart">
+      {/* readout sits above the plot so it can't cover the line */}
+      <div className="chart-readout">
+        {!hp ? (
+          <span className="hint">Hover the line for price and date.</span>
+        ) : (
+          <>
+            <strong>${hp.c.toLocaleString(undefined, { maximumFractionDigits: 4 })}</strong>
+            <span>
+              {new Date(hp.t).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" })}
+            </span>
+            <span className={Number(hoverChange) >= 0 ? "up" : "down"}>
+              {Number(hoverChange) >= 0 ? "+" : ""}
+              {hoverChange}% from start of window
+            </span>
+          </>
+        )}
+      </div>
+
       <svg
         ref={svgRef}
         viewBox={`0 0 ${W} ${H}`}
@@ -100,17 +115,6 @@ export default function PriceChart({ points, height = 320 }: { points: PricePoin
           {new Date(points[points.length - 1].t).toLocaleDateString()}
         </text>
       </svg>
-
-      {hp && (
-        <div className={`pc-tip ${flip ? "flip" : ""}`} style={{ left: `${tipLeftPct}%` }}>
-          <strong>${hp.c.toLocaleString(undefined, { maximumFractionDigits: 4 })}</strong>
-          <span>{new Date(hp.t).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" })}</span>
-          <span className={Number(hoverChange) >= 0 ? "up" : "down"}>
-            {Number(hoverChange) >= 0 ? "+" : ""}
-            {hoverChange}% from start
-          </span>
-        </div>
-      )}
     </div>
   );
 }

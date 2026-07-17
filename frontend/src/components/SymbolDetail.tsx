@@ -88,9 +88,7 @@ export default function SymbolDetail({
                   {r.label}
                 </button>
               ))}
-              <span className="hint">
-                {all.length.toLocaleString()} trading days available · hover the line for price and date
-              </span>
+              <span className="hint">{all.length.toLocaleString()} trading days available</span>
             </div>
 
             <PriceChart points={points} />

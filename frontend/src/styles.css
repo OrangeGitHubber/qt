@@ -744,39 +744,50 @@ button.linklike {
   touch-action: none;
 }
 
-.pc-tip {
-  position: absolute;
-  top: 0.5rem;
-  transform: translateX(0.6rem);
-  background: var(--bg);
-  border: 1px solid var(--accent);
-  border-radius: 8px;
-  padding: 0.4rem 0.6rem;
-  font-size: 0.8rem;
+/* Fixed readout above the plot — never occludes the data, never moves.
+   min-height reserves the row so the layout doesn't jump on hover. */
+.chart-readout {
   display: flex;
-  flex-direction: column;
-  gap: 0.1rem;
-  pointer-events: none;
-  white-space: nowrap;
-  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5);
-}
-
-.pc-tip.flip {
-  transform: translateX(calc(-100% - 0.6rem));
-}
-
-.pc-tip span {
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.25rem 1.1rem;
+  min-height: 2.2rem;
+  padding: 0.4rem 0.7rem;
+  margin-bottom: 0.5rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 0.85rem;
   color: var(--muted);
 }
 
-.pc-tip .tip-row {
+.chart-readout strong {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.chart-readout .hint {
+  margin: 0;
+}
+
+.chart-readout .tip-row {
   display: flex;
   align-items: center;
   gap: 0.3rem;
 }
 
-.pc-tip b {
+.chart-readout b {
   font-variant-numeric: tabular-nums;
+}
+
+/* deliberately not a blanket `.chart-readout span { color: muted }` — that
+   would out-specify .up/.down and grey the trade arrows out */
+.chart-readout .up {
+  color: var(--ok);
+}
+
+.chart-readout .down {
+  color: var(--err);
 }
 
 .marker-key {
