@@ -99,7 +99,7 @@ export default function Backtest() {
               <NumberField min={7} max={730} step={1} value={days} onChange={setDays} />
             </label>
             <label>
-              Bar size
+              Bar size <InfoTip k="bar" />
               <select value={timeframe} onChange={(e) => setTimeframe(e.target.value)}>
                 <option value="15Min">15 minutes (slow, precise)</option>
                 <option value="1Hour">1 hour (recommended)</option>

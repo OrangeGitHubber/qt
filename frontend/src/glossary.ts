@@ -85,6 +85,12 @@ export const GLOSSARY: Record<string, GlossaryEntry> = {
       "If today's realized losses reach this limit (in dollars or % of account, whichever is lower), the bot stops opening new positions until tomorrow and alerts you.",
     url: "https://www.investopedia.com/terms/d/dailytradinglimit.asp",
   },
+  bar: {
+    term: "Bar (candle)",
+    explain:
+      "One slice of price history: the open, high, low, close and volume for a period. A '1 hour' bar summarises an hour of trading. Smaller bars = more detail and slower backtests; bigger bars = faster but coarser. Two years of hourly bars for one stock is ~3,500 bars.",
+    url: "https://www.investopedia.com/terms/c/candlestick.asp",
+  },
   capital_deployed: {
     term: "Capital deployed",
     explain:
