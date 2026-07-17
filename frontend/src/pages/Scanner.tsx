@@ -8,6 +8,7 @@ import {
   ScannerResult,
   ScannerRow,
 } from "../api";
+import NumberField from "../components/NumberField";
 import SymbolPicker from "../components/SymbolPicker";
 
 function volume(v: number) {
@@ -99,8 +100,7 @@ export default function Scanner() {
   function num(key: keyof ScannerConfig) {
     return {
       value: (cfg?.[key] as number) ?? 0,
-      onChange: (e: React.ChangeEvent<HTMLInputElement>) =>
-        setCfg((c) => (c ? { ...c, [key]: Number(e.target.value) } : c)),
+      onChange: (n: number) => setCfg((c) => (c ? { ...c, [key]: n } : c)),
     };
   }
 
@@ -141,23 +141,23 @@ export default function Scanner() {
             </label>
             <label>
               Rows per list
-              <input type="number" min={1} max={50} {...num("top_n")} />
+              <NumberField min={1} max={50} step={1} {...num("top_n")} />
             </label>
             <label>
               Min price ($)
-              <input type="number" min={0} step="0.01" {...num("min_price")} />
+              <NumberField min={0} step="any" {...num("min_price")} />
             </label>
             <label>
               Max price ($, 0 = none)
-              <input type="number" min={0} step="0.01" {...num("max_price")} />
+              <NumberField min={0} step="any" {...num("max_price")} />
             </label>
             <label>
               Min gain today (%)
-              <input type="number" min={0} step="0.1" {...num("min_change_pct")} />
+              <NumberField min={0} step="0.1" {...num("min_change_pct")} />
             </label>
             <label>
               Min daily $ volume
-              <input type="number" min={0} step="100000" {...num("min_dollar_volume")} />
+              <NumberField min={0} step="any" {...num("min_dollar_volume")} />
             </label>
             <div className="field">
               Never trade these

@@ -10,6 +10,7 @@ import {
   updateStrategy,
 } from "../api";
 import InfoTip from "../components/InfoTip";
+import NumberField from "../components/NumberField";
 
 const EMPTY: Partial<StrategyRow> = {
   name: "",
@@ -126,8 +127,8 @@ function Editor({
       <div className="filter-grid">
         <label>
           Min gain today (%)
-          <input type="number" step="0.1" min="0" value={p.entry.min_day_gain_pct}
-            onChange={(e) => setEntry("min_day_gain_pct", Number(e.target.value))} />
+          <NumberField step="0.1" min="0" value={p.entry.min_day_gain_pct}
+            onChange={(n) => setEntry("min_day_gain_pct", n)} />
         </label>
         <label className="check">
           <input type="checkbox" checked={p.entry.require_above_vwap}
@@ -150,23 +151,23 @@ function Editor({
       <div className="filter-grid">
         <label>
           Trailing stop (%) <InfoTip k="trailing_stop" />
-          <input type="number" step="0.1" min="0.5" value={p.exit.trailing_stop_pct}
-            onChange={(e) => setExit("trailing_stop_pct", Number(e.target.value))} />
+          <NumberField step="0.1" min="0.5" value={p.exit.trailing_stop_pct}
+            onChange={(n) => setExit("trailing_stop_pct", n)} />
         </label>
         <label>
           Stop-loss (%) — required <InfoTip k="stop_loss" />
-          <input type="number" step="0.1" min="0.1" value={p.exit.stop_loss_pct}
-            onChange={(e) => setExit("stop_loss_pct", Number(e.target.value))} />
+          <NumberField step="0.1" min="0.1" value={p.exit.stop_loss_pct}
+            onChange={(n) => setExit("stop_loss_pct", n)} />
         </label>
         <label>
           Take-profit (%, 0 = off) <InfoTip k="take_profit" />
-          <input type="number" step="0.1" min="0" value={p.exit.take_profit_pct}
-            onChange={(e) => setExit("take_profit_pct", Number(e.target.value))} />
+          <NumberField step="0.1" min="0" value={p.exit.take_profit_pct}
+            onChange={(n) => setExit("take_profit_pct", n)} />
         </label>
         <label>
           Max holding time (hours, 0 = off)
-          <input type="number" step="1" min="0" value={p.exit.max_holding_hours}
-            onChange={(e) => setExit("max_holding_hours", Number(e.target.value))} />
+          <NumberField step="1" min="0" value={p.exit.max_holding_hours}
+            onChange={(n) => setExit("max_holding_hours", n)} />
         </label>
         <label className="check">
           <input type="checkbox" checked={p.exit.exit_below_vwap}
@@ -184,18 +185,18 @@ function Editor({
       <div className="filter-grid">
         <label>
           $ per trade
-          <input type="number" step="any" min="10" value={s.sizing_usd}
-            onChange={(e) => setS({ ...s, sizing_usd: Number(e.target.value) })} />
+          <NumberField step="any" min="10" value={s.sizing_usd!}
+            onChange={(n) => setS({ ...s, sizing_usd: n })} />
         </label>
         <label>
           Sleeve budget ($) <InfoTip k="sleeve" />
-          <input type="number" step="any" min="10" value={s.sleeve_usd}
-            onChange={(e) => setS({ ...s, sleeve_usd: Number(e.target.value) })} />
+          <NumberField step="any" min="10" value={s.sleeve_usd!}
+            onChange={(n) => setS({ ...s, sleeve_usd: n })} />
         </label>
         <label>
           Max positions (this strategy)
-          <input type="number" step="1" min="1" max="25" value={s.max_positions}
-            onChange={(e) => setS({ ...s, max_positions: Number(e.target.value) })} />
+          <NumberField step="1" min="1" max="25" value={s.max_positions!}
+            onChange={(n) => setS({ ...s, max_positions: n })} />
         </label>
         <label className="check">
           <input type="checkbox" checked={s.swing_mode}

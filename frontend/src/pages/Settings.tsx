@@ -15,6 +15,7 @@ import {
   testSlack,
 } from "../api";
 import InfoTip from "../components/InfoTip";
+import NumberField from "../components/NumberField";
 
 export default function Settings() {
   const [engine, setEngine] = useState<EngineState | null>(null);
@@ -41,8 +42,7 @@ export default function Settings() {
   function num(key: keyof RiskConfig) {
     return {
       value: (risk?.[key] as number) ?? 0,
-      onChange: (e: React.ChangeEvent<HTMLInputElement>) =>
-        setRiskLocal((r) => (r ? { ...r, [key]: Number(e.target.value) } : r)),
+      onChange: (n: number) => setRiskLocal((r) => (r ? { ...r, [key]: n } : r)),
     };
   }
 
@@ -78,27 +78,27 @@ export default function Settings() {
         <div className="filter-grid">
           <label>
             Max daily loss ($) <InfoTip k="daily_loss_limit" />
-            <input type="number" min={10} {...num("max_daily_loss_usd")} />
+            <NumberField min={10} step="any" {...num("max_daily_loss_usd")} />
           </label>
           <label>
             Max daily loss (% of account)
-            <input type="number" min={0.5} step={0.5} {...num("max_daily_loss_pct")} />
+            <NumberField min={0.5} step={0.5} {...num("max_daily_loss_pct")} />
           </label>
           <label>
             Max open positions (total)
-            <input type="number" min={1} {...num("max_total_positions")} />
+            <NumberField min={1} step={1} {...num("max_total_positions")} />
           </label>
           <label>
             Max total exposure ($)
-            <input type="number" min={10} step="any" {...num("max_total_exposure_usd")} />
+            <NumberField min={10} step="any" {...num("max_total_exposure_usd")} />
           </label>
           <label>
             Max new trades per day <InfoTip k="trade_rate" />
-            <input type="number" min={1} {...num("max_trades_per_day")} />
+            <NumberField min={1} step={1} {...num("max_trades_per_day")} />
           </label>
           <label>
             Cooldown after a loss (hours)
-            <input type="number" min={0} {...num("cooldown_hours_after_loss")} />
+            <NumberField min={0} step="any" {...num("cooldown_hours_after_loss")} />
           </label>
           <label>
             Wash-sale guard <InfoTip k="wash_sale" />

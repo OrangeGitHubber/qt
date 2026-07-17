@@ -2,6 +2,7 @@ import { FormEvent, useEffect, useState } from "react";
 import { BacktestResult, getStrategies, runBacktest, StrategyRow } from "../api";
 import InfoTip from "../components/InfoTip";
 import LineChart from "../components/LineChart";
+import NumberField from "../components/NumberField";
 import SymbolPicker from "../components/SymbolPicker";
 
 function Stat({ label, value, tone }: { label: string; value: string; tone?: "up" | "down" }) {
@@ -95,7 +96,7 @@ export default function Backtest() {
             </div>
             <label>
               History (days)
-              <input type="number" min={7} max={730} value={days} onChange={(e) => setDays(Number(e.target.value))} />
+              <NumberField min={7} max={730} step={1} value={days} onChange={setDays} />
             </label>
             <label>
               Bar size
@@ -107,11 +108,11 @@ export default function Backtest() {
             </label>
             <label>
               Starting cash ($)
-              <input type="number" min={100} step="any" value={cash} onChange={(e) => setCash(Number(e.target.value))} />
+              <NumberField min={100} step="any" value={cash} onChange={setCash} />
             </label>
             <label>
               Spread cost per side (%)
-              <input type="number" min={0} max={2} step={0.05} value={spread} onChange={(e) => setSpread(Number(e.target.value))} />
+              <NumberField min={0} max={2} step={0.05} value={spread} onChange={setSpread} />
             </label>
           </div>
           {error && <div className="error">{error}</div>}
