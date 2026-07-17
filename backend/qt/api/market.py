@@ -1,5 +1,7 @@
 """Scanner, watchlist, and chart-data endpoints."""
 
+from datetime import datetime, timedelta, timezone
+
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
@@ -8,10 +10,13 @@ from qt.broker.alpaca import AlpacaClient, AlpacaError
 from qt.broker.factory import get_client
 from qt.db import get_session
 from qt.models import Asset, AuditLog, WatchlistItem
-from qt.services import scanner
+from qt.services import scanner, stats
 from qt.settings_service import set_setting
 
 router = APIRouter(prefix="/api", tags=["market"])
+
+# Daily bars per symbol, valid for one UTC day (see _daily_bars_cached).
+_daily_cache: dict = {"day": None, "bars": {}}
 
 
 def require_client(session: Session = Depends(get_session)) -> AlpacaClient:
@@ -73,6 +78,29 @@ async def _snapshot_for(client: AlpacaClient, symbol: str, asset_class: str) -> 
     return snapshots.get(symbol)
 
 
+async def _daily_bars_cached(
+    client: AlpacaClient, symbols: list[str], asset_class: str
+) -> dict[str, list[dict]]:
+    """~400 calendar days of daily bars per symbol, cached for the UTC day.
+
+    Daily history only changes once a day, so this is one API call per asset
+    class per day no matter how often the watchlist polls.
+    """
+    if not symbols:
+        return {}
+    today = stats.utc_day()
+    if _daily_cache["day"] != today:
+        _daily_cache.update(day=today, bars={})
+
+    missing = [s for s in symbols if s not in _daily_cache["bars"]]
+    if missing:
+        start = (datetime.now(timezone.utc) - timedelta(days=400)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        fetched = await client.historical_bars(missing, asset_class, "1Day", start)
+        for symbol in missing:
+            _daily_cache["bars"][symbol] = fetched.get(symbol) or []
+    return {s: _daily_cache["bars"].get(s, []) for s in symbols}
+
+
 @router.get("/watchlist")
 async def watchlist(
     session: Session = Depends(get_session), client: AlpacaClient = Depends(require_client)
@@ -91,25 +119,59 @@ async def watchlist(
     except AlpacaError as exc:
         errors.append(f"Quote fetch failed ({exc.status_code}): {exc}")
 
+    # Longer-horizon stats are a bonus: never let them break the price view.
+    daily: dict[str, list[dict]] = {}
+    try:
+        daily.update(await _daily_bars_cached(client, stock_symbols, "stock"))
+        daily.update(await _daily_bars_cached(client, crypto_symbols, "crypto"))
+    except AlpacaError as exc:
+        errors.append(f"History fetch failed ({exc.status_code}): {exc} — 30d/ATR/MA columns unavailable")
+
     rows = []
     for item in items:
         snapshot = quotes.get(item.symbol) or {}
-        daily = snapshot.get("dailyBar") or {}
+        daily_bar = snapshot.get("dailyBar") or {}
         prev = snapshot.get("prevDailyBar") or {}
-        price = daily.get("c")
+        price = daily_bar.get("c")
         change_pct = None
-        if daily.get("c") and prev.get("c"):
-            change_pct = round((daily["c"] - prev["c"]) / prev["c"] * 100, 2)
-        rows.append(
-            {
-                "symbol": item.symbol,
-                "asset_class": item.asset_class,
-                "price": price,
-                "change_pct": change_pct,
-                "added_at": item.added_at.isoformat(),
-            }
-        )
+        if daily_bar.get("c") and prev.get("c"):
+            change_pct = round((daily_bar["c"] - prev["c"]) / prev["c"] * 100, 2)
+        row = {
+            "symbol": item.symbol,
+            "asset_class": item.asset_class,
+            "price": price,
+            "change_pct": change_pct,
+            "added_at": item.added_at.isoformat(),
+        }
+        row.update(stats.compute(daily.get(item.symbol) or [], current_price=price))
+        rows.append(row)
     return {"items": rows, "errors": errors}
+
+
+@router.get("/market/history")
+async def history(
+    symbol: str,
+    asset_class: str = "stock",
+    years: float = 10,
+    client: AlpacaClient = Depends(require_client),
+) -> dict:
+    """Daily price history for the detail chart — as far back as the data
+    plan allows (Alpaca's free stock history starts ~2016)."""
+    symbol = symbol.upper()
+    start = (datetime.now(timezone.utc) - timedelta(days=int(years * 365))).strftime("%Y-%m-%dT%H:%M:%SZ")
+    try:
+        data = await client.historical_bars([symbol], asset_class, "1Day", start)
+    except AlpacaError as exc:
+        raise HTTPException(status_code=502, detail=f"History fetch failed ({exc.status_code}): {exc}")
+    series = data.get(symbol) or []
+    if not series:
+        raise HTTPException(status_code=404, detail=f"No daily history available for {symbol}.")
+    return {
+        "symbol": symbol,
+        "asset_class": asset_class,
+        "bars": [{"t": b["t"], "c": float(b["c"])} for b in series],
+        "stats": stats.compute(series),
+    }
 
 
 @router.post("/watchlist")

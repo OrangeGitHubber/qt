@@ -3,6 +3,28 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Watchlist stats & price history (2026-07-17)
+
+The watchlist now answers "is this symbol worth trading, and can my settings
+even survive it?" at a glance:
+
+- **30 day** — medium-term momentum, closer to a swing strategy's horizon
+  than today's noise.
+- **Daily move ([ATR](https://www.investopedia.com/terms/a/atr.asp))** — how
+  much this symbol typically moves in a day, gaps included. The most
+  decision-relevant number on the page: a trailing stop tighter than ATR will
+  shake you out of good trades for no reason.
+- **vs 200-day average** — the same trend test the regime filter applies to
+  the S&P 500, per symbol.
+
+Columns are toggleable, each explained by a tooltip. They're computed from
+daily bars fetched **once per day** and cached, and if that history fetch
+fails the prices still show — only the extra columns go quiet.
+
+**Click any ticker** for its full price history (as far back as the data plan
+allows — roughly 2016 for stocks) with 1M/6M/1Y/5Y/Max ranges. **Hover the
+line** and the price, date, and change-from-start track your cursor.
+
 ## Symbol search, honest backtest metrics (2026-07-16)
 
 **Type a company name, not a ticker.** Every place you used to type raw

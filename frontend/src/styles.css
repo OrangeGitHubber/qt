@@ -674,6 +674,101 @@ td.detail p {
   font-size: 0.9rem;
 }
 
+/* Symbol detail modal */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  background: rgba(0, 0, 0, 0.65);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 3rem 1rem;
+  overflow-y: auto;
+}
+
+.modal {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 1.25rem;
+  width: min(1000px, 100%);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6);
+}
+
+.range-buttons {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-bottom: 0.5rem;
+  flex-wrap: wrap;
+}
+
+/* only the selected range reads as selected */
+.range-buttons button {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--muted);
+}
+
+.range-buttons button.mode-active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+  outline: none;
+}
+
+.range-buttons .hint {
+  margin: 0 0 0 auto;
+}
+
+button.linklike {
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--accent);
+  font-weight: 700;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+/* Price chart with hover crosshair */
+.pricechart {
+  position: relative;
+}
+
+.pricechart svg {
+  width: 100%;
+  display: block;
+  touch-action: none;
+}
+
+.pc-tip {
+  position: absolute;
+  top: 0.5rem;
+  transform: translateX(0.6rem);
+  background: var(--bg);
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  padding: 0.4rem 0.6rem;
+  font-size: 0.8rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  pointer-events: none;
+  white-space: nowrap;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5);
+}
+
+.pc-tip.flip {
+  transform: translateX(calc(-100% - 0.6rem));
+}
+
+.pc-tip span {
+  color: var(--muted);
+}
+
 /* Danger zone (leverage) */
 .danger-zone {
   border: 1px solid var(--err);

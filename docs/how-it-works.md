@@ -42,7 +42,14 @@ The bot earns trust in rungs. Each rung is a deliberate switch you flip:
   gain, exclusions. Note: free stock data comes from the
   [IEX exchange](https://en.wikipedia.org/wiki/IEX), which sees only a small
   slice of total US volume — the UI labels volumes accordingly.
-- The **watchlist** is your manual list of symbols to always consider.
+- The **watchlist** is your manual list of symbols to always consider. It also
+  shows each symbol's 30-day change, its
+  [ATR](https://www.investopedia.com/terms/a/atr.asp) ("typical daily move"),
+  and how far it sits from its 200-day average — and clicking a ticker opens
+  its full price history. **Use ATR to sanity-check your stops**: a stop
+  tighter than the symbol's ordinary daily move will trigger on noise alone,
+  which is exactly how a strategy ends up with many small losses and no
+  winners.
 - Each **strategy** chooses its universe: scanner, watchlist, or both.
 - Anywhere you choose symbols, search by **ticker or company name**. QT keeps
   a local, daily-refreshed copy of Alpaca's tradable asset list, so

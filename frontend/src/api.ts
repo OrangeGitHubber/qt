@@ -323,6 +323,27 @@ export interface WatchlistRow {
   price: number | null;
   change_pct: number | null;
   added_at: string;
+  change_30d_pct: number | null;
+  atr_pct: number | null;
+  vs_sma200_pct: number | null;
+  bars_available: number;
+}
+
+export interface HistoryResponse {
+  symbol: string;
+  asset_class: string;
+  bars: { t: string; c: number }[];
+  stats: {
+    change_30d_pct: number | null;
+    atr_pct: number | null;
+    vs_sma200_pct: number | null;
+    bars_available: number;
+  };
+}
+
+export function getHistory(symbol: string, assetClass: string, years = 10): Promise<HistoryResponse> {
+  const params = new URLSearchParams({ symbol, asset_class: assetClass, years: String(years) });
+  return fetch(`/api/market/history?${params}`).then((r) => handle(r));
 }
 
 export function getScanner(): Promise<ScannerResult> {

@@ -91,6 +91,24 @@ export const GLOSSARY: Record<string, GlossaryEntry> = {
       "One slice of price history: the open, high, low, close and volume for a period. A '1 hour' bar summarises an hour of trading. Smaller bars = more detail and slower backtests; bigger bars = faster but coarser. Two years of hourly bars for one stock is ~3,500 bars.",
     url: "https://www.investopedia.com/terms/c/candlestick.asp",
   },
+  atr: {
+    term: "ATR — typical daily move",
+    explain:
+      "Average True Range: how much this symbol usually moves in a day, as a % of price (gaps included). It's the noise floor for your stops — a 2% trailing stop on a stock that routinely swings 4% will shake you out of good trades for no reason. Set stops wider than ATR, not tighter.",
+    url: "https://www.investopedia.com/terms/a/atr.asp",
+  },
+  change_30d: {
+    term: "30-day change",
+    explain:
+      "Price change over the last 30 calendar days. Medium-term momentum — slower and less noisy than today's move, and closer to the horizon a swing strategy actually trades on.",
+    url: "https://www.investopedia.com/terms/m/momentum.asp",
+  },
+  sma200: {
+    term: "vs 200-day average",
+    explain:
+      "How far the price sits above (+) or below (−) its 200-day moving average — the same trend test the regime filter applies to the S&P 500, but for this symbol. Above it is generally considered an uptrend; below it, a downtrend.",
+    url: "https://www.investopedia.com/terms/m/movingaverage.asp",
+  },
   capital_deployed: {
     term: "Capital deployed",
     explain:
