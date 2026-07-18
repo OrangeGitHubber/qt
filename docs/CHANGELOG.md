@@ -21,6 +21,11 @@ Readability and clarity fixes across the trading screens.
   purpose is fine and clearly explained: sleeves may overlap, whichever strategy
   trades first draws the shared cash, and the no-leverage rail still caps total
   spending at your real balance — nothing borrows.
+- **Strategies grouped by state.** The Strategies list is now split into
+  **Enabled** (on top) and **Disabled / drafts** sections, and an enabled
+  strategy's badge **glows** with a green-edged card — so which strategies are
+  armed to trade is obvious at a glance. (The engine still has to be on for them
+  to act.)
 
 ## Themed baskets + top-N ranking universe (2026-07-18)
 

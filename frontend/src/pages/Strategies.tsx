@@ -351,6 +351,60 @@ export default function Strategies() {
     }
   }
 
+  const live = (rows ?? []).filter((r) => r.enabled);
+  const paused = (rows ?? []).filter((r) => !r.enabled);
+
+  function strategyCard(r: StrategyRow) {
+    return (
+      <div className={`card${r.enabled ? " card-live" : ""}`} key={r.id}>
+        <h3>
+          {r.name}{" "}
+          <span className={`pill ${r.enabled ? "ok pill-live" : "muted"}`}>
+            {r.enabled ? "● ENABLED" : "disabled"}
+          </span>
+        </h3>
+        <dl>
+          <dt>Trades</dt>
+          <dd>
+            {r.asset_class} ·{" "}
+            {r.universe === "basket"
+              ? `basket "${basketName(r.basket_id)}" · top ${r.top_n} by ${RANK_LABELS[r.rank_by]}`
+              : r.universe}{" "}
+            · {r.swing_mode ? "swing" : "intraday"}
+          </dd>
+          <dt>Entry</dt>
+          <dd>
+            +{r.params.entry.min_day_gain_pct}% day{r.params.entry.require_above_vwap ? ", above VWAP" : ""}
+          </dd>
+          <dt>Exit</dt>
+          <dd>
+            trail {r.params.exit.trailing_stop_pct}% · stop {r.params.exit.stop_loss_pct}%
+            {r.params.exit.take_profit_pct ? ` · target ${r.params.exit.take_profit_pct}%` : ""}
+          </dd>
+          <dt>Sizing</dt>
+          <dd>
+            ${r.sizing_usd} / trade, ${r.sleeve_usd} sleeve, max {r.max_positions}
+          </dd>
+          <dt>Config</dt>
+          <dd>
+            v{r.version} · {r.open_trades ?? 0} open trade(s)
+          </dd>
+        </dl>
+        <div className="toolbar">
+          <button className="small" onClick={() => toggle(r)}>
+            {r.enabled ? "Pause" : "Enable"}
+          </button>
+          <button className="small" onClick={() => setEditing(r)}>
+            Edit
+          </button>
+          <button className="small danger" onClick={() => remove(r)}>
+            Delete
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <>
       <div className="toolbar">
@@ -388,53 +442,25 @@ export default function Strategies() {
           </p>
         </div>
       ) : (
-        <div className="grid">
-          {rows.map((r) => (
-            <div className="card" key={r.id}>
-              <h3>
-                {r.name} <span className={`pill ${r.enabled ? "ok" : "muted"}`}>{r.enabled ? "ENABLED" : "paused"}</span>
+        <>
+          {live.length > 0 && (
+            <section className="strat-section">
+              <h3 className="section-head">
+                Enabled <span className="section-count">{live.length}</span>
+                <span className="section-sub">armed — they trade once the engine is on</span>
               </h3>
-              <dl>
-                <dt>Trades</dt>
-                <dd>
-                  {r.asset_class} ·{" "}
-                  {r.universe === "basket"
-                    ? `basket "${basketName(r.basket_id)}" · top ${r.top_n} by ${RANK_LABELS[r.rank_by]}`
-                    : r.universe}{" "}
-                  · {r.swing_mode ? "swing" : "intraday"}
-                </dd>
-                <dt>Entry</dt>
-                <dd>
-                  +{r.params.entry.min_day_gain_pct}% day{r.params.entry.require_above_vwap ? ", above VWAP" : ""}
-                </dd>
-                <dt>Exit</dt>
-                <dd>
-                  trail {r.params.exit.trailing_stop_pct}% · stop {r.params.exit.stop_loss_pct}%
-                  {r.params.exit.take_profit_pct ? ` · target ${r.params.exit.take_profit_pct}%` : ""}
-                </dd>
-                <dt>Sizing</dt>
-                <dd>
-                  ${r.sizing_usd} / trade, ${r.sleeve_usd} sleeve, max {r.max_positions}
-                </dd>
-                <dt>Config</dt>
-                <dd>
-                  v{r.version} · {r.open_trades ?? 0} open trade(s)
-                </dd>
-              </dl>
-              <div className="toolbar">
-                <button className="small" onClick={() => toggle(r)}>
-                  {r.enabled ? "Pause" : "Enable"}
-                </button>
-                <button className="small" onClick={() => setEditing(r)}>
-                  Edit
-                </button>
-                <button className="small danger" onClick={() => remove(r)}>
-                  Delete
-                </button>
-              </div>
-            </div>
-          ))}
-        </div>
+              <div className="grid">{live.map(strategyCard)}</div>
+            </section>
+          )}
+          {paused.length > 0 && (
+            <section className="strat-section">
+              <h3 className="section-head section-head-muted">
+                Disabled / drafts <span className="section-count">{paused.length}</span>
+              </h3>
+              <div className="grid">{paused.map(strategyCard)}</div>
+            </section>
+          )}
+        </>
       )}
     </>
   );
