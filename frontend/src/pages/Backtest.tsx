@@ -5,6 +5,16 @@ import LineChart, { ChartMarker } from "../components/LineChart";
 import NumberField from "../components/NumberField";
 import SymbolPicker from "../components/SymbolPicker";
 
+type TradeEvent = {
+  at: string; // ISO timestamp — drives ordering
+  action: "Bought" | "Sold";
+  symbol: string;
+  price: number;
+  qty?: number;
+  pnl?: number | null;
+  reason: string;
+};
+
 function Stat({ label, value, tone }: { label: string; value: string; tone?: "up" | "down" }) {
   return (
     <div className="stat">
@@ -47,6 +57,35 @@ export default function Backtest() {
         });
       }
     }
+    return out;
+  }, [result]);
+
+  // Flatten round-trip trades into individual buy/sell actions in time order,
+  // so the log reads like the chart markers: why it bought, then why it sold.
+  const events = useMemo<TradeEvent[]>(() => {
+    if (!result) return [];
+    const out: TradeEvent[] = [];
+    for (const t of result.trade_list) {
+      out.push({
+        at: t.entry_at,
+        action: "Bought",
+        symbol: t.symbol,
+        price: t.entry_price,
+        qty: t.qty,
+        reason: t.entry_reason,
+      });
+      if (t.exit_at) {
+        out.push({
+          at: t.exit_at,
+          action: "Sold",
+          symbol: t.symbol,
+          price: t.exit_price,
+          pnl: t.pnl,
+          reason: t.exit_reason,
+        });
+      }
+    }
+    out.sort((a, b) => new Date(a.at).getTime() - new Date(b.at).getTime());
     return out;
   }, [result]);
 
@@ -304,27 +343,39 @@ export default function Backtest() {
             )}
           </div>
           <div className="card">
-            <h3>Simulated trades ({result.trade_list.length})</h3>
+            <h3>
+              Trade log — every buy and sell in order{" "}
+              <span className="hint">
+                ({events.length} actions across {result.trade_list.length} trades)
+              </span>
+            </h3>
             <table>
               <thead>
                 <tr>
+                  <th>Date</th>
+                  <th>Action</th>
                   <th>Symbol</th>
-                  <th>Entry</th>
-                  <th>Exit</th>
+                  <th>Price</th>
                   <th>P&L</th>
-                  <th>Exit reason</th>
+                  <th>Why</th>
                 </tr>
               </thead>
               <tbody>
-                {result.trade_list.map((t, i) => (
+                {events.map((ev, i) => (
                   <tr key={i}>
-                    <td className="sym">{t.symbol}</td>
-                    <td>
-                      ${t.entry_price} <span className="hint">{new Date(t.entry_at).toLocaleDateString()}</span>
+                    <td>{new Date(ev.at).toLocaleDateString()}</td>
+                    <td className={ev.action === "Bought" ? "up" : "down"}>
+                      {ev.action === "Bought" ? "▲ Bought" : "▼ Sold"}
                     </td>
-                    <td>${t.exit_price}</td>
-                    <td className={(t.pnl ?? 0) >= 0 ? "up" : "down"}>${t.pnl?.toFixed(2)}</td>
-                    <td className="hint">{t.exit_reason}</td>
+                    <td className="sym">{ev.symbol}</td>
+                    <td>
+                      ${ev.price.toFixed(4)}
+                      {ev.qty != null && <span className="hint"> ×{ev.qty}</span>}
+                    </td>
+                    <td className={ev.pnl == null ? "" : ev.pnl >= 0 ? "up" : "down"}>
+                      {ev.pnl == null ? <span className="hint">—</span> : `$${ev.pnl.toFixed(2)}`}
+                    </td>
+                    <td className="hint">{ev.reason}</td>
                   </tr>
                 ))}
               </tbody>
