@@ -2,6 +2,21 @@
 
 Why QT is the way it is. Newest first.
 
+## 2026-07-18 — Crypto scanner uses a rolling 24h window, not the UTC calendar day
+The crypto scanner originally read Alpaca's `dailyBar`/`prevDailyBar` snapshot,
+which defines "today" as the **00:00-UTC calendar day**. That has a real
+operational flaw: for the first several hours of each UTC day the fresh daily
+bar has accumulated almost no volume, so every crypto pair fell under the
+$-volume floor and the scanner effectively skipped crypto until enough traded —
+and the % move was measured from a near-flat fresh open. Switched crypto to a
+**rolling 24-hour** computation from hourly bars (`crypto_bars`, 1Hour, 25):
+change = latest close vs the open ~24h ago; $ volume = sum over the window. This
+removes the timezone boundary entirely (crypto genuinely needs none — it trades
+24/7) and matches the "24h change" every exchange quotes. Stocks are untouched:
+they have a real session, so they keep using Eastern-time trading-day data.
+Volume remains **feed volume** (a slice), so floors must be set to observed
+magnitudes, not real-world figures.
+
 ## 2026-07-18 — Baskets are curated lists, not a sector database; top-N is live-only
 Werner wanted to build strategies by theme ("top 10 from Defense", "test the
 whole Banking basket"). The hard constraint: **Alpaca ships no sector/industry

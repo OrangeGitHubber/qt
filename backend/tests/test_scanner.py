@@ -42,15 +42,20 @@ CRYPTO_ASSETS = [
     {"symbol": "DOGE/USD", "tradable": True},
 ]
 
-CRYPTO_SNAPSHOTS = {
-    "BTC/USD": {
-        "dailyBar": {"c": 105_000.0, "v": 500.0, "vw": 104_000.0},
-        "prevDailyBar": {"c": 100_000.0},
-    },
-    "DOGE/USD": {
-        "dailyBar": {"c": 0.20, "v": 1_000_000.0, "vw": 0.20},
-        "prevDailyBar": {"c": 0.21},  # down on the day
-    },
+
+def _hourly_bars(oldest_open: float, newest_close: float, vw: float, n: int = 24, v: float = 10.0) -> list:
+    """Newest-first hourly bars (as the client returns them, sort=desc). Only
+    the newest close and the oldest open drive the 24h change; every bar's v/vw
+    feeds the $ volume sum."""
+    bars = [{"t": f"2026-07-18T{23 - i:02d}:00:00Z", "o": 0.0, "c": 0.0, "v": v, "vw": vw} for i in range(n)]
+    bars[0]["c"] = newest_close   # most recent
+    bars[-1]["o"] = oldest_open   # ~24h ago
+    return bars
+
+
+CRYPTO_BARS = {
+    "BTC/USD": _hourly_bars(oldest_open=100_000.0, newest_close=105_000.0, vw=104_000.0),   # +5%
+    "DOGE/USD": _hourly_bars(oldest_open=0.21, newest_close=0.20, vw=0.20),                 # down on the day
 }
 
 
@@ -98,19 +103,26 @@ async def test_scan_stocks_sorted_and_capped():
     assert rows[0]["symbol"] == "PENNY"  # biggest gainer when filters allow
 
 
-async def test_scan_crypto_computes_change_and_filters_losers():
+async def test_scan_crypto_rolling_24h_change_and_filters_losers():
     cfg = _cfg(crypto={"min_dollar_volume": 0})
     with (
         patch.object(AlpacaClient, "crypto_assets", new=AsyncMock(return_value=CRYPTO_ASSETS)),
-        patch.object(AlpacaClient, "crypto_snapshots", new=AsyncMock(return_value=CRYPTO_SNAPSHOTS)),
+        patch.object(AlpacaClient, "crypto_bars", new=AsyncMock(return_value=CRYPTO_BARS)),
     ):
         rows, meta = await scanner.scan_crypto(_client(), cfg)
+    # BTC is +5% over the rolling 24h window; DOGE is down and filtered out.
     assert [r["symbol"] for r in rows] == ["BTC/USD"]
     assert rows[0]["change_pct"] == 5.0
-    # DOGE is down on the day but still counts as scanned and can be "best" only
-    # if nothing beats it — BTC (+5%) does, so best is BTC.
+    assert rows[0]["price"] == 105_000.0
+    # DOGE still counts as scanned; BTC (+5%) is the strongest.
     assert meta["scanned"] == 2
     assert meta["best_symbol"] == "BTC/USD"
+    assert meta["best_price"] == 105_000.0
+
+
+def test_rolling_24h_handles_empty_and_missing():
+    assert scanner._rolling_24h([]) is None
+    assert scanner._rolling_24h([{"t": "x", "c": 0, "o": 0}]) is None  # no usable price
 
 
 async def test_scan_reports_errors_instead_of_crashing(db_session):
@@ -118,7 +130,7 @@ async def test_scan_reports_errors_instead_of_crashing(db_session):
         patch.object(AlpacaClient, "clock", new=AsyncMock(return_value={"is_open": True})),
         patch.object(AlpacaClient, "stock_movers", new=AsyncMock(side_effect=RuntimeError("boom"))),
         patch.object(AlpacaClient, "crypto_assets", new=AsyncMock(return_value=[])),
-        patch.object(AlpacaClient, "crypto_snapshots", new=AsyncMock(return_value={})),
+        patch.object(AlpacaClient, "crypto_bars", new=AsyncMock(return_value={})),
     ):
         result = await scanner.scan(db_session, _client())
     assert result["stocks"] == []

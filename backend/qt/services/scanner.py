@@ -101,12 +101,27 @@ def _daily_dollar_volume(snapshot: dict) -> float:
     return float(volume) * float(ref_price)
 
 
-def _change_pct(snapshot: dict) -> float | None:
-    daily = (snapshot.get("dailyBar") or {}).get("c")
-    prev = (snapshot.get("prevDailyBar") or {}).get("c")
-    if not daily or not prev:
+def _rolling_24h(bars: list[dict]) -> tuple[float, float, float] | None:
+    """(price, % change, $ volume) over the trailing ~24h from hourly bars.
+
+    Crypto has no daily close, so we use a ROLLING 24-hour window rather than
+    the 00:00-UTC calendar bar. That removes the timezone boundary entirely
+    (matches how crypto sites quote "24h change") and, crucially, means the
+    scanner isn't blind to crypto for the first hours of each UTC day while a
+    fresh calendar bar slowly accumulates volume.
+    """
+    if not bars:
         return None
-    return (float(daily) - float(prev)) / float(prev) * 100
+    # Newest first (the client requests sort=desc, but sort defensively).
+    window = sorted(bars, key=lambda b: b.get("t", ""), reverse=True)[:24]
+    current = window[0].get("c")
+    oldest = window[-1]
+    ref = oldest.get("o") or oldest.get("c")
+    if not current or not ref:
+        return None
+    change_pct = (float(current) - float(ref)) / float(ref) * 100
+    dollar_volume = sum(float(b.get("v") or 0) * float(b.get("vw") or b.get("c") or 0) for b in window)
+    return float(current), change_pct, dollar_volume
 
 
 def _meta(scanned: int, best: tuple[str, float, float, float] | None) -> dict[str, Any]:
@@ -157,18 +172,19 @@ async def scan_crypto(client: AlpacaClient, cfg: dict) -> tuple[list[dict], dict
     f = cfg["crypto"]
     assets = await client.crypto_assets()
     usd_pairs = [a["symbol"] for a in assets if a["symbol"].endswith("/USD")]
-    snapshots = await client.crypto_snapshots(usd_pairs)
+    # Hourly bars for a rolling 24h read (25 = 24h + the current partial hour),
+    # instead of the 00:00-UTC daily bar. One request for all pairs.
+    bars_by_symbol = await client.crypto_bars(usd_pairs, timeframe="1Hour", limit=25)
 
     rows = []
     scanned = 0
     best: tuple[str, float, float, float] | None = None
-    for symbol, snapshot in snapshots.items():
-        change_pct = _change_pct(snapshot)
-        if change_pct is None:
+    for symbol in usd_pairs:
+        stats = _rolling_24h(bars_by_symbol.get(symbol) or [])
+        if stats is None:
             continue
         scanned += 1
-        price = float((snapshot.get("dailyBar") or {}).get("c") or 0)
-        dollar_volume = _daily_dollar_volume(snapshot)
+        price, change_pct, dollar_volume = stats
         if best is None or change_pct > best[1]:
             best = (symbol, change_pct, price, dollar_volume)
         if _passes(f, cfg["exclude_symbols"], price, change_pct, dollar_volume, symbol):

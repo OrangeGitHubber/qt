@@ -3,6 +3,23 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Scanner: crypto uses a rolling 24-hour window (2026-07-18)
+
+Crypto "Today %" and "$ volume" are now measured over a **rolling 24 hours**
+instead of the 00:00-UTC calendar day.
+
+- **Why.** Crypto trades 24/7 with no real "close," so the old UTC-day bar meant
+  the scanner effectively went blind to crypto for the first hours of each UTC
+  day — the fresh bar hadn't accumulated enough volume to clear the floors yet,
+  and the % move was measured from a near-flat open. A rolling 24h has **no
+  timezone boundary at all** and matches the "24h change" every crypto exchange
+  and price site quotes.
+- **What you'll notice.** Crypto results are stable through the day instead of
+  vanishing after midnight UTC, and the numbers line up with what you'd see on
+  Coinbase/CoinGecko (still a feed *slice*, so smaller than the true market).
+- Stocks are unchanged — they keep using the real trading session in Eastern
+  time.
+
 ## Scanner: "+ Watch" is now a toggle (2026-07-18)
 
 The Scanner's per-row **+ Watch** button now reflects — and changes — whether a
