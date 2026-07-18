@@ -39,9 +39,14 @@ The bot earns trust in rungs. Each rung is a deliberate switch you flip:
   screener, crypto computed from 24h snapshots) and filters them by your
   rules: price range, minimum
   [dollar volume](https://www.investopedia.com/terms/v/volume.asp), minimum
-  gain, exclusions. Note: free stock data comes from the
-  [IEX exchange](https://en.wikipedia.org/wiki/IEX), which sees only a small
-  slice of total US volume — the UI labels volumes accordingly.
+  gain, exclusions. **The "$ volume" you see is feed volume, not the whole
+  market.** Free stock data comes from the
+  [IEX exchange](https://en.wikipedia.org/wiki/IEX) (~2–3% of US volume), and
+  crypto volume comes from Alpaca's aggregated feed and resets at 00:00 UTC — so
+  BTC, which really trades billions a day, can show only a few thousand dollars
+  here. Treat the number as a *relative* liquidity signal for comparing symbols
+  on the same feed, and set the min-volume floors to the magnitudes you actually
+  see in the table, not real-world market figures.
 - The **watchlist** is your manual list of symbols to always consider. It also
   shows each symbol's 30-day change, its
   [ATR](https://www.investopedia.com/terms/a/atr.asp) ("typical daily move"),

@@ -10,6 +10,7 @@ import {
   ScannerResult,
   ScannerRow,
 } from "../api";
+import InfoTip from "../components/InfoTip";
 import NumberField from "../components/NumberField";
 import SymbolPicker from "../components/SymbolPicker";
 
@@ -78,7 +79,9 @@ function MoversTable({
               <th>Symbol</th>
               <th>Price</th>
               <th>Today</th>
-              <th>$ Volume</th>
+              <th>
+                $ Vol (feed) <InfoTip k="dollar_volume" />
+              </th>
               <th></th>
             </tr>
           </thead>

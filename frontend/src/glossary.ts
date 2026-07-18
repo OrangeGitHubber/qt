@@ -38,9 +38,9 @@ export const GLOSSARY: Record<string, GlossaryEntry> = {
     url: "https://www.investopedia.com/terms/m/movingaverage.asp",
   },
   dollar_volume: {
-    term: "Dollar volume",
+    term: "Dollar volume (on Alpaca's feed)",
     explain:
-      "Shares traded × price: how much money changed hands today. Low dollar volume means it may be hard to sell without moving the price. Note: free IEX data sees only a slice of total volume.",
+      "Quantity traded × price. IMPORTANT: this is only what Alpaca's FREE feed saw, not the whole market. Stocks use the IEX exchange (~2–3% of US volume); crypto uses Alpaca's aggregated feed and resets at 00:00 UTC, so early in the UTC day the figure is tiny. So a real BTC day is billions, but this column may show a few thousand — it's a liquidity signal to compare LIKE-for-like across symbols, not the true market total.",
     url: "https://www.investopedia.com/terms/v/volume.asp",
   },
   wash_sale: {
