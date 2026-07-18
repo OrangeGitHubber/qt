@@ -2,6 +2,20 @@
 
 Why QT is the way it is. Newest first.
 
+## 2026-07-18 — Dropped `VOLUME /data` from the Dockerfile
+`VOLUME /data` auto-creates a Docker anonymous volume whenever no bind mount
+is supplied. That silently masked an inverted unraid volume mapping: the app
+ran fine on a throwaway volume until an image refresh recreated the container
+and orphaned it, destroying config, keys and trade history. Removing the
+`VOLUME` line means a missing/misdirected mount instead lands on the
+container's ephemeral layer, where a startup detector (compares the device
+behind `/data` vs `/`, and reads `/proc/self/mountinfo`) can catch it and warn
+loudly. **Deploy implication:** a real bind mount (`-v host:/data`) was already
+required and is now *doubly* required — without any `-v`, data is ephemeral by
+design and the app will say so, rather than pretending to persist.
+The detector is deliberately conservative (only warns when confident) so local
+dev never false-alarms.
+
 ## 2026-07-16 — Symbol directory is local and per-instance
 Autocomplete searches a local mirror of Alpaca's asset list rather than
 calling the API per keystroke (rate limits, latency, and it must work when

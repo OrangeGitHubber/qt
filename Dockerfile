@@ -19,7 +19,13 @@ RUN pip install --no-cache-dir ./backend
 
 COPY --from=frontend /app/dist /app/static
 
-VOLUME /data
+# NOTE: deliberately NO `VOLUME /data`. An anonymous volume silently masks a
+# missing/inverted bind mount (the exact cause of a real data-loss incident):
+# the app appears to work, then an image refresh recreates the container and
+# orphans the volume, taking config, keys and trade history with it. Without
+# the VOLUME line, a missing `-v` writes to the ephemeral image layer, which
+# the startup persistence detector flags loudly instead. See
+# docs/data-persistence.md.
 EXPOSE 8420
 
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \

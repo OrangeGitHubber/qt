@@ -18,6 +18,10 @@ export interface StatusResponse {
   version: string;
   trading_mode: string;
   alpaca_configured: boolean;
+  data_persistent: boolean | null;
+  data_persistent_reason: string;
+  secrets_without_key: boolean;
+  instance_key_created_at: string | null;
   broker: BrokerInfo | null;
   market: MarketInfo | null;
   error: string | null;

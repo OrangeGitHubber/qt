@@ -3,6 +3,28 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Data-loss guard: warns when `/data` isn't persistent (2026-07-18)
+
+QT can now tell when its data folder isn't a real, persistent location — the
+exact silent failure that once wiped a container's config, API keys and trade
+history after an update.
+
+- **Startup detector.** On boot QT checks whether `/data` is a genuine mounted
+  volume or a throwaway spot inside the container. If it's throwaway, it logs a
+  loud error, sends a Slack alert (if configured), and shows a **red banner** in
+  the UI: your data will be lost on the next update, with a link to the fix.
+- **No more masking.** The container image no longer auto-creates a hidden
+  "anonymous" volume that made a wrong volume mapping look like it was working.
+- **"Keys can't be decrypted" is now explained,** not a crash: if the database
+  has saved API keys but the encryption key file is missing, QT says so plainly
+  and tells you how to recover.
+- **Clearer setup docs.** The README, the unraid template, and a new
+  [data-persistence guide](data-persistence.md) spell out that the volume is
+  `your-server-folder : /data` — and warn against auto-updating the live
+  container (e.g. Watchtower) mid-trade.
+- The detector is careful: it only warns when it's sure, so it never nags on a
+  normal developer machine.
+
 ## Steadier chart hover readout (2026-07-18)
 
 The strip above the charts that shows the date and each line's value used to

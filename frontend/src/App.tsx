@@ -96,6 +96,28 @@ export default function App() {
   }
   return (
     <div className="shell">
+      {status.data_persistent === false && (
+        <div className="persist-banner" role="alert">
+          <strong>⚠ Your data directory is not persistent.</strong> Configuration, keys and
+          trade history will be lost the next time this container updates. Fix the{" "}
+          <code>/data</code> volume mapping —{" "}
+          <a
+            href="https://github.com/OrangeGitHubber/qt/blob/main/docs/data-persistence.md"
+            target="_blank"
+            rel="noreferrer"
+          >
+            how to fix this
+          </a>
+          .
+        </div>
+      )}
+      {status.secrets_without_key && (
+        <div className="persist-banner" role="alert">
+          <strong>⚠ Saved API keys can't be decrypted.</strong> The database has encrypted
+          secrets but <code>instance.key</code> is missing. Restore the original key file, or
+          re-enter your Alpaca keys in Setup.
+        </div>
+      )}
       <header>
         <h1>
           QT <span className="subtitle">Auto-Trader</span>

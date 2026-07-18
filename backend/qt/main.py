@@ -57,9 +57,59 @@ def _start_scheduler():
     return scheduler
 
 
+async def _startup_checks() -> None:
+    """Boot-time data-integrity checks: is /data persistent, and are the
+    encrypted secrets still decryptable? Log loudly and Slack-alert on any
+    problem — these are the failures that silently destroy Werner's data."""
+    from qt.db import session_scope
+    from qt.models import Secret
+    from qt.paths import data_dir
+    from qt.services import notify, persistence
+
+    with session_scope() as session:
+        secrets_count = session.query(Secret).count()
+        state = persistence.capture_boot_state(data_dir(), secrets_count)
+
+        if state["data_persistent"] is False:
+            log.error(
+                "DATA PERSISTENCE WARNING: %s. Configuration, keys and trade "
+                "history will be LOST when this container updates. Fix the "
+                "volume mapping (host path -> /data). See docs/data-persistence.md.",
+                state["data_persistent_reason"],
+            )
+            await notify.slack(
+                session,
+                ":rotating_light: *QT data directory is NOT persistent* — "
+                f"{state['data_persistent_reason']}. Configuration, API keys and "
+                "trade history will be lost the next time the container updates. "
+                "Fix the `/data` volume mapping now.",
+            )
+        elif state["data_persistent"] is True:
+            log.info("Data persistence OK: %s", state["data_persistent_reason"])
+
+        if state["secrets_without_key"]:
+            log.error(
+                "SECRETS/KEY MISMATCH: the database holds encrypted secrets but "
+                "%s is missing. The secrets cannot be decrypted. Restore the "
+                "original instance.key, or clear secrets and re-enter your "
+                "Alpaca keys.",
+                data_dir() / "instance.key",
+            )
+            await notify.slack(
+                session,
+                ":rotating_light: *QT cannot decrypt its secrets* — the database "
+                "has encrypted API keys but `instance.key` is missing. Restore "
+                "the key file or re-run setup.",
+            )
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     init_db()
+    try:
+        await _startup_checks()
+    except Exception:
+        log.exception("startup checks failed (non-fatal)")
     scheduler = None
     if os.environ.get("QT_NO_SCHEDULER", "").lower() != "true":
         scheduler = _start_scheduler()
