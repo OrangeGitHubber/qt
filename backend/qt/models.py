@@ -64,7 +64,10 @@ class Strategy(Base):
     name: Mapped[str] = mapped_column(String(80))
     enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     asset_class: Mapped[str] = mapped_column(String(16))  # stock | crypto
-    universe: Mapped[str] = mapped_column(String(16), default="scanner")  # scanner | watchlist | both
+    universe: Mapped[str] = mapped_column(String(16), default="scanner")  # scanner | watchlist | both | basket
+    basket_id: Mapped[int | None] = mapped_column(ForeignKey("baskets.id"), nullable=True)
+    rank_by: Mapped[str] = mapped_column(String(24), default="momentum_today")  # momentum_today | return_30d | relative_strength
+    top_n: Mapped[int] = mapped_column(Integer, default=10)  # basket: take the top N ranked symbols
     preset: Mapped[str] = mapped_column(String(48), default="custom")
     params: Mapped[str] = mapped_column(Text)  # JSON: entry/exit rules
     sizing_usd: Mapped[float] = mapped_column(Float, default=200.0)  # $ per trade
@@ -135,6 +138,34 @@ class Asset(Base):
     exchange: Mapped[str] = mapped_column(String(32), default="")
     fractionable: Mapped[bool] = mapped_column(Boolean, default=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class Basket(Base):
+    """A named group of symbols — a curated theme/sector list (e.g. Defense,
+    Banking). NOT an authoritative sector database: the starter set is
+    hand-picked and drifts as companies change; the user edits freely."""
+
+    __tablename__ = "baskets"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(80))
+    builtin: Mapped[bool] = mapped_column(Boolean, default=False)  # shipped starter; still editable
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class BasketItem(Base):
+    """One (symbol, asset_class) membership in a basket.
+
+    A join table rather than a JSON blob on Basket: members are queryable
+    (join against the Asset directory to validate/annotate them), dedup is a
+    primary-key guarantee, and add/remove is a single-row op with no
+    read-modify-write race."""
+
+    __tablename__ = "basket_items"
+
+    basket_id: Mapped[int] = mapped_column(ForeignKey("baskets.id"), primary_key=True)
+    symbol: Mapped[str] = mapped_column(String(32), primary_key=True)
+    asset_class: Mapped[str] = mapped_column(String(16), primary_key=True)  # stock | crypto
 
 
 class BenchmarkSnapshot(Base):

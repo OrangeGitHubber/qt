@@ -398,6 +398,13 @@ async def _candidates_for(
     session: Session, client: AlpacaClient, strategy: Strategy, scan_result: dict | None
 ):
     """Collect candidates from the strategy's universe. Returns (list, scan_result)."""
+    if strategy.universe == "basket":
+        try:
+            return await _basket_candidates(session, client, strategy), scan_result
+        except AlpacaError as exc:
+            log.warning("basket candidates for '%s' failed: %s", strategy.name, exc)
+            return None
+
     candidates: list[Candidate] = []
     try:
         if strategy.universe in ("scanner", "both"):
@@ -450,6 +457,80 @@ async def _candidates_for(
         log.warning("candidates for '%s' failed: %s", strategy.name, exc)
         return None
     return candidates, scan_result
+
+
+async def _basket_candidates(
+    session: Session, client: AlpacaClient, strategy: Strategy
+) -> list[Candidate]:
+    """Load the strategy's basket, snapshot its members, rank by the chosen
+    metric and return the top-N as candidates. The entry rules still filter
+    these afterward — top-N is the candidate set, not an auto-buy list."""
+    from qt.models import BasketItem
+    from qt.services import ranking, stats
+
+    if strategy.basket_id is None:
+        return []
+    items = (
+        session.query(BasketItem)
+        .filter(
+            BasketItem.basket_id == strategy.basket_id,
+            BasketItem.asset_class == strategy.asset_class,
+        )
+        .all()
+    )
+    symbols = sorted({i.symbol for i in items})
+    if not symbols:
+        return []
+
+    is_stock = strategy.asset_class == "stock"
+    snaps = await (client.stock_snapshots(symbols) if is_stock else client.crypto_snapshots(symbols))
+
+    price_map: dict[str, float] = {}
+    vwap_map: dict[str, float | None] = {}
+    metrics: dict[str, dict[str, float | None]] = {}
+    for sym in symbols:
+        snap = snaps.get(sym) or {}
+        price, vwap = _price_from_snapshot(snap)
+        daily = (snap.get("dailyBar") or {}).get("c")
+        prev = (snap.get("prevDailyBar") or {}).get("c")
+        change = ((daily / prev - 1) * 100) if daily and prev else None
+        if price:
+            price_map[sym] = price
+        vwap_map[sym] = vwap
+        metrics[sym] = {
+            "momentum_today": round(change, 2) if change is not None else None,
+            "return_30d": None,
+            "relative_strength": None,
+        }
+
+    # Bar-based metrics need daily history. Only fetch when the ranking asks for
+    # it — momentum_today rides on the snapshot alone.
+    if strategy.rank_by in ("return_30d", "relative_strength"):
+        lookback_days = 320 if strategy.rank_by == "relative_strength" else 60
+        start = (datetime.now(timezone.utc) - timedelta(days=lookback_days)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        bars_by_symbol = await client.historical_bars(symbols, strategy.asset_class, "1Day", start)
+        for sym in symbols:
+            bars = bars_by_symbol.get(sym) or []
+            cur = price_map.get(sym)
+            metrics[sym]["return_30d"] = stats.pct_change_over(bars, 30, cur)
+            metrics[sym]["relative_strength"] = stats.vs_sma_pct(bars, 200, cur)
+
+    ranked = ranking.rank_symbols(metrics, strategy.rank_by, strategy.top_n)
+    candidates: list[Candidate] = []
+    for sym, _value in ranked:
+        price = price_map.get(sym)
+        if not price:
+            continue
+        candidates.append(
+            Candidate(
+                symbol=sym,
+                asset_class=strategy.asset_class,
+                price=price,
+                change_pct=metrics[sym]["momentum_today"] or 0.0,
+                vwap=vwap_map.get(sym),
+            )
+        )
+    return candidates
 
 
 def _build_rail_context(

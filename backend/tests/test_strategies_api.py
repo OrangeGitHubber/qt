@@ -56,3 +56,36 @@ def test_stop_loss_is_mandatory(client):
 
 def test_sizing_cannot_exceed_sleeve(client):
     assert client.post("/api/strategies", json=_body(sizing_usd=2000, sleeve_usd=1000)).status_code == 422
+
+
+def test_basket_universe_requires_basket_id(client):
+    body = _body(universe="basket")
+    body.pop("basket_id", None)
+    assert client.post("/api/strategies", json=body).status_code == 422
+
+
+def test_basket_universe_rejects_missing_basket(client):
+    assert client.post("/api/strategies", json=_body(universe="basket", basket_id=999999)).status_code == 422
+
+
+def test_basket_strategy_roundtrips(client):
+    bid = client.post("/api/baskets", json={"name": "Roundtrip"}).json()["id"]
+    resp = client.post(
+        "/api/strategies",
+        json=_body(universe="basket", basket_id=bid, rank_by="return_30d", top_n=7),
+    )
+    assert resp.status_code == 200
+    row = resp.json()
+    assert row["universe"] == "basket" and row["basket_id"] == bid
+    assert row["rank_by"] == "return_30d" and row["top_n"] == 7
+    client.delete(f"/api/strategies/{row['id']}")
+    client.delete(f"/api/baskets/{bid}")
+
+
+def test_bad_rank_by_rejected(client):
+    bid = client.post("/api/baskets", json={"name": "BadRank"}).json()["id"]
+    assert (
+        client.post("/api/strategies", json=_body(universe="basket", basket_id=bid, rank_by="dividend_yield")).status_code
+        == 422
+    )
+    client.delete(f"/api/baskets/{bid}")

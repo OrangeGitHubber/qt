@@ -39,7 +39,10 @@ class StrategyParams(BaseModel):
 class StrategyBody(BaseModel):
     name: str = Field(min_length=1, max_length=80)
     asset_class: str = Field(pattern="^(stock|crypto)$")
-    universe: str = Field(default="scanner", pattern="^(scanner|watchlist|both)$")
+    universe: str = Field(default="scanner", pattern="^(scanner|watchlist|both|basket)$")
+    basket_id: int | None = None
+    rank_by: str = Field(default="momentum_today", pattern="^(momentum_today|return_30d|relative_strength)$")
+    top_n: int = Field(default=10, ge=1, le=50)
     preset: str = "custom"
     params: StrategyParams = StrategyParams()
     sizing_usd: float = Field(default=200, ge=10, le=100_000)
@@ -52,6 +55,8 @@ class StrategyBody(BaseModel):
     def _sanity(self) -> "StrategyBody":
         if self.sizing_usd > self.sleeve_usd:
             raise ValueError("Per-trade size cannot exceed the strategy's sleeve budget.")
+        if self.universe == "basket" and self.basket_id is None:
+            raise ValueError("A basket universe needs a basket selected.")
         return self
 
 
@@ -79,6 +84,9 @@ def _serialize(s: Strategy) -> dict:
         "enabled": s.enabled,
         "asset_class": s.asset_class,
         "universe": s.universe,
+        "basket_id": s.basket_id,
+        "rank_by": s.rank_by,
+        "top_n": s.top_n,
         "preset": s.preset,
         "params": json.loads(s.params),
         "sizing_usd": s.sizing_usd,
@@ -114,13 +122,25 @@ def list_strategies(session: Session = Depends(get_session)) -> list[dict]:
     return out
 
 
+def _validate_basket(session: Session, body: StrategyBody) -> None:
+    if body.universe == "basket":
+        from qt.models import Basket
+
+        if not session.get(Basket, body.basket_id):
+            raise HTTPException(status_code=422, detail="Selected basket does not exist.")
+
+
 @router.post("")
 def create_strategy(body: StrategyBody, session: Session = Depends(get_session)) -> dict:
+    _validate_basket(session, body)
     strategy = Strategy(
         name=body.name,
         enabled=False,  # always born disabled; enabling is a deliberate act
         asset_class=body.asset_class,
         universe=body.universe,
+        basket_id=body.basket_id if body.universe == "basket" else None,
+        rank_by=body.rank_by,
+        top_n=body.top_n,
         preset=body.preset,
         params=body.params.model_dump_json(),
         sizing_usd=body.sizing_usd,
@@ -143,9 +163,13 @@ def update_strategy(
     strategy = session.get(Strategy, strategy_id)
     if not strategy:
         raise HTTPException(status_code=404, detail="Strategy not found.")
+    _validate_basket(session, body)
     strategy.name = body.name
     strategy.asset_class = body.asset_class
     strategy.universe = body.universe
+    strategy.basket_id = body.basket_id if body.universe == "basket" else None
+    strategy.rank_by = body.rank_by
+    strategy.top_n = body.top_n
     strategy.preset = body.preset
     strategy.params = body.params.model_dump_json()
     strategy.sizing_usd = body.sizing_usd

@@ -15,8 +15,15 @@ def test_all_tables_exist_after_init(_db):
         "strategy_config_versions",
         "trades",
         "benchmark_snapshots",
+        "baskets",
+        "basket_items",
     }
     assert expected <= tables
+
+
+def test_strategies_has_basket_columns(_db):
+    cols = {c["name"] for c in inspect(engine).get_columns("strategies")}
+    assert {"basket_id", "rank_by", "top_n"} <= cols
 
 
 def test_wal_mode_enabled(_db):

@@ -49,6 +49,12 @@ def init_db() -> None:
         command.stamp(cfg, "0001")
     command.upgrade(cfg, "head")
 
+    # Seed the curated starter baskets once (idempotent — see the function).
+    from qt.services.starter_baskets import seed_starter_baskets
+
+    with session_scope() as session:
+        seed_starter_baskets(session)
+
 
 @contextmanager
 def session_scope() -> Iterator[Session]:
