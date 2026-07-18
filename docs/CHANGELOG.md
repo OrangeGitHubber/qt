@@ -3,6 +3,23 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Crash recovery: reconcile with Alpaca on startup (2026-07-18)
+
+If QT is stopped at the wrong moment — power cut, container restart, a crash
+between placing an order and hearing back — the journal and the broker can drift
+apart. QT now reconciles them on boot and every 15 minutes:
+
+- **Exit we missed?** If the journal thinks a position is open but Alpaca no
+  longer holds it, the exit filled while QT was down. QT closes it in the
+  journal (marked "reconciled") at the last price it knew, so stats stay honest.
+- **A position QT doesn't recognise?** It alerts (log + Slack) and leaves it
+  alone — it never silently adopts a position, since it can't know which
+  strategy it belonged to.
+- **An entry it never confirmed?** It checks the order: filled → finalise it;
+  still working → wait; dead → mark it rejected.
+
+This only runs in paper mode (shadow places no real orders).
+
 ## Data-loss guard: warns when `/data` isn't persistent (2026-07-18)
 
 QT can now tell when its data folder isn't a real, persistent location — the

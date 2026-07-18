@@ -129,6 +129,14 @@ class AlpacaClient:
     async def cancel_order(self, order_id: str) -> None:
         await self._delete(f"/v2/orders/{order_id}")
 
+    async def list_positions(self) -> list[dict[str, Any]]:
+        """All open positions the broker currently holds."""
+        return await self._get("/v2/positions") or []
+
+    async def list_orders(self, status: str = "open", limit: int = 500) -> list[dict[str, Any]]:
+        """Orders by status ('open' | 'closed' | 'all'). Used for reconciliation."""
+        return await self._get("/v2/orders", params={"status": status, "limit": limit}) or []
+
     # ---- Market data API ----
 
     async def stock_movers(self, top: int = 50) -> dict[str, Any]:

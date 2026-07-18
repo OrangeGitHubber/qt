@@ -31,7 +31,12 @@ def _start_scheduler():
     from apscheduler.triggers.interval import IntervalTrigger
 
     from qt.services.engine import tick
-    from qt.services.jobs import daily_summary, snapshot_benchmarks, sync_assets
+    from qt.services.jobs import (
+        daily_summary,
+        reconcile_open_trades,
+        snapshot_benchmarks,
+        sync_assets,
+    )
 
     scheduler = AsyncIOScheduler(timezone="UTC")
 
@@ -53,6 +58,12 @@ def _start_scheduler():
     # full day after one bad download.
     scheduler.add_job(sync_assets, "date", run_date=datetime.now(timezone.utc) + timedelta(seconds=20))
     scheduler.add_job(sync_assets, IntervalTrigger(hours=1), max_instances=1)
+    # Crash-recovery: reconcile the journal against Alpaca shortly after boot,
+    # then every 15 minutes as a backstop for missed exits / orphaned orders.
+    scheduler.add_job(
+        reconcile_open_trades, "date", run_date=datetime.now(timezone.utc) + timedelta(seconds=10)
+    )
+    scheduler.add_job(reconcile_open_trades, IntervalTrigger(minutes=15), max_instances=1, coalesce=True)
     scheduler.start()
     return scheduler
 

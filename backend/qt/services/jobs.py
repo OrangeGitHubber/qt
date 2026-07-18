@@ -32,6 +32,24 @@ async def sync_assets(force: bool = False) -> None:
         log.exception("asset directory sync failed — will retry within the hour")
 
 
+async def reconcile_open_trades() -> None:
+    """Reconcile the journal against Alpaca (startup + periodically). No-op when
+    the engine is off or Alpaca isn't configured."""
+    try:
+        with session_scope() as session:
+            mode = get_mode(session)
+            if mode in ("off", "shadow"):
+                return  # shadow places no real orders — nothing to reconcile
+            client = get_client(session)
+            if client is None:
+                return
+            from qt.services import reconcile
+
+            await reconcile.apply_reconciliation(session, client, mode)
+    except Exception:
+        log.exception("reconciliation job failed")
+
+
 async def snapshot_benchmarks() -> None:
     try:
         with session_scope() as session:
