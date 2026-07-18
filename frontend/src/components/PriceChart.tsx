@@ -8,6 +8,8 @@ export interface PricePoint {
 /** Daily price history with a hover crosshair: move the cursor and the date
  *  and price track the line. Pointer events cover mouse and touch. */
 export default function PriceChart({ points, height = 320 }: { points: PricePoint[]; height?: number }) {
+  // sticky: the last hovered day stays shown after the cursor leaves, so the
+  // price/date can be read without it blanking the moment you move away.
   const [hover, setHover] = useState<number | null>(null);
   const svgRef = useRef<SVGSVGElement>(null);
 
@@ -52,29 +54,33 @@ export default function PriceChart({ points, height = 320 }: { points: PricePoin
 
   return (
     <div className="pricechart">
-      {/* readout sits above the plot so it can't cover the line */}
-      <div className="chart-readout">
-        {!hp ? (
-          <span className="hint">Hover the line for price and date.</span>
-        ) : (
-          <>
-            <strong>${hp.c.toLocaleString(undefined, { maximumFractionDigits: 4 })}</strong>
-            <span>
-              {new Date(hp.t).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" })}
-            </span>
-            <span className={Number(hoverChange) >= 0 ? "up" : "down"}>
-              {Number(hoverChange) >= 0 ? "+" : ""}
-              {hoverChange}% from start of window
-            </span>
-          </>
-        )}
+      {/* Fixed readout above the plot. Price, date and change each have their
+          own permanent slot so only the digits change as the cursor sweeps —
+          the layout never reflows and there is no scrollbar. */}
+      <div className="chart-readout pc-readout" aria-label="Price readout">
+        <div className="cr-price">
+          {!hp ? (
+            <span className="hint">Hover the line for price and date.</span>
+          ) : (
+            `$${hp.c.toLocaleString(undefined, { maximumFractionDigits: 4 })}`
+          )}
+        </div>
+        <div className="cr-meta">
+          <span className="cr-date-slot">
+            {hp
+              ? new Date(hp.t).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" })
+              : "—"}
+          </span>
+          <span className={`cr-change ${hp ? (Number(hoverChange) >= 0 ? "up" : "down") : ""}`}>
+            {hp ? `${Number(hoverChange) >= 0 ? "+" : ""}${hoverChange}% from start of window` : "—"}
+          </span>
+        </div>
       </div>
 
       <svg
         ref={svgRef}
         viewBox={`0 0 ${W} ${H}`}
         onPointerMove={onMove}
-        onPointerLeave={() => setHover(null)}
         role="img"
         aria-label="Price history"
       >

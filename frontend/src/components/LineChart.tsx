@@ -24,6 +24,9 @@ export default function LineChart({
   series: Series[];
   markers?: ChartMarker[];
 }) {
+  // `hover` is sticky: once you've moved over a day it stays selected after the
+  // cursor leaves, so a value can be read without it blanking the instant you
+  // reach for it. It only resets when new data arrives.
   const [hover, setHover] = useState<number | null>(null);
   const svgRef = useRef<SVGSVGElement>(null);
 
@@ -58,36 +61,58 @@ export default function LineChart({
   }
 
   const hoverMarkers = hover !== null ? markers.filter((m) => m.index === hover) : [];
+  const tradeText = hoverMarkers.map((m) => `${m.kind === "buy" ? "▲" : "▼"} ${m.text}`).join("   ·   ");
 
   return (
     <div className="pricechart">
-      {/* fixed strip above the plot: never covers the data, never chases the
-          cursor. min-height reserves the space so nothing jumps. */}
-      <div className="chart-readout">
-        {hover === null ? (
-          <span className="hint">
-            Hover the chart for the date and each line's value
-            {markers.length > 0 ? " — ▲ bought, ▼ sold" : ""}.
-          </span>
-        ) : (
-          <>
-            <strong>{labels[hover]}</strong>
-            {series.map((s) => (
-              <span key={s.label} className="tip-row">
+      {/* Fixed strip above the plot. Every value has a permanent slot in a grid
+          so only the digits change as the cursor sweeps — the layout never
+          reflows, and there is no scrollbar (the strip always fits its rows).
+          The long trade text lives on its own reserved single line, truncated
+          with the full text on hover, so it can't push the numbers around. */}
+      <div className={`chart-readout${markers.length > 0 ? " has-trade" : ""}`} aria-label="Chart readout">
+        <div className="cr-date">
+          {hover === null ? (
+            <span className="hint">
+              Hover the chart for the date and each line's value
+              {markers.length > 0 ? " — ▲ bought, ▼ sold" : ""}.
+            </span>
+          ) : (
+            labels[hover]
+          )}
+        </div>
+        <div className="cr-series" style={{ gridTemplateColumns: `repeat(${series.length}, minmax(0, 1fr))` }}>
+          {series.map((s) => {
+            const v = hover === null ? null : s.values[hover];
+            return (
+              <div key={s.label} className="cr-slot">
                 <span className="swatch" style={{ background: s.color }} />
-                {s.label}:{" "}
-                <b className={(s.values[hover] ?? 0) >= 0 ? "up" : "down"}>
-                  {s.values[hover] == null ? "—" : `${s.values[hover]! >= 0 ? "+" : ""}${s.values[hover]}%`}
-                </b>
-              </span>
-            ))}
-            {hoverMarkers.map((m, i) => (
-              <span key={i} className={m.kind === "buy" ? "up" : "down"}>
-                {m.kind === "buy" ? "▲ " : "▼ "}
-                {m.text}
-              </span>
-            ))}
-          </>
+                <span className="cr-label" title={s.label}>
+                  {s.label}
+                </span>
+                <span className={`cr-val ${v == null ? "" : v >= 0 ? "up" : "down"}`}>
+                  {v == null ? "—" : `${v >= 0 ? "+" : ""}${v}%`}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+        {markers.length > 0 && (
+          <div className="cr-trade" title={tradeText || undefined}>
+            {hover === null ? (
+              <span className="cr-trade-empty">—</span>
+            ) : hoverMarkers.length === 0 ? (
+              <span className="cr-trade-empty">No trade on this day</span>
+            ) : (
+              hoverMarkers.map((m, i) => (
+                <span key={i} className={m.kind === "buy" ? "up" : "down"}>
+                  {i > 0 ? "   ·   " : ""}
+                  {m.kind === "buy" ? "▲ " : "▼ "}
+                  {m.text}
+                </span>
+              ))
+            )}
+          </div>
         )}
       </div>
 
@@ -96,7 +121,6 @@ export default function LineChart({
         viewBox={`0 0 ${W} ${H}`}
         className="linechart"
         onPointerMove={onMove}
-        onPointerLeave={() => setHover(null)}
         role="img"
         aria-label="Performance comparison"
       >

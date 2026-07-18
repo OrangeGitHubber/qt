@@ -3,6 +3,29 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Steadier chart hover readout (2026-07-18)
+
+The strip above the charts that shows the date and each line's value used to
+churn as you moved the cursor: text reflowed and numbers jumped sideways, so a
+figure you were trying to read kept sliding out from under your eye. Sometimes
+a scrollbar appeared on the right — but it was unreachable, because the readout
+blanked the instant the mouse left the chart to go grab it.
+
+- **Every value now has its own fixed slot.** Date, each series (with its
+  colour swatch) and its value all live in a grid that never reflows. Numbers
+  are right-aligned with fixed-width digits, so only the digits change as you
+  sweep — the layout stays put and a specific number holds its position.
+- **No more scrollbar.** The readout always fits its content; nothing scrolls.
+- **The long trade description got its own reserved line** below the numbers
+  (▲ bought / ▼ sold, size, price, P&L, exit reason). It's the item that used
+  to shove everything around; now it's on a single line that truncates with
+  "…" if unusually long, with the full text on hover. The numbers above it no
+  longer move when a trade happens.
+- **The readout is now "sticky."** After you move off the chart it keeps
+  showing the last day you hovered instead of going blank, so your eye can rest
+  on a value. It updates again the moment you move back over the chart.
+- Same treatment on the watchlist price chart (price / date / change).
+
 ## Readable backtest charts (2026-07-17)
 
 - **Fixed: the same asset was drawn twice.** For a crypto strategy the
