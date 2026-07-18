@@ -45,12 +45,17 @@ export interface StrategyParams {
   };
 }
 
+export type RankBy = "momentum_today" | "return_30d" | "relative_strength";
+
 export interface StrategyRow {
   id: number;
   name: string;
   enabled: boolean;
   asset_class: "stock" | "crypto";
-  universe: "scanner" | "watchlist" | "both";
+  universe: "scanner" | "watchlist" | "both" | "basket";
+  basket_id: number | null;
+  rank_by: RankBy;
+  top_n: number;
   preset: string;
   params: StrategyParams;
   sizing_usd: number;
@@ -136,6 +141,35 @@ export const toggleStrategy = (id: number) =>
   fetch(`/api/strategies/${id}/toggle`, { method: "POST" }).then((r) => handle<StrategyRow>(r));
 export const deleteStrategy = (id: number) =>
   fetch(`/api/strategies/${id}`, { method: "DELETE" }).then((r) => handle(r));
+
+export interface BasketMember {
+  symbol: string;
+  asset_class: "stock" | "crypto";
+  in_directory: boolean;
+}
+
+export interface Basket {
+  id: number;
+  name: string;
+  builtin: boolean;
+  created_at: string | null;
+  count: number;
+  symbols: BasketMember[];
+}
+
+export const getBaskets = () => fetch("/api/baskets").then((r) => handle<Basket[]>(r));
+export const createBasket = (name: string) =>
+  fetch("/api/baskets", json({ name })).then((r) => handle<Basket>(r));
+export const renameBasket = (id: number, name: string) =>
+  fetch(`/api/baskets/${id}`, { ...json({ name }), method: "PUT" }).then((r) => handle<Basket>(r));
+export const deleteBasket = (id: number) =>
+  fetch(`/api/baskets/${id}`, { method: "DELETE" }).then((r) => handle(r));
+export const addBasketItem = (id: number, symbol: string, assetClass: "stock" | "crypto") =>
+  fetch(`/api/baskets/${id}/items`, json({ symbol, asset_class: assetClass })).then((r) => handle<Basket>(r));
+export const removeBasketItem = (id: number, symbol: string, assetClass: string) =>
+  fetch(`/api/baskets/${id}/items/${assetClass}/${encodeURIComponent(symbol)}`, { method: "DELETE" }).then((r) =>
+    handle<Basket>(r),
+  );
 
 export const getEngine = () => fetch("/api/engine").then((r) => handle<EngineState>(r));
 export const setEngineMode = (mode: string, confirm = false) =>

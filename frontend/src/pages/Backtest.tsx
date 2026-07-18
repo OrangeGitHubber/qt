@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import { BacktestResult, getStrategies, runBacktest, StrategyRow } from "../api";
+import { Basket, BacktestResult, getBaskets, getStrategies, runBacktest, StrategyRow } from "../api";
 import InfoTip from "../components/InfoTip";
 import LineChart, { ChartMarker } from "../components/LineChart";
 import NumberField from "../components/NumberField";
@@ -17,6 +17,8 @@ function Stat({ label, value, tone }: { label: string; value: string; tone?: "up
 export default function Backtest() {
   const [strategies, setStrategies] = useState<StrategyRow[]>([]);
   const [strategyId, setStrategyId] = useState<number | null>(null);
+  const [baskets, setBaskets] = useState<Basket[]>([]);
+  const [basketNote, setBasketNote] = useState<string | null>(null);
   const [symbols, setSymbols] = useState<string[]>([]);
   const [days, setDays] = useState(90);
   const [timeframe, setTimeframe] = useState("1Hour");
@@ -53,8 +55,29 @@ export default function Backtest() {
       setStrategies(rows);
       if (rows.length && strategyId === null) setStrategyId(rows[0].id);
     });
+    getBaskets().then(setBaskets).catch(() => setBaskets([]));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const assetClass = strategies.find((s) => s.id === strategyId)?.asset_class;
+
+  function loadBasket(id: number) {
+    setBasketNote(null);
+    const basket = baskets.find((b) => b.id === id);
+    if (!basket) return;
+    const all = basket.symbols.filter((m) => !assetClass || m.asset_class === assetClass).map((m) => m.symbol);
+    const capped = all.slice(0, 25);
+    setSymbols(capped);
+    if (all.length === 0) {
+      setBasketNote(`"${basket.name}" has no ${assetClass ?? ""} symbols to test.`);
+    } else if (all.length > 25) {
+      setBasketNote(
+        `Loaded the first 25 of ${all.length} symbols from "${basket.name}" — a backtest is capped at 25 symbols (rate limits).`,
+      );
+    } else {
+      setBasketNote(`Loaded ${capped.length} symbols from "${basket.name}".`);
+    }
+  }
 
   async function run(e: FormEvent) {
     e.preventDefault();
@@ -109,12 +132,21 @@ export default function Backtest() {
                 re-dispatch clicks into it */}
             <div className="field">
               Symbols (none picked = your watchlist)
-              <SymbolPicker
-                assetClass={strategies.find((s) => s.id === strategyId)?.asset_class}
-                value={symbols}
-                onChange={setSymbols}
-                multi
-              />
+              <SymbolPicker assetClass={assetClass} value={symbols} onChange={setSymbols} multi />
+              {baskets.length > 0 && (
+                <select
+                  className="load-basket"
+                  value=""
+                  onChange={(e) => e.target.value && loadBasket(Number(e.target.value))}
+                >
+                  <option value="">Load basket ▾</option>
+                  {baskets.map((b) => (
+                    <option key={b.id} value={b.id}>
+                      {b.name} ({b.count})
+                    </option>
+                  ))}
+                </select>
+              )}
             </div>
             <label>
               History (days)
@@ -137,6 +169,12 @@ export default function Backtest() {
               <NumberField min={0} max={2} step={0.05} value={spread} onChange={setSpread} />
             </label>
           </div>
+          {basketNote && <p className="hint">{basketNote}</p>}
+          <p className="hint">
+            Loading a basket fills the symbols above so you can see exactly what's tested. A backtest tests the{" "}
+            <strong>whole basket's symbol set</strong> over history — it can't reconstruct the historical daily top-N
+            ranking that the live engine does, so top-N is a live entry-selection feature only.
+          </p>
           {error && <div className="error">{error}</div>}
           <button disabled={busy || strategyId === null}>{busy ? "Replaying history…" : "Run backtest"}</button>
         </form>

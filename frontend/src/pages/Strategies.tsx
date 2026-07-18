@@ -1,10 +1,13 @@
 import { useCallback, useEffect, useState } from "react";
 import {
+  Basket,
   createStrategy,
   deleteStrategy,
+  getBaskets,
   getPresets,
   getStrategies,
   Preset,
+  RankBy,
   StrategyRow,
   toggleStrategy,
   updateStrategy,
@@ -12,10 +15,19 @@ import {
 import InfoTip from "../components/InfoTip";
 import NumberField from "../components/NumberField";
 
+const RANK_LABELS: Record<RankBy, string> = {
+  momentum_today: "Today's % move (momentum)",
+  return_30d: "30-day return",
+  relative_strength: "Relative strength (vs 200-day average)",
+};
+
 const EMPTY: Partial<StrategyRow> = {
   name: "",
   asset_class: "stock",
   universe: "scanner",
+  basket_id: null,
+  rank_by: "momentum_today",
+  top_n: 10,
   preset: "custom",
   swing_mode: true,
   ignore_regime: false,
@@ -38,11 +50,13 @@ const EMPTY: Partial<StrategyRow> = {
 function Editor({
   initial,
   presets,
+  baskets,
   onSaved,
   onCancel,
 }: {
   initial: Partial<StrategyRow>;
   presets: Record<string, Preset>;
+  baskets: Basket[];
   onSaved: () => void;
   onCancel: () => void;
 }) {
@@ -118,10 +132,55 @@ function Editor({
             <option value="scanner">Scanner (today's risers)</option>
             <option value="watchlist">Watchlist only</option>
             <option value="both">Scanner + watchlist</option>
+            <option value="basket">Basket (sector/theme)</option>
           </select>
         </label>
       </div>
       {s.preset !== "custom" && presets[s.preset!] && <p className="hint">{presets[s.preset!].description}</p>}
+
+      {s.universe === "basket" && (
+        <>
+          <h4>
+            Basket ranking <InfoTip k="rank_by" />
+          </h4>
+          <div className="filter-grid">
+            <label>
+              Basket
+              <select
+                value={s.basket_id ?? ""}
+                onChange={(e) => setS({ ...s, basket_id: e.target.value ? Number(e.target.value) : null })}
+                required
+              >
+                <option value="">— pick a basket —</option>
+                {baskets.map((b) => (
+                  <option key={b.id} value={b.id}>
+                    {b.name} ({b.count})
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Rank by
+              <select value={s.rank_by} onChange={(e) => setS({ ...s, rank_by: e.target.value as RankBy })}>
+                {(Object.keys(RANK_LABELS) as RankBy[]).map((k) => (
+                  <option key={k} value={k}>
+                    {RANK_LABELS[k]}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Take top N
+              <NumberField step="1" min="1" max="50" value={s.top_n!} onChange={(n) => setS({ ...s, top_n: n })} />
+            </label>
+          </div>
+          <p className="hint">
+            The live engine ranks the basket's members by this metric and considers the top {s.top_n} as candidates
+            (your entry rules still apply). Baskets are <strong>curated lists, not a sector database</strong>. Top-N
+            ranking is a live feature — a backtest of this strategy tests the whole basket over history.
+          </p>
+        </>
+      )}
 
       <h4>Entry rules</h4>
       <div className="filter-grid">
@@ -223,6 +282,7 @@ function Editor({
 export default function Strategies() {
   const [rows, setRows] = useState<StrategyRow[] | null>(null);
   const [presets, setPresets] = useState<Record<string, Preset>>({});
+  const [baskets, setBaskets] = useState<Basket[]>([]);
   const [editing, setEditing] = useState<Partial<StrategyRow> | null>(null);
   const [note, setNote] = useState<string | null>(null);
 
@@ -233,7 +293,10 @@ export default function Strategies() {
   useEffect(() => {
     refresh();
     getPresets().then(setPresets);
+    getBaskets().then(setBaskets).catch(() => setBaskets([]));
   }, [refresh]);
+
+  const basketName = (id: number | null) => baskets.find((b) => b.id === id)?.name ?? `#${id}`;
 
   async function toggle(row: StrategyRow) {
     await toggleStrategy(row.id);
@@ -266,6 +329,7 @@ export default function Strategies() {
         <Editor
           initial={editing}
           presets={presets}
+          baskets={baskets}
           onSaved={() => {
             setEditing(null);
             refresh();
@@ -292,7 +356,11 @@ export default function Strategies() {
               <dl>
                 <dt>Trades</dt>
                 <dd>
-                  {r.asset_class} · {r.universe} · {r.swing_mode ? "swing" : "intraday"}
+                  {r.asset_class} ·{" "}
+                  {r.universe === "basket"
+                    ? `basket "${basketName(r.basket_id)}" · top ${r.top_n} by ${RANK_LABELS[r.rank_by]}`
+                    : r.universe}{" "}
+                  · {r.swing_mode ? "swing" : "intraday"}
                 </dd>
                 <dt>Entry</dt>
                 <dd>

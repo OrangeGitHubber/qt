@@ -1059,3 +1059,14 @@ button.linklike {
 .markdown :first-child {
   margin-top: 0;
 }
+
+/* Baskets */
+.load-basket {
+  margin-top: 6px;
+  width: 100%;
+}
+
+.chip.chip-warn {
+  border-color: var(--warn);
+  color: var(--warn);
+}

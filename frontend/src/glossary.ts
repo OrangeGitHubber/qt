@@ -121,6 +121,18 @@ export const GLOSSARY: Record<string, GlossaryEntry> = {
       "What you'd have made by simply buying the same symbols on day one and doing nothing. If a trading strategy can't beat this, the trading is destroying value — you'd be better off just holding.",
     url: "https://www.investopedia.com/terms/b/buyandhold.asp",
   },
+  basket: {
+    term: "Basket (curated symbol list)",
+    explain:
+      "A named group of symbols you pick — a theme like Defense or Banking. It is NOT an authoritative sector database: Alpaca provides no sector or industry data on this plan, so the starter baskets are hand-picked and yours to edit, and they drift as companies change. A basket is just a convenient, editable list.",
+    url: "https://www.investopedia.com/terms/s/sector.asp",
+  },
+  rank_by: {
+    term: "Top-N ranking",
+    explain:
+      "For a basket universe the live engine snapshots every member, ranks them by the metric you choose, and considers only the top N as buy candidates (your entry rules still apply). Metrics: today's % move, 30-day return, or relative strength (how far price sits above/below its 200-day average). A backtest can't do this — it tests the whole basket over history because the historical daily ranking can't be reconstructed. Top-N is a LIVE feature only.",
+    url: "https://www.investopedia.com/terms/r/relativestrength.asp",
+  },
   trade_rate: {
     term: "Trade-rate limit",
     explain:
