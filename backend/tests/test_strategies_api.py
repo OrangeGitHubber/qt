@@ -82,6 +82,24 @@ def test_basket_strategy_roundtrips(client):
     client.delete(f"/api/baskets/{bid}")
 
 
+def test_custom_universe_requires_symbols(client):
+    assert client.post("/api/strategies", json=_body(universe="custom")).status_code == 422
+    assert client.post("/api/strategies", json=_body(universe="custom", symbols=["  "])).status_code == 422
+
+
+def test_custom_strategy_roundtrips_and_cleans_symbols(client):
+    resp = client.post(
+        "/api/strategies",
+        json=_body(universe="custom", symbols=["spcx", "AAPL", "spcx", " nvda "]),
+    )
+    assert resp.status_code == 200
+    row = resp.json()
+    assert row["universe"] == "custom"
+    # de-duped, upper-cased, trimmed, sorted
+    assert row["symbols"] == ["AAPL", "NVDA", "SPCX"]
+    client.delete(f"/api/strategies/{row['id']}")
+
+
 def test_bad_rank_by_rejected(client):
     bid = client.post("/api/baskets", json={"name": "BadRank"}).json()["id"]
     assert (

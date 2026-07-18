@@ -405,6 +405,16 @@ async def _candidates_for(
             log.warning("basket candidates for '%s' failed: %s", strategy.name, exc)
             return None
 
+    if strategy.universe == "custom":
+        syms = json.loads(strategy.symbols) if strategy.symbols else []
+        if not syms:
+            return [], scan_result
+        try:
+            return await _symbol_candidates(client, strategy.asset_class, syms), scan_result
+        except AlpacaError as exc:
+            log.warning("custom candidates for '%s' failed: %s", strategy.name, exc)
+            return None
+
     candidates: list[Candidate] = []
     try:
         if strategy.universe in ("scanner", "both"):
@@ -457,6 +467,31 @@ async def _candidates_for(
         log.warning("candidates for '%s' failed: %s", strategy.name, exc)
         return None
     return candidates, scan_result
+
+
+async def _symbol_candidates(
+    client: AlpacaClient, asset_class: str, symbols: list[str]
+) -> list[Candidate]:
+    """Build candidates from a hand-picked symbol list (universe="custom").
+    Snapshots each symbol; the strategy's entry rules still filter them — this
+    is the candidate set, not an auto-buy list."""
+    is_stock = asset_class == "stock"
+    snaps = await (client.stock_snapshots(symbols) if is_stock else client.crypto_snapshots(symbols))
+    out: list[Candidate] = []
+    for sym in symbols:
+        snap = snaps.get(sym) or {}
+        price, vwap = _price_from_snapshot(snap)
+        daily = (snap.get("dailyBar") or {}).get("c")
+        prev = (snap.get("prevDailyBar") or {}).get("c")
+        change = ((daily / prev - 1) * 100) if daily and prev else 0.0
+        if price:
+            out.append(
+                Candidate(
+                    symbol=sym, asset_class=asset_class,
+                    price=price, change_pct=round(change, 2), vwap=vwap,
+                )
+            )
+    return out
 
 
 async def _basket_candidates(

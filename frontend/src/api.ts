@@ -52,8 +52,9 @@ export interface StrategyRow {
   name: string;
   enabled: boolean;
   asset_class: "stock" | "crypto";
-  universe: "scanner" | "watchlist" | "both" | "basket";
+  universe: "scanner" | "watchlist" | "both" | "basket" | "custom";
   basket_id: number | null;
+  symbols: string[];
   rank_by: RankBy;
   top_n: number;
   preset: string;

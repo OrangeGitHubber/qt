@@ -39,8 +39,9 @@ class StrategyParams(BaseModel):
 class StrategyBody(BaseModel):
     name: str = Field(min_length=1, max_length=80)
     asset_class: str = Field(pattern="^(stock|crypto)$")
-    universe: str = Field(default="scanner", pattern="^(scanner|watchlist|both|basket)$")
+    universe: str = Field(default="scanner", pattern="^(scanner|watchlist|both|basket|custom)$")
     basket_id: int | None = None
+    symbols: list[str] = []  # for universe="custom": the hand-picked symbol list
     rank_by: str = Field(default="momentum_today", pattern="^(momentum_today|return_30d|relative_strength)$")
     top_n: int = Field(default=10, ge=1, le=50)
     preset: str = "custom"
@@ -57,7 +58,15 @@ class StrategyBody(BaseModel):
             raise ValueError("Per-trade size cannot exceed the strategy's sleeve budget.")
         if self.universe == "basket" and self.basket_id is None:
             raise ValueError("A basket universe needs a basket selected.")
+        if self.universe == "custom" and not [s for s in self.symbols if s.strip()]:
+            raise ValueError("A custom universe needs at least one symbol.")
         return self
+
+    def clean_symbols(self) -> list[str]:
+        """De-duped, upper-cased, non-empty symbols (kept only for custom)."""
+        if self.universe != "custom":
+            return []
+        return sorted({s.strip().upper() for s in self.symbols if s.strip()})
 
 
 def _snapshot(session: Session, strategy: Strategy) -> StrategyConfigVersion:
@@ -85,6 +94,7 @@ def _serialize(s: Strategy) -> dict:
         "asset_class": s.asset_class,
         "universe": s.universe,
         "basket_id": s.basket_id,
+        "symbols": json.loads(s.symbols) if s.symbols else [],
         "rank_by": s.rank_by,
         "top_n": s.top_n,
         "preset": s.preset,
@@ -139,6 +149,7 @@ def create_strategy(body: StrategyBody, session: Session = Depends(get_session))
         asset_class=body.asset_class,
         universe=body.universe,
         basket_id=body.basket_id if body.universe == "basket" else None,
+        symbols=json.dumps(body.clean_symbols()),
         rank_by=body.rank_by,
         top_n=body.top_n,
         preset=body.preset,
@@ -168,6 +179,7 @@ def update_strategy(
     strategy.asset_class = body.asset_class
     strategy.universe = body.universe
     strategy.basket_id = body.basket_id if body.universe == "basket" else None
+    strategy.symbols = json.dumps(body.clean_symbols())
     strategy.rank_by = body.rank_by
     strategy.top_n = body.top_n
     strategy.preset = body.preset

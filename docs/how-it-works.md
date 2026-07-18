@@ -71,7 +71,11 @@ The bot earns trust in rungs. Each rung is a deliberate switch you flip:
   basket's whole symbol set over history, because the historical daily ranking
   can't be reconstructed (the same limitation the scanner has). Dividend-yield
   ranking is deliberately out of scope for now.
-- Each **strategy** chooses its universe: scanner, watchlist, both, or a basket.
+- Each **strategy** chooses its universe: scanner, watchlist, both, a basket, or
+  a **custom** hand-picked symbol list (for a focused, one-off strategy — e.g.
+  just SPCX — without building a whole basket). Whatever the universe, it is
+  scoped to the strategy's **asset class**: a crypto strategy only ever considers
+  crypto and a stock strategy only stocks.
 - Anywhere you choose symbols, search by **ticker or company name**. QT keeps
   a local, daily-refreshed copy of Alpaca's tradable asset list, so
   autocomplete is instant and costs no API calls. It's reference data —

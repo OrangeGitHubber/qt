@@ -3,6 +3,17 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Strategies: custom symbol universe + clearer asset-class scoping (2026-07-18)
+
+- **"Specific symbols" universe.** A strategy can now target a **hand-picked list
+  of symbols** instead of the scanner, watchlist, or a basket — pick exactly the
+  tickers you want (e.g. just SPCX). The engine trades only those, your entry/exit
+  rules still apply, and there's no need to create a whole basket for a one-off.
+- **Asset class made explicit.** The editor now states plainly that a strategy's
+  universe is scoped to its asset class — a **crypto strategy draws only from the
+  crypto** scanner/watchlist/symbols and a **stock strategy only from stocks**,
+  never the other. The symbol search in the custom universe is filtered to match.
+
 ## Scanner: crypto uses a rolling 24-hour window (2026-07-18)
 
 Crypto "Today %" and "$ volume" are now measured over a **rolling 24 hours**

@@ -15,6 +15,7 @@ import {
 } from "../api";
 import InfoTip from "../components/InfoTip";
 import NumberField from "../components/NumberField";
+import SymbolPicker from "../components/SymbolPicker";
 
 const RANK_LABELS: Record<RankBy, string> = {
   momentum_today: "Today's % move (momentum)",
@@ -27,6 +28,7 @@ const EMPTY: Partial<StrategyRow> = {
   asset_class: "stock",
   universe: "scanner",
   basket_id: null,
+  symbols: [],
   rank_by: "momentum_today",
   top_n: 10,
   preset: "custom",
@@ -149,9 +151,16 @@ function Editor({
             <option value="watchlist">Watchlist only</option>
             <option value="both">Scanner + watchlist</option>
             <option value="basket">Basket (sector/theme)</option>
+            <option value="custom">Specific symbols (pick your own)</option>
           </select>
         </label>
       </div>
+      <p className="hint">
+        This is a <strong>{s.asset_class === "crypto" ? "crypto" : "stocks"}</strong> strategy, so its universe is{" "}
+        {s.asset_class === "crypto" ? "crypto" : "stocks"}-only: it draws from the{" "}
+        {s.asset_class === "crypto" ? "crypto" : "stocks"} side of the scanner/watchlist and never sees{" "}
+        {s.asset_class === "crypto" ? "stocks" : "crypto"}. Change <em>Asset class</em> above to trade the other.
+      </p>
       {s.preset !== "custom" && presets[s.preset!] && <p className="hint">{presets[s.preset!].description}</p>}
 
       {s.universe === "basket" && (
@@ -194,6 +203,28 @@ function Editor({
             The live engine ranks the basket's members by this metric and considers the top {s.top_n} as candidates
             (your entry rules still apply). Baskets are <strong>curated lists, not a sector database</strong>. Top-N
             ranking is a live feature — a backtest of this strategy tests the whole basket over history.
+          </p>
+        </>
+      )}
+
+      {s.universe === "custom" && (
+        <>
+          <h4>Specific symbols</h4>
+          <div className="field">
+            {s.asset_class === "crypto" ? "Crypto pairs" : "Stocks"} to trade
+            <SymbolPicker
+              assetClass={s.asset_class}
+              value={s.symbols ?? []}
+              onChange={(syms) => setS({ ...s, symbols: syms })}
+              multi
+              placeholder={s.asset_class === "crypto" ? "Search: bitcoin or BTC/USD" : "Search: SPCX or a company name"}
+            />
+          </div>
+          <p className="hint">
+            The engine considers <strong>exactly these symbols</strong> each cycle (your entry and exit rules still
+            apply). Good for a focused, one-off strategy — e.g. just SPCX — without building a whole basket. Only{" "}
+            {s.asset_class === "crypto" ? "crypto pairs" : "stocks"} are searchable here because this is a{" "}
+            {s.asset_class === "crypto" ? "crypto" : "stocks"} strategy.
           </p>
         </>
       )}
@@ -369,6 +400,8 @@ export default function Strategies() {
             {r.asset_class} ·{" "}
             {r.universe === "basket"
               ? `basket "${basketName(r.basket_id)}" · top ${r.top_n} by ${RANK_LABELS[r.rank_by]}`
+              : r.universe === "custom"
+              ? `custom: ${r.symbols.join(", ") || "(none)"}`
               : r.universe}{" "}
             · {r.swing_mode ? "swing" : "intraday"}
           </dd>

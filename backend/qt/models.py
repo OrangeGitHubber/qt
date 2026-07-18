@@ -64,8 +64,9 @@ class Strategy(Base):
     name: Mapped[str] = mapped_column(String(80))
     enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     asset_class: Mapped[str] = mapped_column(String(16))  # stock | crypto
-    universe: Mapped[str] = mapped_column(String(16), default="scanner")  # scanner | watchlist | both | basket
+    universe: Mapped[str] = mapped_column(String(16), default="scanner")  # scanner | watchlist | both | basket | custom
     basket_id: Mapped[int | None] = mapped_column(ForeignKey("baskets.id"), nullable=True)
+    symbols: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON list for universe="custom"
     rank_by: Mapped[str] = mapped_column(String(24), default="momentum_today")  # momentum_today | return_30d | relative_strength
     top_n: Mapped[int] = mapped_column(Integer, default=10)  # basket: take the top N ranked symbols
     preset: Mapped[str] = mapped_column(String(48), default="custom")
