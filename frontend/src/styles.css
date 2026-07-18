@@ -489,6 +489,28 @@ label.check input {
   outline: 2px solid var(--accent);
 }
 
+/* Mode switch is a single-choice selector: only the current mode is filled;
+   the others read as inactive/clickable. Without this the base filled-blue
+   button style makes all three look active. */
+.mode-switch button {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  outline: none;
+  font-weight: 500;
+}
+.mode-switch button:hover {
+  border-color: var(--accent);
+  color: var(--text);
+}
+.mode-switch button.mode-active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+  font-weight: 600;
+  cursor: default;
+}
+
 .scoreboard {
   margin-top: 1rem;
 }
