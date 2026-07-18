@@ -60,14 +60,17 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-to: type=gha,mode=max
           cache-from: type=gha
-      - name: Scan image for HIGH/CRITICAL vulnerabilities
+      - name: Scan image for fixable HIGH/CRITICAL vulnerabilities
         uses: aquasecurity/trivy-action@0.24.0
         with:
           image-ref: qt-scan:candidate
           format: table
           exit-code: "1"            # fail the build on a finding
           severity: HIGH,CRITICAL
-          trivyignores: .trivyignore  # allowlist escape hatch
+          ignore-unfixed: true      # only gate on vulns that HAVE a fix — base
+                                    # images always carry unfixable OS CVEs, and
+                                    # failing on those would block every publish
+          trivyignores: .trivyignore  # allowlist escape hatch for the rest
       # Only reached if the scan passed. Reuses the buildx cache, so it's fast.
       - name: Publish image
         uses: docker/build-push-action@v6
