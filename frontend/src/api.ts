@@ -345,6 +345,8 @@ export interface ScannerMeta {
   scanned: number;
   best_symbol: string | null;
   best_change_pct: number | null;
+  best_price: number | null;
+  best_dollar_volume: number | null;
 }
 
 export interface ScannerResult {

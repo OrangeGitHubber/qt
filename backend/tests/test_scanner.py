@@ -78,10 +78,13 @@ async def test_scan_stocks_applies_all_filters():
     assert "THIN" not in symbols    # under dollar-volume floor
     assert "MEH" not in symbols     # under min_change_pct
     assert "BANNED" not in symbols  # excluded (case-insensitive)
-    # Diagnostics report the strongest mover seen regardless of filters.
+    # Diagnostics report the strongest mover seen regardless of filters,
+    # with its price and $ volume so the UI can name the exact blocking floor.
     assert meta["scanned"] == 5
     assert meta["best_symbol"] == "PENNY"
     assert meta["best_change_pct"] == 40.0
+    assert meta["best_price"] == 0.7
+    assert meta["best_dollar_volume"] == round(90_000_000 * 0.65)
 
 
 async def test_scan_stocks_sorted_and_capped():

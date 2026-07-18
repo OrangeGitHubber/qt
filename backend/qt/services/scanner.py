@@ -109,13 +109,16 @@ def _change_pct(snapshot: dict) -> float | None:
     return (float(daily) - float(prev)) / float(prev) * 100
 
 
-def _meta(scanned: int, best: tuple[str, float] | None) -> dict[str, Any]:
+def _meta(scanned: int, best: tuple[str, float, float, float] | None) -> dict[str, Any]:
     """Diagnostics so an empty panel can explain itself: how many symbols had
-    usable data, and the strongest mover seen (before filtering)."""
+    usable data, and the strongest mover seen (before filtering) with its price
+    and $ volume — so the UI can name the exact floor that stopped it."""
     return {
         "scanned": scanned,
         "best_symbol": best[0] if best else None,
         "best_change_pct": round(best[1], 2) if best else None,
+        "best_price": round(best[2], 4) if best else None,
+        "best_dollar_volume": round(best[3]) if best else None,
     }
 
 
@@ -127,7 +130,7 @@ async def scan_stocks(client: AlpacaClient, cfg: dict) -> tuple[list[dict], dict
     snapshots = await client.stock_snapshots(symbols)
 
     rows = []
-    best: tuple[str, float] | None = None
+    best: tuple[str, float, float, float] | None = None
     for gainer in gainers:
         symbol = gainer["symbol"]
         snapshot = snapshots.get(symbol) or {}
@@ -135,7 +138,7 @@ async def scan_stocks(client: AlpacaClient, cfg: dict) -> tuple[list[dict], dict
         change_pct = float(gainer.get("percent_change") or 0)
         dollar_volume = _daily_dollar_volume(snapshot)
         if best is None or change_pct > best[1]:
-            best = (symbol, change_pct)
+            best = (symbol, change_pct, price, dollar_volume)
         if _passes(f, cfg["exclude_symbols"], price, change_pct, dollar_volume, symbol):
             rows.append(
                 {
@@ -158,7 +161,7 @@ async def scan_crypto(client: AlpacaClient, cfg: dict) -> tuple[list[dict], dict
 
     rows = []
     scanned = 0
-    best: tuple[str, float] | None = None
+    best: tuple[str, float, float, float] | None = None
     for symbol, snapshot in snapshots.items():
         change_pct = _change_pct(snapshot)
         if change_pct is None:
@@ -167,7 +170,7 @@ async def scan_crypto(client: AlpacaClient, cfg: dict) -> tuple[list[dict], dict
         price = float((snapshot.get("dailyBar") or {}).get("c") or 0)
         dollar_volume = _daily_dollar_volume(snapshot)
         if best is None or change_pct > best[1]:
-            best = (symbol, change_pct)
+            best = (symbol, change_pct, price, dollar_volume)
         if _passes(f, cfg["exclude_symbols"], price, change_pct, dollar_volume, symbol):
             rows.append(
                 {

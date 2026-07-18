@@ -4,6 +4,7 @@ import {
   getScanner,
   getScannerConfig,
   saveScannerConfig,
+  ScannerClassFilters,
   ScannerConfig,
   ScannerMeta,
   ScannerResult,
@@ -18,14 +19,27 @@ function volume(v: number) {
   return `$${Math.round(v / 1e3)}k`;
 }
 
-function EmptyReason({ meta, minGain }: { meta: ScannerMeta | null; minGain: number }) {
+// Name the FIRST floor the top mover tripped, in the same order the backend
+// filters — so the message points at the real blocker, not just "min gain".
+function blockedReason(meta: ScannerMeta, f: ScannerClassFilters): string {
+  const price = meta.best_price ?? 0;
+  const vol = meta.best_dollar_volume ?? 0;
+  if (f.min_price && price < f.min_price) return `below your $${f.min_price} min price`;
+  if (f.max_price && price > f.max_price) return `above your $${f.max_price} max price`;
+  if ((meta.best_change_pct ?? 0) < f.min_change_pct) return `below your ${f.min_change_pct}% min gain`;
+  if (vol < f.min_dollar_volume) return `below your ${volume(f.min_dollar_volume)} min volume`;
+  return "on your exclude list";
+}
+
+function EmptyReason({ meta, filters }: { meta: ScannerMeta | null; filters: ScannerClassFilters }) {
   if (meta && meta.scanned > 0 && meta.best_symbol) {
     return (
       <p className="hint">
         Scanned {meta.scanned} symbol{meta.scanned === 1 ? "" : "s"} — the strongest was{" "}
         <strong>{meta.best_symbol}</strong> at {(meta.best_change_pct ?? 0) >= 0 ? "+" : ""}
-        {meta.best_change_pct}%, which didn't clear your filters (min gain {minGain}%, plus the price and
-        volume floors). Nothing is rising enough right now — not an error.
+        {meta.best_change_pct}% (${meta.best_price?.toLocaleString(undefined, { maximumFractionDigits: 4 })},{" "}
+        {volume(meta.best_dollar_volume ?? 0)} vol), but it's <strong>{blockedReason(meta, filters)}</strong>. No
+        symbol currently clears every filter at once — not an error.
       </p>
     );
   }
@@ -36,14 +50,14 @@ function MoversTable({
   title,
   rows,
   meta,
-  minGain,
+  filters,
   marketClosed,
   onPin,
 }: {
   title: string;
   rows: ScannerRow[];
   meta: ScannerMeta | null;
-  minGain: number;
+  filters: ScannerClassFilters;
   marketClosed?: boolean;
   onPin: (r: ScannerRow) => void;
 }) {
@@ -56,7 +70,7 @@ function MoversTable({
         </p>
       )}
       {rows.length === 0 ? (
-        <EmptyReason meta={meta} minGain={minGain} />
+        <EmptyReason meta={meta} filters={filters} />
       ) : (
         <table>
           <thead>
@@ -237,22 +251,22 @@ export default function Scanner() {
         </div>
       ))}
       <div className="grid">
-        {result && cfg?.stocks.enabled !== false && (
+        {result && cfg && cfg.stocks.enabled !== false && (
           <MoversTable
             title="Stocks"
             rows={result.stocks}
             meta={result.stocks_meta}
-            minGain={cfg?.stocks.min_change_pct ?? 0}
+            filters={cfg.stocks}
             marketClosed={result.market_open === false}
             onPin={pin}
           />
         )}
-        {result && cfg?.crypto.enabled !== false && (
+        {result && cfg && cfg.crypto.enabled !== false && (
           <MoversTable
             title="Crypto"
             rows={result.crypto}
             meta={result.crypto_meta}
-            minGain={cfg?.crypto.min_change_pct ?? 0}
+            filters={cfg.crypto}
             onPin={pin}
           />
         )}
