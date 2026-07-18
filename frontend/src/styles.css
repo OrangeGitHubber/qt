@@ -320,6 +320,26 @@ tr:last-child td {
   margin-top: 0.4rem;
 }
 
+/* Sleeve-allocation readout in the strategy editor. Informational, not an
+   error — overlapping sleeves (total > equity) are allowed by design. */
+.sleeve-readout {
+  margin: 0.75rem 0 0;
+  padding: 0.6rem 0.8rem;
+  border-left: 3px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--muted);
+  font-size: 0.9rem;
+  line-height: 1.4;
+}
+.sleeve-readout.over {
+  border-left-color: var(--warn);
+  color: var(--text);
+}
+.sleeve-readout strong {
+  color: var(--text);
+}
+
 .addform {
   display: flex;
   gap: 0.75rem;

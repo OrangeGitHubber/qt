@@ -3,6 +3,25 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Backtest & strategy UI polish (2026-07-18)
+
+Readability and clarity fixes across the trading screens.
+
+- **Backtest form, tidier.** The controls are grouped into *what* to test
+  (strategy + a now-wider symbol search) and *how* to test it (history, bar
+  size, cash, spread), so fields line up instead of scattering around the tall
+  symbol picker.
+- **Backtest "Trade log".** The results table is now a **time-ordered log of
+  every buy and sell** — date on the left, one row per action. Each buy shows
+  *why it bought* (the entry rule that fired, e.g. "up 5.2% today, above VWAP")
+  and each sell shows its exit reason and the trade's P&L. Previously each
+  round-trip was one row that only showed the exit reason.
+- **Live sleeve-allocation readout.** Editing a strategy now shows the **sum of
+  all strategy sleeves against your live Alpaca equity**. Over-allocating on
+  purpose is fine and clearly explained: sleeves may overlap, whichever strategy
+  trades first draws the shared cash, and the no-leverage rail still caps total
+  spending at your real balance — nothing borrows.
+
 ## Themed baskets + top-N ranking universe (2026-07-18)
 
 Build strategies by **theme/sector** instead of hand-picking tickers every time.

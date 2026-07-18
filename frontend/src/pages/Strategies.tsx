@@ -5,6 +5,7 @@ import {
   deleteStrategy,
   getBaskets,
   getPresets,
+  getStatus,
   getStrategies,
   Preset,
   RankBy,
@@ -51,17 +52,32 @@ function Editor({
   initial,
   presets,
   baskets,
+  allStrategies,
+  equity,
   onSaved,
   onCancel,
 }: {
   initial: Partial<StrategyRow>;
   presets: Record<string, Preset>;
   baskets: Basket[];
+  allStrategies: StrategyRow[];
+  equity: number | null;
   onSaved: () => void;
   onCancel: () => void;
 }) {
   const [s, setS] = useState<Partial<StrategyRow>>(JSON.parse(JSON.stringify(initial)));
   const [error, setError] = useState<string | null>(null);
+
+  // Live sleeve-allocation readout. Sleeves are allowed to overlap (sum > equity)
+  // on purpose — whichever strategy trades first draws the shared cash, and the
+  // no-leverage rail caps total spending at real equity. So this only informs,
+  // never blocks.
+  const otherSleeves = allStrategies
+    .filter((r) => r.id !== s.id)
+    .reduce((sum, r) => sum + (r.sleeve_usd || 0), 0);
+  const totalSleeves = otherSleeves + (s.sleeve_usd || 0);
+  const overAllocated = equity != null && totalSleeves > equity;
+  const money = (n: number) => `$${Math.round(n).toLocaleString()}`;
 
   function applyPreset(key: string) {
     if (key === "custom") {
@@ -268,6 +284,25 @@ function Editor({
           Ignore regime filter (not recommended) <InfoTip k="regime_filter" />
         </label>
       </div>
+      <p className={`sleeve-readout${overAllocated ? " over" : ""}`}>
+        All strategy sleeves total <strong>{money(totalSleeves)}</strong>
+        {equity != null ? (
+          <>
+            {" "}
+            of your <strong>{money(equity)}</strong> Alpaca equity.
+            {overAllocated && (
+              <>
+                {" "}
+                That's more than your balance — which is fine: sleeves may overlap on purpose, so
+                whichever strategy trades first draws the shared cash, and the no-leverage rail caps
+                total spending at your real equity. Nothing borrows.
+              </>
+            )}
+          </>
+        ) : (
+          <> across all strategies. Connect Alpaca to compare against your live balance.</>
+        )}
+      </p>
       {error && <div className="error">{error}</div>}
       <div className="toolbar">
         <button>{s.id ? "Save (creates new config version)" : "Create strategy"}</button>
@@ -285,6 +320,7 @@ export default function Strategies() {
   const [baskets, setBaskets] = useState<Basket[]>([]);
   const [editing, setEditing] = useState<Partial<StrategyRow> | null>(null);
   const [note, setNote] = useState<string | null>(null);
+  const [equity, setEquity] = useState<number | null>(null);
 
   const refresh = useCallback(() => {
     getStrategies().then(setRows).catch((e: Error) => setNote(e.message));
@@ -294,6 +330,9 @@ export default function Strategies() {
     refresh();
     getPresets().then(setPresets);
     getBaskets().then(setBaskets).catch(() => setBaskets([]));
+    getStatus()
+      .then((st) => setEquity(st.broker ? Number(st.broker.equity) : null))
+      .catch(() => setEquity(null));
   }, [refresh]);
 
   const basketName = (id: number | null) => baskets.find((b) => b.id === id)?.name ?? `#${id}`;
@@ -330,6 +369,8 @@ export default function Strategies() {
           initial={editing}
           presets={presets}
           baskets={baskets}
+          allStrategies={rows ?? []}
+          equity={equity}
           onSaved={() => {
             setEditing(null);
             refresh();
