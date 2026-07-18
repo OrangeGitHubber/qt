@@ -11,12 +11,12 @@
   "dependencies": {
     "dompurify": "^3.1.6",
     "marked": "^13.0.3",
-    "react": "^18.3.1",
+    "react": "^19.2.7",
     "react-dom": "^18.3.1"
   },
   "devDependencies": {
     "@types/dompurify": "^3.0.5",
-    "@types/react": "^18.3.3",
+    "@types/react": "^19.2.17",
     "@types/react-dom": "^18.3.0",
     "@vitejs/plugin-react": "^4.3.1",
     "typescript": "^5.5.3",
