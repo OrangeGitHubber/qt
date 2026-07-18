@@ -2,6 +2,25 @@
 
 Why QT is the way it is. Newest first.
 
+## 2026-07-18 — About page renders the living docs, served by the backend
+The About page must never drift out of date, so it is sourced from the
+maintained markdown files, not a hardcoded copy: `docs/CHANGELOG.md` (the
+plain-English "what changed", already updated on every change) and the new
+`docs/roadmap.md` (now the canonical in-repo roadmap — keep it current when
+plans move). **These two files are the living sources for the About page and
+must be kept up to date.**
+
+Rendering approach chosen: **the backend serves the docs** (`/api/about/...`
+reads the files at request time; the image `COPY`s `docs/` to `/app/docs`).
+Preferred over baking the markdown into the frontend bundle because it's more
+robust for a self-hoster — the page reflects the docs in the running image with
+no frontend rebuild, and the same `/api/about` endpoint carries the build
+identity. The build id (git short-SHA + build date) is threaded
+Dockerfile → CI (`GIT_SHA`/`BUILD_DATE` build args on both image builds) →
+backend env (`QT_GIT_SHA`/`QT_BUILD_DATE`) → `/api/about` → UI, with a
+`git rev-parse` fallback for local/dev, so "what changed per build" sits next to
+the exact commit the container was made from.
+
 ## 2026-07-18 — Dropped `VOLUME /data` from the Dockerfile
 `VOLUME /data` auto-creates a Docker anonymous volume whenever no bind mount
 is supplied. That silently masked an inverted unraid volume mapping: the app

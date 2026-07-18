@@ -3,6 +3,21 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## About page — build identity, changelog & roadmap (2026-07-18)
+
+A new **About** tab answers "which build am I running, what changed, and where
+is this going?"
+
+- **Which build.** Shows the app version, license (GPLv3), a link to the
+  GitHub repo, and — importantly — the **exact commit and build date** this
+  container was made from, so a bug report can name the precise build. (Locally
+  it falls back to your working commit, or "dev".)
+- **What changed.** Renders this changelog itself, straight from the maintained
+  `docs/CHANGELOG.md` — so it's always current, never a separate copy that can
+  drift.
+- **Roadmap.** A new plain-English [roadmap](roadmap.md) of every phase (0–6),
+  what's shipped versus planned, sourced the same way from `docs/roadmap.md`.
+
 ## CI security scanning + release hygiene (2026-07-18)
 
 - **Dependabot** now watches the Python, npm, and GitHub Actions dependencies
