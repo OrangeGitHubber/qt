@@ -79,6 +79,19 @@ history after an update.
 - The detector is careful: it only warns when it's sure, so it never nags on a
   normal developer machine.
 
+## Backtest trade detail moved below the chart (2026-07-18)
+
+Follow-up to the readout work: the per-day trade description was still cramped
+into the fixed strip above the chart, so a busy day's text ran off the right
+edge (hidden behind an ellipsis) and the bottom row's descenders were clipped.
+There's no fixed height that both fits variable, multi-trade text and keeps the
+chart from moving — so the trade detail now lives **below** the chart, where it
+wraps to as many lines as the day needs and is read in full. Its growth pushes
+the legend down, never the chart. The strip above stays put with just the date
+and each line's value (always two rows, so it never clips or shifts). Verified:
+readout doesn't clip, trade text isn't truncated, chart top moves 0px between a
+busy day and a quiet one.
+
 ## Steadier chart hover readout (2026-07-18)
 
 The strip above the charts that shows the date and each line's value used to

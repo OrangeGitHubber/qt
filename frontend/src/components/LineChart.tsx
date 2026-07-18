@@ -61,26 +61,17 @@ export default function LineChart({
   }
 
   const hoverMarkers = hover !== null ? markers.filter((m) => m.index === hover) : [];
-  const tradeText = hoverMarkers.map((m) => `${m.kind === "buy" ? "▲" : "▼"} ${m.text}`).join("   ·   ");
 
   return (
     <div className="pricechart">
-      {/* Fixed strip above the plot. Every value has a permanent slot in a grid
-          so only the digits change as the cursor sweeps — the layout never
-          reflows, and there is no scrollbar (the strip always fits its rows).
-          The long trade text lives on its own reserved single line, truncated
-          with the full text on hover, so it can't push the numbers around. */}
-      <div className={`chart-readout${markers.length > 0 ? " has-trade" : ""}`} aria-label="Chart readout">
-        <div className="cr-date">
-          {hover === null ? (
-            <span className="hint">
-              Hover the chart for the date and each line's value
-              {markers.length > 0 ? " — ▲ bought, ▼ sold" : ""}.
-            </span>
-          ) : (
-            labels[hover]
-          )}
-        </div>
+      {/* Fixed strip above the plot: date + one slot per series. It is always
+          exactly two rows (date line, series line) so its height is constant —
+          the chart below never shifts — and only the digits inside the fixed
+          slots change as the cursor sweeps. The variable-length TRADE detail is
+          deliberately NOT here; it lives below the chart so it can wrap and be
+          read in full without pushing these numbers (or the chart) around. */}
+      <div className="chart-readout" aria-label="Chart readout">
+        <div className="cr-date">{hover === null ? "Hover the chart for values" : labels[hover]}</div>
         <div className="cr-series" style={{ gridTemplateColumns: `repeat(${series.length}, minmax(0, 1fr))` }}>
           {series.map((s) => {
             const v = hover === null ? null : s.values[hover];
@@ -97,23 +88,6 @@ export default function LineChart({
             );
           })}
         </div>
-        {markers.length > 0 && (
-          <div className="cr-trade" title={tradeText || undefined}>
-            {hover === null ? (
-              <span className="cr-trade-empty">—</span>
-            ) : hoverMarkers.length === 0 ? (
-              <span className="cr-trade-empty">No trade on this day</span>
-            ) : (
-              hoverMarkers.map((m, i) => (
-                <span key={i} className={m.kind === "buy" ? "up" : "down"}>
-                  {i > 0 ? "   ·   " : ""}
-                  {m.kind === "buy" ? "▲ " : "▼ "}
-                  {m.text}
-                </span>
-              ))
-            )}
-          </div>
-        )}
       </div>
 
       <svg
@@ -165,6 +139,29 @@ export default function LineChart({
         <text x={padL} y={H - 8} className="chart-label">{labels[0]}</text>
         <text x={W - padR} y={H - 8} textAnchor="end" className="chart-label">{labels[labels.length - 1]}</text>
       </svg>
+
+      {/* Trade detail for the hovered day. Below the chart, so it can wrap to as
+          many lines as the day's trades need and be read in FULL — its growth
+          pushes the legend down, never the chart. */}
+      {markers.length > 0 && (
+        <div className="chart-trade-detail">
+          {hover === null ? (
+            <span className="cr-trade-empty">Hover a day to see the trades made that day.</span>
+          ) : hoverMarkers.length === 0 ? (
+            <span className="cr-trade-empty">{labels[hover]}: no trades this day.</span>
+          ) : (
+            <>
+              <span className="td-day">{labels[hover]}:</span>{" "}
+              {hoverMarkers.map((m, i) => (
+                <span key={i} className={`td-item ${m.kind === "buy" ? "up" : "down"}`}>
+                  {m.kind === "buy" ? "▲ " : "▼ "}
+                  {m.text}
+                </span>
+              ))}
+            </>
+          )}
+        </div>
+      )}
 
       <div className="legend">
         {series.map((s) => (

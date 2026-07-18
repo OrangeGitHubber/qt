@@ -765,22 +765,18 @@ button.linklike {
   display: grid;
   align-content: start;
   row-gap: 0.3rem;
-  height: 3.1rem; /* date row + one series row */
-  overflow: hidden;
-  padding: 0.45rem 0.7rem;
+  padding: 0.5rem 0.7rem 0.6rem;
   margin-bottom: 0.5rem;
   background: var(--bg);
   border: 1px solid var(--border);
   border-radius: 8px;
   font-size: 0.85rem;
-  line-height: 1.25;
+  line-height: 1.4; /* room for descenders; no clip */
   color: var(--muted);
 }
-
-/* charts that carry trade markers reserve a third line for the trade text */
-.chart-readout.has-trade {
-  height: 4.5rem;
-}
+/* The readout is ALWAYS exactly two rows (date, series) regardless of hover,
+   so its height is constant without a fixed `height` — no jump, and nothing
+   clips. The variable trade text lives in .chart-trade-detail below the chart. */
 
 .chart-readout .hint {
   margin: 0;
@@ -827,13 +823,37 @@ button.linklike {
   color: var(--text);
 }
 
-/* Dedicated single trade line — reserved height, truncated with ellipsis, full
-   text on hover (title). This is the item that used to break the layout. */
-.cr-trade {
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+/* Trade detail for the hovered day. BELOW the chart, so it wraps to as many
+   lines as the day's trades need and is read in full; its growth pushes the
+   legend down, never the chart. */
+.chart-trade-detail {
+  margin: 0.5rem 0 0.25rem;
+  padding: 0.5rem 0.7rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 0.85rem;
+  line-height: 1.5;
   font-variant-numeric: tabular-nums;
+  color: var(--muted);
+}
+
+.chart-trade-detail .td-day {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.chart-trade-detail .td-item {
+  display: inline-block;
+  margin-right: 1.1rem;
+}
+
+.chart-trade-detail .td-item.up {
+  color: var(--ok);
+}
+
+.chart-trade-detail .td-item.down {
+  color: var(--err);
 }
 
 .cr-trade-empty {
