@@ -3,6 +3,20 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Scanner: "+ Watch" is now a toggle (2026-07-18)
+
+The Scanner's per-row **+ Watch** button now reflects — and changes — whether a
+symbol is already on your watchlist.
+
+- **Two states.** If a symbol isn't watched, the button reads **+ Watch**
+  (filled blue) and clicking adds it. If it's already watched, the button reads
+  **✓ Watched** (a calmer, muted blue) and clicking **removes** it — hovering
+  hints it's removable ("Unwatch"). No more accidentally re-adding something you
+  already pinned, and you can un-pin without leaving the Scanner.
+- **Stays in sync.** The button state is driven by your real watchlist, so a
+  symbol you pinned earlier already shows as **✓ Watched** when the Scanner
+  loads. Stock and crypto tickers are tracked separately.
+
 ## Scanner: separate stock & crypto filters (2026-07-18)
 
 Stocks and crypto now have **their own filter sets** instead of sharing one.

@@ -3,6 +3,8 @@ import {
   addWatchlist,
   getScanner,
   getScannerConfig,
+  getWatchlist,
+  removeWatchlist,
   saveScannerConfig,
   ScannerClassFilters,
   ScannerConfig,
@@ -13,6 +15,10 @@ import {
 import InfoTip from "../components/InfoTip";
 import NumberField from "../components/NumberField";
 import SymbolPicker from "../components/SymbolPicker";
+
+// A stock and a crypto pair could share a ticker, so key the watched-set by
+// both asset class and symbol. Watchlist rows are stored upper-cased.
+const watchKey = (symbol: string, assetClass: string) => `${assetClass}:${symbol.toUpperCase()}`;
 
 function volume(v: number) {
   if (v >= 1e9) return `$${(v / 1e9).toFixed(1)}B`;
@@ -53,14 +59,16 @@ function MoversTable({
   meta,
   filters,
   marketClosed,
-  onPin,
+  watchedKeys,
+  onToggleWatch,
 }: {
   title: string;
   rows: ScannerRow[];
   meta: ScannerMeta | null;
   filters: ScannerClassFilters;
   marketClosed?: boolean;
-  onPin: (r: ScannerRow) => void;
+  watchedKeys: Set<string>;
+  onToggleWatch: (r: ScannerRow) => void;
 }) {
   return (
     <div className="card">
@@ -86,22 +94,29 @@ function MoversTable({
             </tr>
           </thead>
           <tbody>
-            {rows.map((r) => (
-              <tr key={r.symbol}>
-                <td className="sym">{r.symbol}</td>
-                <td>${r.price.toLocaleString(undefined, { maximumFractionDigits: 4 })}</td>
-                <td className={r.change_pct >= 0 ? "up" : "down"}>
-                  {r.change_pct >= 0 ? "+" : ""}
-                  {r.change_pct}%
-                </td>
-                <td>{volume(r.dollar_volume)}</td>
-                <td>
-                  <button className="small" title="Pin to watchlist" onClick={() => onPin(r)}>
-                    + Watch
-                  </button>
-                </td>
-              </tr>
-            ))}
+            {rows.map((r) => {
+              const watched = watchedKeys.has(watchKey(r.symbol, r.asset_class));
+              return (
+                <tr key={r.symbol}>
+                  <td className="sym">{r.symbol}</td>
+                  <td>${r.price.toLocaleString(undefined, { maximumFractionDigits: 4 })}</td>
+                  <td className={r.change_pct >= 0 ? "up" : "down"}>
+                    {r.change_pct >= 0 ? "+" : ""}
+                    {r.change_pct}%
+                  </td>
+                  <td>{volume(r.dollar_volume)}</td>
+                  <td>
+                    <button
+                      className={`small watch-btn${watched ? " watched" : ""}`}
+                      title={watched ? "Unwatch — remove from watchlist" : "Pin to watchlist"}
+                      onClick={() => onToggleWatch(r)}
+                    >
+                      {watched ? "✓ Watched" : "+ Watch"}
+                    </button>
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       )}
@@ -114,22 +129,39 @@ export default function Scanner() {
   const [cfg, setCfg] = useState<ScannerConfig | null>(null);
   const [showFilters, setShowFilters] = useState(false);
   const [note, setNote] = useState<string | null>(null);
+  const [watchedKeys, setWatchedKeys] = useState<Set<string>>(new Set());
 
   const refresh = useCallback(() => {
     getScanner().then(setResult).catch((e: Error) => setNote(e.message));
   }, []);
 
+  const refreshWatched = useCallback(() => {
+    getWatchlist()
+      .then((d) => setWatchedKeys(new Set(d.items.map((i) => watchKey(i.symbol, i.asset_class)))))
+      .catch(() => {
+        /* watchlist quotes can fail on dummy keys; the toggle still works */
+      });
+  }, []);
+
   useEffect(() => {
     refresh();
+    refreshWatched();
     getScannerConfig().then(setCfg);
     const t = setInterval(refresh, 45_000);
     return () => clearInterval(t);
-  }, [refresh]);
+  }, [refresh, refreshWatched]);
 
-  async function pin(row: ScannerRow) {
+  async function toggleWatch(row: ScannerRow) {
+    const watched = watchedKeys.has(watchKey(row.symbol, row.asset_class));
     try {
-      await addWatchlist(row.symbol, row.asset_class);
-      setNote(`${row.symbol} added to watchlist.`);
+      if (watched) {
+        await removeWatchlist(row.symbol, row.asset_class);
+        setNote(`${row.symbol} removed from watchlist.`);
+      } else {
+        await addWatchlist(row.symbol, row.asset_class);
+        setNote(`${row.symbol} added to watchlist.`);
+      }
+      refreshWatched();
     } catch (e) {
       setNote((e as Error).message);
     }
@@ -261,7 +293,8 @@ export default function Scanner() {
             meta={result.stocks_meta}
             filters={cfg.stocks}
             marketClosed={result.market_open === false}
-            onPin={pin}
+            watchedKeys={watchedKeys}
+            onToggleWatch={toggleWatch}
           />
         )}
         {result && cfg && cfg.crypto.enabled !== false && (
@@ -270,7 +303,8 @@ export default function Scanner() {
             rows={result.crypto}
             meta={result.crypto_meta}
             filters={cfg.crypto}
-            onPin={pin}
+            watchedKeys={watchedKeys}
+            onToggleWatch={toggleWatch}
           />
         )}
       </div>

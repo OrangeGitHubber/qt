@@ -305,6 +305,22 @@ button.danger {
   color: var(--err);
 }
 
+/* Scanner "+ Watch" toggle. Unwatched = the base filled accent-blue CTA.
+   Watched = a muted, desaturated blue tint (same hue as --accent, calmer) so
+   it reads as "already saved". Hovering hints it's removable. Both stay in the
+   blue family — green is reserved for P&L / up signals. */
+button.small.watch-btn.watched {
+  background: rgba(79, 140, 255, 0.12);
+  border: 1px solid rgba(79, 140, 255, 0.35);
+  color: var(--muted);
+  font-weight: 500;
+}
+button.small.watch-btn.watched:hover {
+  background: rgba(79, 140, 255, 0.2);
+  border-color: var(--accent);
+  color: var(--text);
+}
+
 table {
   width: 100%;
   border-collapse: collapse;
