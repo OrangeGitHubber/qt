@@ -378,6 +378,18 @@ tr:last-child td {
   margin-top: 0.4rem;
 }
 
+/* Short teaching intro at the top of a page. */
+.page-intro {
+  max-width: 70ch;
+  margin: 0 0 1rem;
+  color: var(--muted);
+  font-size: 0.92rem;
+  line-height: 1.5;
+}
+.page-intro strong {
+  color: var(--text);
+}
+
 /* Per-asset-class scanner filter blocks (stocks vs crypto). */
 .scanner-classes {
   display: grid;

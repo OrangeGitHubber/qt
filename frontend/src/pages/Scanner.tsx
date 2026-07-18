@@ -177,6 +177,13 @@ export default function Scanner() {
           Refresh
         </button>
       </div>
+      <p className="page-intro">
+        The scanner is where trade ideas start. It continuously ranks today's <strong>rising</strong> stocks and
+        crypto and keeps only the ones that clear your filters — a liquidity-and-quality gate that keeps illiquid,
+        hard-to-exit pumps out. Any strategy whose universe is set to the scanner draws its candidates from this
+        list; the strategy's own entry rules and the safety rails then decide what actually trades. Think of it as a
+        live shortlist of what's moving — <strong>not</strong> a buy list.
+      </p>
       {note && (
         <div className="card note" onClick={() => setNote(null)}>
           {note}
