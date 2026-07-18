@@ -356,15 +356,19 @@ export interface ScannerResult {
   crypto_meta: ScannerMeta | null;
 }
 
-export interface ScannerConfig {
-  stocks_enabled: boolean;
-  crypto_enabled: boolean;
-  top_n: number;
+export interface ScannerClassFilters {
+  enabled: boolean;
   min_price: number;
   max_price: number;
   min_change_pct: number;
   min_dollar_volume: number;
+}
+
+export interface ScannerConfig {
+  top_n: number;
   exclude_symbols: string[];
+  stocks: ScannerClassFilters;
+  crypto: ScannerClassFilters;
 }
 
 export interface WatchlistRow {

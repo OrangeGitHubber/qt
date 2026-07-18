@@ -378,6 +378,31 @@ tr:last-child td {
   margin-top: 0.4rem;
 }
 
+/* Per-asset-class scanner filter blocks (stocks vs crypto). */
+.scanner-classes {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 1rem;
+  margin: 0.6rem 0 0.4rem;
+}
+.scanner-class {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.3rem 1rem 0.9rem;
+  min-width: 0;
+}
+.scanner-class legend {
+  padding: 0 0.4rem;
+  font-weight: 600;
+  color: var(--text);
+}
+.scanner-class legend .check {
+  margin: 0;
+}
+.scanner-class .hint {
+  margin-top: 0.6rem;
+}
+
 /* "Market closed — last session" note on the stock scanner panel. */
 .stale-note {
   margin: 0 0 0.6rem;

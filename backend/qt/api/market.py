@@ -29,15 +29,21 @@ def require_client(session: Session = Depends(get_session)) -> AlpacaClient:
 # ---- Scanner ----
 
 
+class ClassFilters(BaseModel):
+    enabled: bool = True
+    min_price: float = Field(default=0.0, ge=0)
+    max_price: float = Field(default=0.0, ge=0)
+    min_change_pct: float = Field(default=1.0, ge=0, le=100)
+    min_dollar_volume: float = Field(default=1_000_000, ge=0)
+
+
 class ScannerConfig(BaseModel):
-    stocks_enabled: bool = True
-    crypto_enabled: bool = True
     top_n: int = Field(default=10, ge=1, le=50)
-    min_price: float = Field(default=1.0, ge=0)
-    max_price: float = Field(default=0, ge=0)
-    min_change_pct: float = Field(default=2.0, ge=0, le=100)
-    min_dollar_volume: float = Field(default=5_000_000, ge=0)
     exclude_symbols: list[str] = []
+    # Per-asset-class floors (see scanner.py): stocks and crypto want different
+    # price/volume thresholds. Defaults mirror scanner.STOCK/CRYPTO_DEFAULTS.
+    stocks: ClassFilters = ClassFilters(min_price=1.0, min_change_pct=2.0, min_dollar_volume=5_000_000)
+    crypto: ClassFilters = ClassFilters(min_price=0.0, min_change_pct=1.0, min_dollar_volume=1_000_000)
 
 
 @router.get("/scanner")

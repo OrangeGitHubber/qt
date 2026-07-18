@@ -3,6 +3,22 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Scanner: separate stock & crypto filters (2026-07-18)
+
+Stocks and crypto now have **their own filter sets** instead of sharing one.
+
+- **Why.** A single volume/price floor can't serve both: a $5M volume floor is
+  right for stocks but starves crypto (whose volume resets at 00:00 UTC), and
+  the $1 stock price floor wrongly excludes sub-$1 coins like DOGE. So the
+  Scanner's Edit-filters panel now has a **Stocks** block and a **Crypto** block,
+  each with its own min price, max price, min gain, and min $ volume. Rows-per-
+  list and the "never trade" exclusions stay shared.
+- **Sensible defaults per class.** Stocks: $1 price / $5M volume / 2% gain.
+  Crypto: no price floor / $1M volume / 1% gain.
+- **Nothing to redo.** Any existing saved filters are migrated automatically —
+  your old single set is copied onto both classes, and you can differentiate
+  them from there.
+
 ## Scanner: honest empty states + market-closed labeling (2026-07-18)
 
 The scanner now explains itself instead of showing bare results or a blank

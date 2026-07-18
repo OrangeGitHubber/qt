@@ -131,11 +131,39 @@ export default function Scanner() {
     }
   }
 
-  function num(key: keyof ScannerConfig) {
-    return {
-      value: (cfg?.[key] as number) ?? 0,
-      onChange: (n: number) => setCfg((c) => (c ? { ...c, [key]: n } : c)),
-    };
+  function classBlock(cls: "stocks" | "crypto", title: string, hint: string) {
+    if (!cfg) return null;
+    const f = cfg[cls];
+    const setF = (key: keyof ScannerConfig["stocks"], val: number | boolean) =>
+      setCfg((c) => (c ? { ...c, [cls]: { ...c[cls], [key]: val } } : c));
+    return (
+      <fieldset className="scanner-class">
+        <legend>
+          <label className="check">
+            <input type="checkbox" checked={f.enabled} onChange={(e) => setF("enabled", e.target.checked)} /> {title}
+          </label>
+        </legend>
+        <div className="filter-grid">
+          <label>
+            Min price ($)
+            <NumberField min={0} step="any" value={f.min_price} onChange={(n) => setF("min_price", n)} />
+          </label>
+          <label>
+            Max price ($, 0 = none)
+            <NumberField min={0} step="any" value={f.max_price} onChange={(n) => setF("max_price", n)} />
+          </label>
+          <label>
+            Min gain today (%)
+            <NumberField min={0} step="0.1" value={f.min_change_pct} onChange={(n) => setF("min_change_pct", n)} />
+          </label>
+          <label>
+            Min daily $ volume
+            <NumberField min={0} step="any" value={f.min_dollar_volume} onChange={(n) => setF("min_dollar_volume", n)} />
+          </label>
+        </div>
+        <p className="hint">{hint}</p>
+      </fieldset>
+    );
   }
 
   return (
@@ -158,43 +186,17 @@ export default function Scanner() {
         <form className="card filters" onSubmit={submitFilters}>
           <div className="filter-grid">
             <label>
-              <input
-                type="checkbox"
-                checked={cfg.stocks_enabled}
-                onChange={(e) => setCfg({ ...cfg, stocks_enabled: e.target.checked })}
-              />{" "}
-              Scan stocks
-            </label>
-            <label>
-              <input
-                type="checkbox"
-                checked={cfg.crypto_enabled}
-                onChange={(e) => setCfg({ ...cfg, crypto_enabled: e.target.checked })}
-              />{" "}
-              Scan crypto
-            </label>
-            <label>
               Rows per list
-              <NumberField min={1} max={50} step={1} {...num("top_n")} />
-            </label>
-            <label>
-              Min price ($)
-              <NumberField min={0} step="any" {...num("min_price")} />
-            </label>
-            <label>
-              Max price ($, 0 = none)
-              <NumberField min={0} step="any" {...num("max_price")} />
-            </label>
-            <label>
-              Min gain today (%)
-              <NumberField min={0} step="0.1" {...num("min_change_pct")} />
-            </label>
-            <label>
-              Min daily $ volume
-              <NumberField min={0} step="any" {...num("min_dollar_volume")} />
+              <NumberField
+                min={1}
+                max={50}
+                step={1}
+                value={cfg.top_n}
+                onChange={(n) => setCfg((c) => (c ? { ...c, top_n: n } : c))}
+              />
             </label>
             <div className="field">
-              Never trade these
+              Never trade these (both markets)
               <SymbolPicker
                 value={cfg.exclude_symbols}
                 onChange={(symbols) => setCfg({ ...cfg, exclude_symbols: symbols })}
@@ -203,10 +205,22 @@ export default function Scanner() {
               />
             </div>
           </div>
+          <div className="scanner-classes">
+            {classBlock(
+              "stocks",
+              "Scan stocks",
+              "The $5M volume floor and $1 price floor keep you out of illiquid penny-stock pumps that are hard to exit.",
+            )}
+            {classBlock(
+              "crypto",
+              "Scan crypto",
+              "Crypto trades 24/7 and resets volume at 00:00 UTC, so lower floors are normal — and there's no $1 price floor (coins like DOGE trade well under $1).",
+            )}
+          </div>
           <button>Save filters</button>
           <p className="hint">
-            The $ volume floor keeps you out of illiquid symbols that are hard to exit; the min price filters
-            penny-stock pumps. These same filters will feed the trading engine in Phase 2.
+            Stocks and crypto have <strong>separate</strong> filters because they behave differently. These same
+            filters feed the trading engine when a strategy's universe is the scanner.
           </p>
         </form>
       )}
@@ -216,22 +230,22 @@ export default function Scanner() {
         </div>
       ))}
       <div className="grid">
-        {result && cfg?.stocks_enabled !== false && (
+        {result && cfg?.stocks.enabled !== false && (
           <MoversTable
             title="Stocks"
             rows={result.stocks}
             meta={result.stocks_meta}
-            minGain={cfg?.min_change_pct ?? 0}
+            minGain={cfg?.stocks.min_change_pct ?? 0}
             marketClosed={result.market_open === false}
             onPin={pin}
           />
         )}
-        {result && cfg?.crypto_enabled !== false && (
+        {result && cfg?.crypto.enabled !== false && (
           <MoversTable
             title="Crypto"
             rows={result.crypto}
             meta={result.crypto_meta}
-            minGain={cfg?.min_change_pct ?? 0}
+            minGain={cfg?.crypto.min_change_pct ?? 0}
             onPin={pin}
           />
         )}

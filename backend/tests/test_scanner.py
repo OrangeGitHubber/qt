@@ -1,9 +1,22 @@
+import copy
 from unittest.mock import AsyncMock, patch
 
 import pytest
 
 from qt.broker.alpaca import AlpacaClient
 from qt.services import scanner
+
+
+def _cfg(*, top_n=10, exclude=None, stock=None, crypto=None) -> dict:
+    """Build a nested scanner config for tests."""
+    cfg = copy.deepcopy(scanner.DEFAULT_CONFIG)
+    cfg["top_n"] = top_n
+    cfg["exclude_symbols"] = exclude or []
+    if stock:
+        cfg["stocks"].update(stock)
+    if crypto:
+        cfg["crypto"].update(crypto)
+    return cfg
 
 MOVERS = {
     "gainers": [
@@ -53,7 +66,7 @@ def _fresh_cache():
 
 
 async def test_scan_stocks_applies_all_filters():
-    cfg = dict(scanner.DEFAULT_CONFIG, exclude_symbols=["banned"], min_dollar_volume=1_000_000)
+    cfg = _cfg(exclude=["banned"], stock={"min_dollar_volume": 1_000_000})
     with (
         patch.object(AlpacaClient, "stock_movers", new=AsyncMock(return_value=MOVERS)),
         patch.object(AlpacaClient, "stock_snapshots", new=AsyncMock(return_value=STOCK_SNAPSHOTS)),
@@ -72,7 +85,7 @@ async def test_scan_stocks_applies_all_filters():
 
 
 async def test_scan_stocks_sorted_and_capped():
-    cfg = dict(scanner.DEFAULT_CONFIG, top_n=1, min_dollar_volume=0, min_price=0, min_change_pct=0)
+    cfg = _cfg(top_n=1, stock={"min_dollar_volume": 0, "min_price": 0, "min_change_pct": 0})
     with (
         patch.object(AlpacaClient, "stock_movers", new=AsyncMock(return_value=MOVERS)),
         patch.object(AlpacaClient, "stock_snapshots", new=AsyncMock(return_value=STOCK_SNAPSHOTS)),
@@ -83,7 +96,7 @@ async def test_scan_stocks_sorted_and_capped():
 
 
 async def test_scan_crypto_computes_change_and_filters_losers():
-    cfg = dict(scanner.DEFAULT_CONFIG, min_dollar_volume=0)
+    cfg = _cfg(crypto={"min_dollar_volume": 0})
     with (
         patch.object(AlpacaClient, "crypto_assets", new=AsyncMock(return_value=CRYPTO_ASSETS)),
         patch.object(AlpacaClient, "crypto_snapshots", new=AsyncMock(return_value=CRYPTO_SNAPSHOTS)),
@@ -108,3 +121,43 @@ async def test_scan_reports_errors_instead_of_crashing(db_session):
     assert result["stocks"] == []
     assert any("Stock scan failed" in e for e in result["errors"])
     assert result["market_open"] is True
+
+
+def test_normalize_migrates_flat_shape():
+    """An old flat config copies its single floors onto both asset classes."""
+    cfg = scanner._normalize(
+        {
+            "stocks_enabled": True,
+            "crypto_enabled": False,
+            "top_n": 7,
+            "min_price": 3.0,
+            "min_change_pct": 4.0,
+            "min_dollar_volume": 2_000_000,
+            "exclude_symbols": ["FOO"],
+        }
+    )
+    assert cfg["top_n"] == 7
+    assert cfg["exclude_symbols"] == ["FOO"]
+    for cls in ("stocks", "crypto"):
+        assert cfg[cls]["min_price"] == 3.0
+        assert cfg[cls]["min_change_pct"] == 4.0
+        assert cfg[cls]["min_dollar_volume"] == 2_000_000
+    assert cfg["stocks"]["enabled"] is True
+    assert cfg["crypto"]["enabled"] is False
+
+
+def test_normalize_defaults_split_by_class():
+    """A fresh config gives stocks and crypto their own (different) defaults."""
+    cfg = scanner._normalize({})
+    assert cfg["stocks"]["min_dollar_volume"] == 5_000_000
+    assert cfg["crypto"]["min_dollar_volume"] == 1_000_000
+    assert cfg["stocks"]["min_price"] == 1.0
+    assert cfg["crypto"]["min_price"] == 0.0
+
+
+def test_normalize_deep_merges_partial_nested():
+    """A nested config missing some keys still fills class defaults."""
+    cfg = scanner._normalize({"crypto": {"min_dollar_volume": 250_000}})
+    assert cfg["crypto"]["min_dollar_volume"] == 250_000
+    assert cfg["crypto"]["min_change_pct"] == 1.0   # default preserved
+    assert cfg["stocks"]["min_dollar_volume"] == 5_000_000
