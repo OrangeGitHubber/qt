@@ -9,15 +9,31 @@ RUN npm run build
 # ---- Backend runtime ----
 FROM python:3.12-slim
 WORKDIR /app
+
+# Build identity ("which build am I running") — CI passes the commit SHA and a
+# build timestamp; these become env vars the backend reads for the About page.
+# Defaults keep local `docker build` sensible when the args aren't supplied.
+ARG GIT_SHA=dev
+ARG BUILD_DATE=""
+
 ENV PYTHONUNBUFFERED=1 \
     QT_DATA_DIR=/data \
-    QT_STATIC_DIR=/app/static
+    QT_STATIC_DIR=/app/static \
+    QT_DOCS_DIR=/app/docs \
+    QT_GIT_SHA=$GIT_SHA \
+    QT_BUILD_DATE=$BUILD_DATE
 
 COPY backend/pyproject.toml backend/
 COPY backend/qt backend/qt
 RUN pip install --no-cache-dir ./backend
 
 COPY --from=frontend /app/dist /app/static
+
+# The maintained, user-facing docs (changelog + roadmap) are served by the
+# backend for the About page, so they must be in the image. Sourcing them from
+# these files (never a hardcoded copy) keeps the About page current whenever we
+# update the docs. See docs/decisions.md.
+COPY docs /app/docs
 
 # NOTE: deliberately NO `VOLUME /data`. An anonymous volume silently masks a
 # missing/inverted bind mount (the exact cause of a real data-loss incident):

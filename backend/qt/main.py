@@ -10,6 +10,7 @@ from fastapi.staticfiles import StaticFiles
 
 from qt import __version__
 from qt.api import (
+    about,
     assets as assets_api,
     auth,
     backtest,
@@ -182,6 +183,7 @@ app.include_router(strategies.router, dependencies=[Depends(require_user)])
 app.include_router(engine_api.router, dependencies=[Depends(require_user)])
 app.include_router(backtest.router, dependencies=[Depends(require_user)])
 app.include_router(assets_api.router, dependencies=[Depends(require_user)])
+app.include_router(about.router, dependencies=[Depends(require_user)])
 
 
 def _static_dir() -> Path | None:

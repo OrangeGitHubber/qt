@@ -949,3 +949,113 @@ button.linklike {
   text-decoration: underline;
   font-weight: 600;
 }
+
+/* About page */
+.subtabs {
+  margin-top: -0.25rem;
+}
+
+.about-identity {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem 2rem;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+.about-name {
+  font-size: 1.15rem;
+  font-weight: 700;
+  margin-bottom: 0.25rem;
+}
+
+.about-meta {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(90px, auto));
+  gap: 0.5rem 1.5rem;
+  margin: 0;
+}
+
+.about-meta div {
+  display: flex;
+  flex-direction: column;
+}
+
+.about-meta dt {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+}
+
+.about-meta dd {
+  margin: 0.1rem 0 0;
+  font-weight: 600;
+}
+
+.about-meta code {
+  background: rgba(0, 0, 0, 0.25);
+  padding: 0.05rem 0.35rem;
+  border-radius: 4px;
+  font-size: 0.9rem;
+}
+
+/* Rendered markdown (changelog / roadmap) */
+.markdown {
+  line-height: 1.6;
+}
+
+.markdown h1 {
+  font-size: 1.4rem;
+  margin: 0 0 0.75rem;
+}
+
+.markdown h2 {
+  font-size: 1.15rem;
+  margin: 1.5rem 0 0.5rem;
+  padding-bottom: 0.3rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.markdown h3 {
+  font-size: 1rem;
+  margin: 1.1rem 0 0.4rem;
+}
+
+.markdown p,
+.markdown li {
+  color: var(--text);
+}
+
+.markdown ul {
+  padding-left: 1.25rem;
+}
+
+.markdown li {
+  margin: 0.25rem 0;
+}
+
+.markdown a {
+  color: var(--accent);
+}
+
+.markdown code {
+  background: rgba(0, 0, 0, 0.3);
+  padding: 0.05rem 0.35rem;
+  border-radius: 4px;
+  font-size: 0.9em;
+}
+
+.markdown hr {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 1.5rem 0;
+}
+
+.markdown strong {
+  color: var(--text);
+}
+
+.markdown :first-child {
+  margin-top: 0;
+}

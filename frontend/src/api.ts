@@ -392,6 +392,21 @@ export function getBars(symbol: string, assetClass: string): Promise<{ symbol: s
   return fetch(`/api/market/bars?${params}`).then((r) => handle(r));
 }
 
+export interface AboutInfo {
+  name: string;
+  version: string;
+  git_sha: string;
+  build_date: string;
+  license: string;
+  repo_url: string;
+}
+
+export const getAbout = () => fetch("/api/about").then((r) => handle<AboutInfo>(r));
+export const getChangelogMarkdown = () =>
+  fetch("/api/about/changelog").then((r) => handle<{ markdown: string }>(r));
+export const getRoadmapMarkdown = () =>
+  fetch("/api/about/roadmap").then((r) => handle<{ markdown: string }>(r));
+
 export function saveAlpacaKeys(keyId: string, keySecret: string) {
   return fetch("/api/setup/alpaca", {
     method: "POST",

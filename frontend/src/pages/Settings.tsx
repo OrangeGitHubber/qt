@@ -46,6 +46,21 @@ export default function Settings() {
     };
   }
 
+  // The regime filter saves instantly on its own endpoint. Update ONLY the flag
+  // (optimistically) and persist it — do NOT call refresh(), which would reload
+  // the whole engine state and clobber any unsaved edits in the risk-rails form
+  // below. Revert the checkbox if the save fails.
+  async function toggleRegime(enabled: boolean) {
+    setEngine((prev) => (prev ? { ...prev, regime_filter_enabled: enabled } : prev));
+    setNote(null);
+    try {
+      await setRegimeEnabled(enabled);
+    } catch (err) {
+      setEngine((prev) => (prev ? { ...prev, regime_filter_enabled: !enabled } : prev));
+      setNote((err as Error).message);
+    }
+  }
+
   async function saveRisk(e: FormEvent) {
     e.preventDefault();
     if (!risk) return;
@@ -115,7 +130,7 @@ export default function Settings() {
             <input
               type="checkbox"
               checked={engine.regime_filter_enabled}
-              onChange={(e) => setRegimeEnabled(e.target.checked).then(refresh)}
+              onChange={(e) => toggleRegime(e.target.checked)}
             />
             Regime filter <InfoTip k="regime_filter" />
           </label>
