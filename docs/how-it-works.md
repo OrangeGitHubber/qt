@@ -50,7 +50,21 @@ The bot earns trust in rungs. Each rung is a deliberate switch you flip:
   tighter than the symbol's ordinary daily move will trigger on noise alone,
   which is exactly how a strategy ends up with many small losses and no
   winners.
-- Each **strategy** chooses its universe: scanner, watchlist, or both.
+- A **basket** is a curated, named list of symbols grouped by theme (Defense,
+  Banking, Big Tech, a Sector-ETFs basket, …). QT ships a modest starter set of
+  real, liquid large-caps and you can create/rename/delete baskets and edit
+  their members freely. **Baskets are curated lists, not an authoritative
+  sector database** — Alpaca provides no sector or industry classification on
+  this data plan, so the lists are hand-picked and drift over time as companies
+  change. Used as a strategy universe, the engine snapshots the basket's
+  members, ranks them by a metric you choose (today's % move, 30-day return, or
+  relative strength = how far price sits above/below its 200-day average) and
+  takes the **top N** as candidates — this is how "top 10 from Defense" works.
+  Top-N ranking is a **live entry-selection feature only**: a backtest tests the
+  basket's whole symbol set over history, because the historical daily ranking
+  can't be reconstructed (the same limitation the scanner has). Dividend-yield
+  ranking is deliberately out of scope for now.
+- Each **strategy** chooses its universe: scanner, watchlist, both, or a basket.
 - Anywhere you choose symbols, search by **ticker or company name**. QT keeps
   a local, daily-refreshed copy of Alpaca's tradable asset list, so
   autocomplete is instant and costs no API calls. It's reference data —

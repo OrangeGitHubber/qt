@@ -3,6 +3,29 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Themed baskets + top-N ranking universe (2026-07-18)
+
+Build strategies by **theme/sector** instead of hand-picking tickers every time.
+
+- **Baskets.** A new **Baskets** tab holds named symbol groups. QT ships a
+  curated starter set — Defense, Banking, Gold & Mining, REITs/Property, Big
+  Tech, Semiconductors, Energy, Healthcare, and a Sector-ETFs basket — of real,
+  liquid, well-known tickers. Create your own, rename, delete, and add/remove
+  symbols with the same ticker/company search used everywhere else.
+- **Honest by design.** Baskets are **curated lists, not a sector database.**
+  Alpaca has no sector/industry classification on this plan, so these lists are
+  hand-picked and yours to edit; they drift as companies change. The UI says so.
+- **Strategy universe "basket".** Point a strategy at a basket, choose how to
+  rank its members — today's % move, 30-day return, or relative strength (vs the
+  200-day average) — and how many to take (**top N**). The live engine ranks the
+  basket each cycle and considers the top N (your entry rules still apply). This
+  is how "top 10 from Defense" works.
+- **Backtest from a basket.** One click loads a basket's symbols into the
+  backtest (capped at 25, with a warning if trimmed) so you always see exactly
+  what's tested. Stated plainly: a backtest tests the **whole basket** over
+  history — it can't reconstruct the historical daily top-N, so **top-N ranking
+  is a live feature only.** Dividend-yield ranking is out of scope for now.
+
 ## About page — build identity, changelog & roadmap (2026-07-18)
 
 A new **About** tab answers "which build am I running, what changed, and where

@@ -2,6 +2,33 @@
 
 Why QT is the way it is. Newest first.
 
+## 2026-07-18 — Baskets are curated lists, not a sector database; top-N is live-only
+Werner wanted to build strategies by theme ("top 10 from Defense", "test the
+whole Banking basket"). The hard constraint: **Alpaca ships no sector/industry
+classification and no fundamental screener on this data plan** — confirmed, and
+it will never come from Alpaca. So we did **not** invent a sector API. "Sectors"
+are **curated symbol lists** we ship as a modest starter set and the user edits
+freely; the UI states plainly that they are curated and drift over time, not an
+authoritative database of record. Members are validated/annotated against the
+local Alpaca asset directory where it's populated, but seeding works before any
+sync (the tickers are hand-verified).
+
+Model shape: a `baskets` parent row plus a `basket_items` join table of
+`(basket_id, symbol, asset_class)` — chosen over a JSON blob because members are
+queryable (join against the asset directory), dedup is a primary-key guarantee,
+and add/remove is a single-row op with no read-modify-write race.
+
+**Top-N ranking is a LIVE entry-selection feature, not a backtest capability.**
+The engine can rank a basket's members *today* (by today's % move, 30-day
+return, or relative strength — all from price data we already compute) and take
+the top N as candidates. A backtest, by contrast, tests the basket's **whole
+symbol set** over history: it cannot reconstruct which symbols would have ranked
+top-N on each past day — the same limitation the scanner has. We state this next
+to the backtest basket loader rather than fake a historical ranking.
+**Dividend-yield ranking is explicitly out of scope** for this phase (feasible
+later via Alpaca's corporate-actions/dividends API, but heavier — ship
+price-based ranking first).
+
 ## 2026-07-18 — About page renders the living docs, served by the backend
 The About page must never drift out of date, so it is sourced from the
 maintained markdown files, not a hardcoded copy: `docs/CHANGELOG.md` (the
