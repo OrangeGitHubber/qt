@@ -535,18 +535,27 @@ td.detail p {
 /* Symbol picker */
 .picker {
   position: relative;
+  min-width: 260px;
 }
 
+/* fill the picker (and override the 200px .addform input default) so the
+   search box is roomy */
 .picker input {
+  width: 100%;
+  box-sizing: border-box;
   margin-top: 0.3rem;
 }
 
+/* the results dropdown is not tied to the (narrower) input width — it's wide
+   enough to show full company names, capped so it never overflows the screen */
 .picker-pop {
   position: absolute;
   z-index: 30;
   top: 100%;
   left: 0;
-  right: 0;
+  min-width: 100%;
+  width: max-content;
+  max-width: min(460px, 92vw);
   margin: 0.25rem 0 0;
   padding: 0;
   list-style: none;
@@ -560,8 +569,8 @@ td.detail p {
 
 .picker-pop li {
   display: grid;
-  grid-template-columns: 5.5rem 1fr;
-  gap: 0.1rem 0.6rem;
+  grid-template-columns: 5rem minmax(11rem, 1fr);
+  gap: 0.1rem 0.7rem;
   padding: 0.45rem 0.7rem;
   cursor: pointer;
   border-bottom: 1px solid var(--border);
@@ -586,8 +595,10 @@ td.detail p {
   color: var(--text);
   font-size: 0.9rem;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  /* show the full name where it fits; clamp very long ones to 2 lines */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
 }
 
 .picker-pop .hint {
