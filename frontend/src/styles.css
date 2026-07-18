@@ -307,6 +307,19 @@ tr:last-child td {
   margin: 0.4rem 0 0;
 }
 
+/* Reserve a uniform caption height (up to two lines) so single- and
+   double-line field labels keep their controls aligned across the grid. */
+.field-cap {
+  display: block;
+  min-height: 2.5em;
+  line-height: 1.25;
+}
+
+/* Two backtest field groups stacked, with a little air between them. */
+.backtest-form .filter-grid + .filter-grid {
+  margin-top: 0.4rem;
+}
+
 .addform {
   display: flex;
   gap: 0.75rem;

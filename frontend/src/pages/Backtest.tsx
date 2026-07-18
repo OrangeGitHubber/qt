@@ -115,10 +115,13 @@ export default function Backtest() {
           <strong>Past results predict nothing</strong> — a backtest can only kill bad ideas cheaply, not promise good
           ones.
         </p>
-        <form onSubmit={run}>
+        <form className="backtest-form" onSubmit={run}>
+          {/* WHAT to test: strategy + symbols. Kept apart from the params row
+              because the symbol picker is a tall, composite control and would
+              otherwise leave the shorter fields ragged. */}
           <div className="filter-grid">
             <label>
-              Strategy
+              <span className="field-cap">Strategy</span>
               <select value={strategyId ?? ""} onChange={(e) => setStrategyId(Number(e.target.value))} required>
                 {strategies.length === 0 && <option value="">— create a strategy first —</option>}
                 {strategies.map((s) => (
@@ -131,7 +134,7 @@ export default function Backtest() {
             {/* a composite widget, not a single control — <label> would
                 re-dispatch clicks into it */}
             <div className="field">
-              Symbols (none picked = your watchlist)
+              <span className="field-cap">Symbols (none picked = your watchlist)</span>
               <SymbolPicker assetClass={assetClass} value={symbols} onChange={setSymbols} multi />
               {baskets.length > 0 && (
                 <select
@@ -148,12 +151,17 @@ export default function Backtest() {
                 </select>
               )}
             </div>
+          </div>
+          {/* HOW to test: numeric/timeframe params, all uniform height. */}
+          <div className="filter-grid">
             <label>
-              History (days)
+              <span className="field-cap">History (days)</span>
               <NumberField min={7} max={730} step={1} value={days} onChange={setDays} />
             </label>
             <label>
-              Bar size <InfoTip k="bar" />
+              <span className="field-cap">
+                Bar size <InfoTip k="bar" />
+              </span>
               <select value={timeframe} onChange={(e) => setTimeframe(e.target.value)}>
                 <option value="15Min">15 minutes (slow, precise)</option>
                 <option value="1Hour">1 hour (recommended)</option>
@@ -161,11 +169,11 @@ export default function Backtest() {
               </select>
             </label>
             <label>
-              Starting cash ($)
+              <span className="field-cap">Starting cash ($)</span>
               <NumberField min={100} step="any" value={cash} onChange={setCash} />
             </label>
             <label>
-              Spread cost per side (%)
+              <span className="field-cap">Spread cost per side (%)</span>
               <NumberField min={0} max={2} step={0.05} value={spread} onChange={setSpread} />
             </label>
           </div>

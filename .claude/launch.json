@@ -10,6 +10,13 @@
         "QT_AUTH_DISABLED": "true",
         "QT_NO_SCHEDULER": "true"
       }
+    },
+    {
+      "name": "qt-frontend",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev", "--", "--port", "5173"],
+      "cwd": "frontend",
+      "port": 5173
     }
   ]
 }
