@@ -378,6 +378,17 @@ tr:last-child td {
   margin-top: 0.4rem;
 }
 
+/* "Market closed — last session" note on the stock scanner panel. */
+.stale-note {
+  margin: 0 0 0.6rem;
+  padding: 0.4rem 0.6rem;
+  border-left: 3px solid var(--warn);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 0.85rem;
+}
+
 /* Sleeve-allocation readout in the strategy editor. Informational, not an
    error — overlapping sleeves (total > equity) are allowed by design. */
 .sleeve-readout {

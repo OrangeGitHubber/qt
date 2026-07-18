@@ -3,6 +3,21 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Scanner: honest empty states + market-closed labeling (2026-07-18)
+
+The scanner now explains itself instead of showing bare results or a blank
+"nothing passes."
+
+- **"Market closed" label.** Stock movers reflect the **last trading session**
+  even on a weekend/holiday, so the Stocks panel now says so plainly — no more
+  mistaking Friday's movers for live Saturday prices. (Crypto trades 24/7, so it
+  has no such label.)
+- **Why a panel is empty.** Instead of "Nothing passes the filters right now,"
+  an empty panel reports **how many symbols were scanned and the strongest mover
+  seen** — e.g. "Scanned 22 symbols — the strongest was ETH/USD at +0.42%, which
+  didn't clear your filters." So you can tell the difference between *a quiet
+  market* and *filters set too tight*, on your own instance, without guessing.
+
 ## Backtest & strategy UI polish (2026-07-18)
 
 Readability and clarity fixes across the trading screens.

@@ -58,13 +58,17 @@ async def test_scan_stocks_applies_all_filters():
         patch.object(AlpacaClient, "stock_movers", new=AsyncMock(return_value=MOVERS)),
         patch.object(AlpacaClient, "stock_snapshots", new=AsyncMock(return_value=STOCK_SNAPSHOTS)),
     ):
-        rows = await scanner.scan_stocks(_client(), cfg)
+        rows, meta = await scanner.scan_stocks(_client(), cfg)
     symbols = [r["symbol"] for r in rows]
     assert "GOOD" in symbols
     assert "PENNY" not in symbols   # under min_price
     assert "THIN" not in symbols    # under dollar-volume floor
     assert "MEH" not in symbols     # under min_change_pct
     assert "BANNED" not in symbols  # excluded (case-insensitive)
+    # Diagnostics report the strongest mover seen regardless of filters.
+    assert meta["scanned"] == 5
+    assert meta["best_symbol"] == "PENNY"
+    assert meta["best_change_pct"] == 40.0
 
 
 async def test_scan_stocks_sorted_and_capped():
@@ -73,7 +77,7 @@ async def test_scan_stocks_sorted_and_capped():
         patch.object(AlpacaClient, "stock_movers", new=AsyncMock(return_value=MOVERS)),
         patch.object(AlpacaClient, "stock_snapshots", new=AsyncMock(return_value=STOCK_SNAPSHOTS)),
     ):
-        rows = await scanner.scan_stocks(_client(), cfg)
+        rows, _ = await scanner.scan_stocks(_client(), cfg)
     assert len(rows) == 1
     assert rows[0]["symbol"] == "PENNY"  # biggest gainer when filters allow
 
@@ -84,13 +88,18 @@ async def test_scan_crypto_computes_change_and_filters_losers():
         patch.object(AlpacaClient, "crypto_assets", new=AsyncMock(return_value=CRYPTO_ASSETS)),
         patch.object(AlpacaClient, "crypto_snapshots", new=AsyncMock(return_value=CRYPTO_SNAPSHOTS)),
     ):
-        rows = await scanner.scan_crypto(_client(), cfg)
+        rows, meta = await scanner.scan_crypto(_client(), cfg)
     assert [r["symbol"] for r in rows] == ["BTC/USD"]
     assert rows[0]["change_pct"] == 5.0
+    # DOGE is down on the day but still counts as scanned and can be "best" only
+    # if nothing beats it — BTC (+5%) does, so best is BTC.
+    assert meta["scanned"] == 2
+    assert meta["best_symbol"] == "BTC/USD"
 
 
 async def test_scan_reports_errors_instead_of_crashing(db_session):
     with (
+        patch.object(AlpacaClient, "clock", new=AsyncMock(return_value={"is_open": True})),
         patch.object(AlpacaClient, "stock_movers", new=AsyncMock(side_effect=RuntimeError("boom"))),
         patch.object(AlpacaClient, "crypto_assets", new=AsyncMock(return_value=[])),
         patch.object(AlpacaClient, "crypto_snapshots", new=AsyncMock(return_value={})),
@@ -98,3 +107,4 @@ async def test_scan_reports_errors_instead_of_crashing(db_session):
         result = await scanner.scan(db_session, _client())
     assert result["stocks"] == []
     assert any("Stock scan failed" in e for e in result["errors"])
+    assert result["market_open"] is True

@@ -61,19 +61,32 @@ def _change_pct(snapshot: dict) -> float | None:
     return (float(daily) - float(prev)) / float(prev) * 100
 
 
-async def scan_stocks(client: AlpacaClient, cfg: dict) -> list[dict]:
+def _meta(scanned: int, best: tuple[str, float] | None) -> dict[str, Any]:
+    """Diagnostics so an empty panel can explain itself: how many symbols had
+    usable data, and the strongest mover seen (before filtering)."""
+    return {
+        "scanned": scanned,
+        "best_symbol": best[0] if best else None,
+        "best_change_pct": round(best[1], 2) if best else None,
+    }
+
+
+async def scan_stocks(client: AlpacaClient, cfg: dict) -> tuple[list[dict], dict]:
     movers = await client.stock_movers(top=50)
     gainers = movers.get("gainers", [])
     symbols = [g["symbol"] for g in gainers]
     snapshots = await client.stock_snapshots(symbols)
 
     rows = []
+    best: tuple[str, float] | None = None
     for gainer in gainers:
         symbol = gainer["symbol"]
         snapshot = snapshots.get(symbol) or {}
         price = float(gainer.get("price") or 0)
         change_pct = float(gainer.get("percent_change") or 0)
         dollar_volume = _daily_dollar_volume(snapshot)
+        if best is None or change_pct > best[1]:
+            best = (symbol, change_pct)
         if _passes(cfg, price, change_pct, dollar_volume, symbol):
             rows.append(
                 {
@@ -85,21 +98,26 @@ async def scan_stocks(client: AlpacaClient, cfg: dict) -> list[dict]:
                 }
             )
     rows.sort(key=lambda r: r["change_pct"], reverse=True)
-    return rows[: cfg["top_n"]]
+    return rows[: cfg["top_n"]], _meta(len(gainers), best)
 
 
-async def scan_crypto(client: AlpacaClient, cfg: dict) -> list[dict]:
+async def scan_crypto(client: AlpacaClient, cfg: dict) -> tuple[list[dict], dict]:
     assets = await client.crypto_assets()
     usd_pairs = [a["symbol"] for a in assets if a["symbol"].endswith("/USD")]
     snapshots = await client.crypto_snapshots(usd_pairs)
 
     rows = []
+    scanned = 0
+    best: tuple[str, float] | None = None
     for symbol, snapshot in snapshots.items():
         change_pct = _change_pct(snapshot)
         if change_pct is None:
             continue
+        scanned += 1
         price = float((snapshot.get("dailyBar") or {}).get("c") or 0)
         dollar_volume = _daily_dollar_volume(snapshot)
+        if best is None or change_pct > best[1]:
+            best = (symbol, change_pct)
         if _passes(cfg, price, change_pct, dollar_volume, symbol):
             rows.append(
                 {
@@ -111,7 +129,7 @@ async def scan_crypto(client: AlpacaClient, cfg: dict) -> list[dict]:
                 }
             )
     rows.sort(key=lambda r: r["change_pct"], reverse=True)
-    return rows[: cfg["top_n"]]
+    return rows[: cfg["top_n"]], _meta(scanned, best)
 
 
 async def scan(session: Session, client: AlpacaClient) -> dict[str, Any]:
@@ -120,17 +138,33 @@ async def scan(session: Session, client: AlpacaClient) -> dict[str, Any]:
     if _cache["result"] is not None and _cache["config"] == cfg and now - _cache["at"] < _CACHE_TTL_SECONDS:
         return _cache["result"]
 
-    result: dict[str, Any] = {"stocks": [], "crypto": [], "errors": []}
+    result: dict[str, Any] = {
+        "stocks": [],
+        "crypto": [],
+        "errors": [],
+        "market_open": None,   # None = unknown (clock unavailable)
+        "stocks_meta": None,
+        "crypto_meta": None,
+    }
+
+    # Stock movers reflect the LAST session even when the market is closed, so
+    # the UI must be able to say "these aren't live" on a weekend/holiday.
+    try:
+        clock = await client.clock()
+        result["market_open"] = bool(clock.get("is_open"))
+    except Exception:
+        pass
+
     if cfg["stocks_enabled"]:
         try:
-            result["stocks"] = await scan_stocks(client, cfg)
+            result["stocks"], result["stocks_meta"] = await scan_stocks(client, cfg)
         except AlpacaError as exc:
             result["errors"].append(f"Stock scan failed ({exc.status_code}): {exc}")
         except Exception as exc:
             result["errors"].append(f"Stock scan failed: {exc}")
     if cfg["crypto_enabled"]:
         try:
-            result["crypto"] = await scan_crypto(client, cfg)
+            result["crypto"], result["crypto_meta"] = await scan_crypto(client, cfg)
         except AlpacaError as exc:
             result["errors"].append(f"Crypto scan failed ({exc.status_code}): {exc}")
         except Exception as exc:

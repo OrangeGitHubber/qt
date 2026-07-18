@@ -341,10 +341,19 @@ export interface ScannerRow {
   dollar_volume: number;
 }
 
+export interface ScannerMeta {
+  scanned: number;
+  best_symbol: string | null;
+  best_change_pct: number | null;
+}
+
 export interface ScannerResult {
   stocks: ScannerRow[];
   crypto: ScannerRow[];
   errors: string[];
+  market_open: boolean | null;
+  stocks_meta: ScannerMeta | null;
+  crypto_meta: ScannerMeta | null;
 }
 
 export interface ScannerConfig {

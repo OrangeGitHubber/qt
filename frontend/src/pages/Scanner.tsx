@@ -5,6 +5,7 @@ import {
   getScannerConfig,
   saveScannerConfig,
   ScannerConfig,
+  ScannerMeta,
   ScannerResult,
   ScannerRow,
 } from "../api";
@@ -17,12 +18,45 @@ function volume(v: number) {
   return `$${Math.round(v / 1e3)}k`;
 }
 
-function MoversTable({ title, rows, onPin }: { title: string; rows: ScannerRow[]; onPin: (r: ScannerRow) => void }) {
+function EmptyReason({ meta, minGain }: { meta: ScannerMeta | null; minGain: number }) {
+  if (meta && meta.scanned > 0 && meta.best_symbol) {
+    return (
+      <p className="hint">
+        Scanned {meta.scanned} symbol{meta.scanned === 1 ? "" : "s"} — the strongest was{" "}
+        <strong>{meta.best_symbol}</strong> at {(meta.best_change_pct ?? 0) >= 0 ? "+" : ""}
+        {meta.best_change_pct}%, which didn't clear your filters (min gain {minGain}%, plus the price and
+        volume floors). Nothing is rising enough right now — not an error.
+      </p>
+    );
+  }
+  return <p className="hint">No symbols returned data to scan right now.</p>;
+}
+
+function MoversTable({
+  title,
+  rows,
+  meta,
+  minGain,
+  marketClosed,
+  onPin,
+}: {
+  title: string;
+  rows: ScannerRow[];
+  meta: ScannerMeta | null;
+  minGain: number;
+  marketClosed?: boolean;
+  onPin: (r: ScannerRow) => void;
+}) {
   return (
     <div className="card">
       <h3>{title}</h3>
+      {marketClosed && (
+        <p className="stale-note">
+          ⏸ Market closed — these are the <strong>last trading session's</strong> movers, not live prices.
+        </p>
+      )}
       {rows.length === 0 ? (
-        <p className="hint">Nothing passes the filters right now.</p>
+        <EmptyReason meta={meta} minGain={minGain} />
       ) : (
         <table>
           <thead>
@@ -182,8 +216,25 @@ export default function Scanner() {
         </div>
       ))}
       <div className="grid">
-        {result && cfg?.stocks_enabled !== false && <MoversTable title="Stocks" rows={result.stocks} onPin={pin} />}
-        {result && cfg?.crypto_enabled !== false && <MoversTable title="Crypto" rows={result.crypto} onPin={pin} />}
+        {result && cfg?.stocks_enabled !== false && (
+          <MoversTable
+            title="Stocks"
+            rows={result.stocks}
+            meta={result.stocks_meta}
+            minGain={cfg?.min_change_pct ?? 0}
+            marketClosed={result.market_open === false}
+            onPin={pin}
+          />
+        )}
+        {result && cfg?.crypto_enabled !== false && (
+          <MoversTable
+            title="Crypto"
+            rows={result.crypto}
+            meta={result.crypto_meta}
+            minGain={cfg?.min_change_pct ?? 0}
+            onPin={pin}
+          />
+        )}
       </div>
       {!result && <div className="card">Scanning…</div>}
     </>
