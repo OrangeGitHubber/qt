@@ -52,7 +52,7 @@ jobs:
             type=raw,value=latest,enable={{is_default_branch}}
             type=semver,pattern={{version}}
       # Build once and load locally so we can scan BEFORE publishing.
-      - uses: docker/build-push-action@v6
+      - uses: docker/build-push-action@v7
         with:
           context: .
           load: true
@@ -73,7 +73,7 @@ jobs:
           trivyignores: .trivyignore  # allowlist escape hatch for the rest
       # Only reached if the scan passed. Reuses the buildx cache, so it's fast.
       - name: Publish image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           push: true
