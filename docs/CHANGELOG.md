@@ -3,6 +3,18 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Graceful shutdown + engine heartbeat/watchdog (2026-07-18)
+
+- **Won't die mid-order.** When the container is asked to stop, QT sets a
+  shutdown flag (no new positions open from that moment) and waits — up to 20
+  seconds — for any in-flight engine tick to finish, so an order that's already
+  been submitted is never abandoned between "placed" and "confirmed".
+- **Heartbeat.** Every healthy engine cycle stamps a "last tick" time, shown on
+  the dashboard (green when fresh, amber when stale) and in the status API.
+- **Watchdog.** If the market is open and the engine hasn't ticked in over 5
+  minutes, QT sends a single Slack alert (no spam) so a silently-stalled engine
+  doesn't go unnoticed. It alerts again only after recovering and stalling anew.
+
 ## Crash recovery: reconcile with Alpaca on startup (2026-07-18)
 
 If QT is stopped at the wrong moment — power cut, container restart, a crash

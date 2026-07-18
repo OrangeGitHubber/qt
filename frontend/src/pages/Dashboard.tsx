@@ -13,8 +13,17 @@ function when(iso: string | undefined) {
   return new Date(iso).toLocaleString();
 }
 
+function heartbeat(iso: string | null): { label: string; stale: boolean } {
+  if (!iso) return { label: "no tick yet", stale: true };
+  const ageMs = Date.now() - new Date(iso).getTime();
+  const mins = Math.floor(ageMs / 60000);
+  const label = mins < 1 ? "just now" : mins === 1 ? "1 min ago" : `${mins} min ago`;
+  return { label, stale: ageMs > 5 * 60_000 };
+}
+
 export default function Dashboard({ status }: { status: StatusResponse; onRefresh?: () => void }) {
   const { broker, market, error } = status;
+  const hb = heartbeat(status.last_tick_at);
   return (
     <>
       {error && <div className="card error">{error}</div>}
@@ -51,6 +60,10 @@ export default function Dashboard({ status }: { status: StatusResponse; onRefres
               <dt>Crypto market</dt>
               <dd>
                 <span className="pill ok">OPEN 24/7</span>
+              </dd>
+              <dt>Engine heartbeat</dt>
+              <dd>
+                <span className={`pill ${hb.stale ? "warn" : "ok"}`}>{hb.label}</span>
               </dd>
             </dl>
           ) : (

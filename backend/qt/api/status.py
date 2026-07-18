@@ -6,7 +6,7 @@ from qt.api.deps import leverage_unlockable, require_user
 from qt.broker.alpaca import AlpacaError
 from qt.broker.factory import get_client
 from qt.db import get_session
-from qt.services import persistence
+from qt.services import persistence, watchdog
 from qt.settings_service import get_setting
 
 router = APIRouter(prefix="/api", tags=["status"])
@@ -31,6 +31,7 @@ async def status(
         "data_persistent_reason": boot.get("data_persistent_reason", ""),
         "secrets_without_key": boot.get("secrets_without_key", False),
         "instance_key_created_at": boot.get("instance_key_created_at"),
+        "last_tick_at": (dt.isoformat() if (dt := watchdog.last_tick_at(session)) else None),
         "broker": None,
         "market": None,
         "error": None,

@@ -30,6 +30,7 @@ def _start_scheduler():
     from apscheduler.triggers.cron import CronTrigger
     from apscheduler.triggers.interval import IntervalTrigger
 
+    from qt.services import watchdog
     from qt.services.engine import tick
     from qt.services.jobs import (
         daily_summary,
@@ -64,6 +65,9 @@ def _start_scheduler():
         reconcile_open_trades, "date", run_date=datetime.now(timezone.utc) + timedelta(seconds=10)
     )
     scheduler.add_job(reconcile_open_trades, IntervalTrigger(minutes=15), max_instances=1, coalesce=True)
+    # Watchdog: alert once if the engine heartbeat goes stale while the market
+    # is open. Runs every 5 minutes.
+    scheduler.add_job(watchdog.check, IntervalTrigger(minutes=5), max_instances=1, coalesce=True)
     scheduler.start()
     return scheduler
 
@@ -126,7 +130,36 @@ async def lifespan(_: FastAPI):
         scheduler = _start_scheduler()
     yield
     if scheduler:
-        scheduler.shutdown(wait=False)
+        await _graceful_shutdown(scheduler)
+
+
+SHUTDOWN_GRACE_SECONDS = 20
+
+
+async def _graceful_shutdown(scheduler) -> None:
+    """Let an in-flight engine tick (esp. an order submit->confirm) finish
+    before we exit. Set the shutdown flag first so no NEW entries begin, then
+    wait for running jobs — bounded, so a wedged job can't hang the container."""
+    import asyncio
+
+    from qt.services import lifecycle
+
+    lifecycle.request_shutdown()
+    loop = asyncio.get_running_loop()
+    try:
+        await asyncio.wait_for(
+            loop.run_in_executor(None, lambda: scheduler.shutdown(wait=True)),
+            timeout=SHUTDOWN_GRACE_SECONDS,
+        )
+    except asyncio.TimeoutError:
+        log.warning(
+            "graceful shutdown timed out after %ss — forcing scheduler stop",
+            SHUTDOWN_GRACE_SECONDS,
+        )
+        try:
+            scheduler.shutdown(wait=False)
+        except Exception:
+            pass
 
 
 app = FastAPI(title="QT Auto-Trader", version=__version__, lifespan=lifespan)

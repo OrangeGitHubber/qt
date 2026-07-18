@@ -22,6 +22,7 @@ export interface StatusResponse {
   data_persistent_reason: string;
   secrets_without_key: boolean;
   instance_key_created_at: string | null;
+  last_tick_at: string | null;
   broker: BrokerInfo | null;
   market: MarketInfo | null;
   error: string | null;

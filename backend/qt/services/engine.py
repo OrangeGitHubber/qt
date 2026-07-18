@@ -253,10 +253,21 @@ async def tick(leverage_unlocked: bool = False) -> None:
             next_close = datetime.fromisoformat(clock["next_close"].replace("Z", "+00:00"))
             closes_soon = (next_close - datetime.now(timezone.utc)) < timedelta(minutes=10)
 
+        from qt.services import lifecycle, watchdog
+
+        # Exits always run — closing positions during shutdown is desirable and
+        # a mid-close order is never abandoned. New entries are skipped once a
+        # shutdown has been requested so we don't open a position we can't mind.
         await _manage_exits(session, client, mode, market_open, closes_soon)
-        await _consider_entries(
-            session, client, mode, equity, market_open, leverage_unlocked
-        )
+        if lifecycle.is_shutting_down():
+            log.info("shutdown requested — skipping new entries this tick")
+        else:
+            await _consider_entries(
+                session, client, mode, equity, market_open, leverage_unlocked
+            )
+
+        # Heartbeat: this tick completed the decision loop successfully.
+        watchdog.record_heartbeat(session)
 
 
 async def _manage_exits(
