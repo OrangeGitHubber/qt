@@ -308,7 +308,21 @@ button.danger {
 /* Scanner "+ Watch" toggle. Unwatched = the base filled accent-blue CTA.
    Watched = a muted, desaturated blue tint (same hue as --accent, calmer) so
    it reads as "already saved". Hovering hints it's removable. Both stay in the
-   blue family — green is reserved for P&L / up signals. */
+   blue family — green is reserved for P&L / up signals.
+   Both states share one footprint: a min-width wide enough for "✓ Watched" on a
+   single line, centered text, nowrap, and a 1px border on the unwatched state
+   too (transparent, so no color change) so box-sizing:border-box makes the two
+   states pixel-identical in width AND height. */
+button.small.watch-btn {
+  min-width: 6.5rem;
+  text-align: center;
+  white-space: nowrap;
+  border: 1px solid transparent;
+  /* Pin the line box: the "✓" glyph has taller font metrics than the plain
+     "+ Watch" text, so without a fixed line-height the watched row's line box
+     (and thus button height) grows ~3px. A fixed value equalizes both. */
+  line-height: 1.4;
+}
 button.small.watch-btn.watched {
   background: rgba(79, 140, 255, 0.12);
   border: 1px solid rgba(79, 140, 255, 0.35);
