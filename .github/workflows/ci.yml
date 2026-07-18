@@ -51,9 +51,29 @@ jobs:
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}
             type=semver,pattern={{version}}
+      # Build once and load locally so we can scan BEFORE publishing.
       - uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: qt-scan:candidate
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-to: type=gha,mode=max
+          cache-from: type=gha
+      - name: Scan image for HIGH/CRITICAL vulnerabilities
+        uses: aquasecurity/trivy-action@0.24.0
+        with:
+          image-ref: qt-scan:candidate
+          format: table
+          exit-code: "1"            # fail the build on a finding
+          severity: HIGH,CRITICAL
+          trivyignores: .trivyignore  # allowlist escape hatch
+      # Only reached if the scan passed. Reuses the buildx cache, so it's fast.
+      - name: Publish image
+        uses: docker/build-push-action@v6
         with:
           context: .
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha

@@ -3,6 +3,17 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## CI security scanning + release hygiene (2026-07-18)
+
+- **Dependabot** now watches the Python, npm, and GitHub Actions dependencies
+  and opens weekly update PRs.
+- **Image vulnerability scanning.** Every published container image is scanned
+  with Trivy in CI and the build fails on any HIGH/CRITICAL vulnerability, with
+  a `.trivyignore` allowlist for accepted exceptions.
+- **Don't auto-update the live bot.** The README now warns against tools like
+  Watchtower auto-pulling `:latest` (a surprise restart mid-trade is dangerous)
+  and recommends pinning a version tag and updating deliberately.
+
 ## Market-calendar correctness + nightly DB backups (2026-07-18)
 
 - **Half-days and holidays respected.** The daily summary used to fire on a

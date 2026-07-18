@@ -1,0 +1,9 @@
+# Trivy vulnerability allowlist (escape hatch for the CI image scan).
+#
+# CI fails the build on any HIGH/CRITICAL vulnerability in the image. When a
+# finding is a false positive, unreachable in our usage, or simply has no fix
+# yet and must be accepted temporarily, add its CVE ID below with a short note
+# and (ideally) a review date. Keep this list small and revisit it.
+#
+# Example:
+# CVE-2025-12345  # base-image openssl, no fix upstream yet — revisit 2026-09
