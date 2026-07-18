@@ -33,6 +33,7 @@ def _start_scheduler():
     from qt.services import watchdog
     from qt.services.engine import tick
     from qt.services.jobs import (
+        backup_database,
         daily_summary,
         reconcile_open_trades,
         snapshot_benchmarks,
@@ -68,6 +69,16 @@ def _start_scheduler():
     # Watchdog: alert once if the engine heartbeat goes stale while the market
     # is open. Runs every 5 minutes.
     scheduler.add_job(watchdog.check, IntervalTrigger(minutes=5), max_instances=1, coalesce=True)
+    # Nightly DB backup (03:15 ET, a quiet hour) + one shortly after boot so a
+    # fresh container has a restore point before the first trading day.
+    scheduler.add_job(
+        backup_database,
+        CronTrigger(hour=3, minute=15, timezone="America/New_York"),
+        max_instances=1,
+    )
+    scheduler.add_job(
+        backup_database, "date", run_date=datetime.now(timezone.utc) + timedelta(seconds=30)
+    )
     scheduler.start()
     return scheduler
 

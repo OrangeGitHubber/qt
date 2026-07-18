@@ -3,6 +3,20 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Market-calendar correctness + nightly DB backups (2026-07-18)
+
+- **Half-days and holidays respected.** The daily summary used to fire on a
+  fixed 4:10pm-ish schedule and would post a meaningless "0 trades" on market
+  holidays. It now checks Alpaca's trading calendar and stays quiet on days the
+  market didn't open. (Flatten-before-close was already correct — it reads the
+  real closing time from Alpaca, so it handles early-close days on its own.)
+- **Automatic database backups.** QT snapshots its database (config, encrypted
+  keys, trade journal) nightly and shortly after each start, keeping the last 7
+  in `/data/backups/`. It uses SQLite's online backup, which is safe to run
+  while the app is live. The disposable bar cache is not backed up. Restore is a
+  simple file swap — steps are in the
+  [data-persistence guide](data-persistence.md).
+
 ## Graceful shutdown + engine heartbeat/watchdog (2026-07-18)
 
 - **Won't die mid-order.** When the container is asked to stop, QT sets a

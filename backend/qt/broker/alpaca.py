@@ -82,6 +82,12 @@ class AlpacaClient:
     async def clock(self) -> dict[str, Any]:
         return await self._get("/v2/clock")
 
+    async def calendar(self, start: str, end: str) -> list[dict[str, Any]]:
+        """Trading-session calendar between two YYYY-MM-DD dates. Only trading
+        days are returned; each carries the day's real open/close (half-days
+        close early). Holidays are omitted entirely."""
+        return await self._get("/v2/calendar", params={"start": start, "end": end}) or []
+
     async def crypto_assets(self) -> list[dict[str, Any]]:
         """Active, tradable crypto pairs (symbols like 'BTC/USD')."""
         return await self.list_assets("crypto")

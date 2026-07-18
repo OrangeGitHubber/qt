@@ -32,6 +32,17 @@ async def sync_assets(force: bool = False) -> None:
         log.exception("asset directory sync failed — will retry within the hour")
 
 
+async def backup_database() -> None:
+    """Periodic snapshot of qt.db (config, keys, journal). Best-effort."""
+    try:
+        from qt.paths import data_dir
+        from qt.services import backup
+
+        backup.backup_db(data_dir())
+    except Exception:
+        log.exception("database backup failed")
+
+
 async def reconcile_open_trades() -> None:
     """Reconcile the journal against Alpaca (startup + periodically). No-op when
     the engine is off or Alpaca isn't configured."""
@@ -66,6 +77,21 @@ async def daily_summary() -> None:
             mode = get_mode(session)
             if mode == "off":
                 return
+            client = get_client(session)
+            # Skip the summary on days the market didn't trade (holidays). The
+            # fixed 16:10 ET cron would otherwise post a meaningless "0 opened,
+            # 0 closed" on every holiday. Half-days are fine: 16:10 is well past
+            # the 13:00 close, so the data is complete. If we can't reach the
+            # calendar, fall through and post anyway rather than go silent.
+            if client is not None:
+                from qt.services import calendar
+
+                try:
+                    if not await calendar.is_trading_today(client):
+                        log.info("daily summary skipped: market closed today")
+                        return
+                except Exception:
+                    log.warning("daily summary: calendar check failed, posting anyway")
             today = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
             closed = (
                 session.query(func.count(Trade.id), func.coalesce(func.sum(Trade.pnl), 0.0))
