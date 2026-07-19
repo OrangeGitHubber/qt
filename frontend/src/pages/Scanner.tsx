@@ -265,12 +265,12 @@ export default function Scanner() {
             {classBlock(
               "stocks",
               "Scan stocks",
-              "The $5M volume floor and $1 price floor keep you out of illiquid penny-stock pumps that are hard to exit.",
+              "Volume is the last completed trading session's dollar volume (a full day — during market hours today's bar is still partial). The volume and $1 price floors keep you out of illiquid penny-stock pumps that are hard to exit.",
             )}
             {classBlock(
               "crypto",
               "Scan crypto",
-              "Crypto trades 24/7 and resets volume at 00:00 UTC, so lower floors are normal — and there's no $1 price floor (coins like DOGE trade well under $1).",
+              "Crypto trades 24/7; volume is a rolling 24-hour total, so lower floors than stocks are normal — and there's no $1 price floor (coins like DOGE trade well under $1).",
             )}
           </div>
           <button>Save filters</button>

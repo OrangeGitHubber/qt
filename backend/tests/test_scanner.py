@@ -30,7 +30,9 @@ MOVERS = {
 }
 
 STOCK_SNAPSHOTS = {
-    "GOOD": {"dailyBar": {"c": 25.5, "v": 2_000_000, "vw": 25.0}},   # $50M volume
+    # dailyBar = today / last completed session; prevDailyBar = the session before.
+    "GOOD": {"dailyBar": {"c": 25.5, "v": 2_000_000, "vw": 25.0},    # $50M today
+             "prevDailyBar": {"c": 24.0, "v": 3_000_000, "vw": 24.0}},  # $72M prev
     "PENNY": {"dailyBar": {"c": 0.7, "v": 90_000_000, "vw": 0.65}},
     "THIN": {"dailyBar": {"c": 18.0, "v": 10_000, "vw": 18.0}},      # $180k volume
     "MEH": {"dailyBar": {"c": 10.0, "v": 5_000_000, "vw": 10.0}},
@@ -76,7 +78,7 @@ async def test_scan_stocks_applies_all_filters():
         patch.object(AlpacaClient, "stock_movers", new=AsyncMock(return_value=MOVERS)),
         patch.object(AlpacaClient, "stock_snapshots", new=AsyncMock(return_value=STOCK_SNAPSHOTS)),
     ):
-        rows, meta = await scanner.scan_stocks(_client(), cfg)
+        rows, meta = await scanner.scan_stocks(_client(), cfg, market_open=False)
     symbols = [r["symbol"] for r in rows]
     assert "GOOD" in symbols
     assert "PENNY" not in symbols   # under min_price
@@ -98,9 +100,22 @@ async def test_scan_stocks_sorted_and_capped():
         patch.object(AlpacaClient, "stock_movers", new=AsyncMock(return_value=MOVERS)),
         patch.object(AlpacaClient, "stock_snapshots", new=AsyncMock(return_value=STOCK_SNAPSHOTS)),
     ):
-        rows, _ = await scanner.scan_stocks(_client(), cfg)
+        rows, _ = await scanner.scan_stocks(_client(), cfg, market_open=False)
     assert len(rows) == 1
     assert rows[0]["symbol"] == "PENNY"  # biggest gainer when filters allow
+
+
+async def test_scan_stocks_uses_prev_session_volume_when_market_open():
+    # While the market is open, the liquidity floor uses the PREVIOUS full
+    # session (prevDailyBar), not today's partial dailyBar.
+    cfg = _cfg(stock={"min_dollar_volume": 0, "min_price": 0, "min_change_pct": 0})
+    with (
+        patch.object(AlpacaClient, "stock_movers", new=AsyncMock(return_value=MOVERS)),
+        patch.object(AlpacaClient, "stock_snapshots", new=AsyncMock(return_value=STOCK_SNAPSHOTS)),
+    ):
+        rows, _ = await scanner.scan_stocks(_client(), cfg, market_open=True)
+    good = next(r for r in rows if r["symbol"] == "GOOD")
+    assert good["dollar_volume"] == round(3_000_000 * 24.0)   # $72M prev session, not $50M today
 
 
 async def test_scan_crypto_rolling_24h_change_and_filters_losers():

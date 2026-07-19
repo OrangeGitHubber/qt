@@ -3,6 +3,17 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Scanner: stock volume floor uses a full session, not a partial day (2026-07-18)
+
+The stock "$ volume" (and the min-volume floor it feeds) now uses the **last
+completed trading session** — a stable full day. Previously, while the market
+was open it used *today's* bar, which is only partial and grows through the
+session, so a stock could fail the floor at 10am and pass at 3pm purely from
+accumulation. Now the floor is a consistent full-day liquidity gate (it falls
+back to today's bar only if the prior session's volume is unavailable). This
+mirrors crypto, which uses a rolling 24-hour total. Stocks stay in Eastern
+time; crypto has no timezone boundary.
+
 ## Fix: crypto scanner was only reading a couple of coins (2026-07-18)
 
 The rolling-24h crypto change had a bug: it fetched hourly bars with a

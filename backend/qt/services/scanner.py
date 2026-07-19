@@ -95,11 +95,29 @@ def _passes(f: dict, exclude_symbols: list, price: float, change_pct: float, dol
     return True
 
 
-def _daily_dollar_volume(snapshot: dict) -> float:
-    bar = snapshot.get("dailyBar") or {}
+def _bar_dollar_volume(bar: dict) -> float:
     volume = bar.get("v") or 0
     ref_price = bar.get("vw") or bar.get("c") or 0
     return float(volume) * float(ref_price)
+
+
+def _stock_session_volume(snapshot: dict, market_open: bool) -> float:
+    """Stock liquidity floor = the last COMPLETED session's dollar volume.
+
+    While the market is open, today's dailyBar is only partial (it grows all
+    day), which makes a fixed floor bite harder in the morning than the
+    afternoon for no real reason — so use the previous full session. When the
+    market is closed, dailyBar already IS the last completed session (e.g.
+    Friday on a weekend), so use it. If the preferred bar carries no volume
+    (missing, a data gap, or a prevDailyBar that only holds a reference price),
+    fall back to the other rather than reading zero and wrongly filtering the
+    symbol out.
+    """
+    daily = snapshot.get("dailyBar") or {}
+    prev = snapshot.get("prevDailyBar") or {}
+    primary, secondary = (prev, daily) if market_open else (daily, prev)
+    vol = _bar_dollar_volume(primary)
+    return vol if vol > 0 else _bar_dollar_volume(secondary)
 
 
 def _rolling_24h(bars: list[dict]) -> tuple[float, float, float] | None:
@@ -138,7 +156,7 @@ def _meta(scanned: int, best: tuple[str, float, float, float] | None) -> dict[st
     }
 
 
-async def scan_stocks(client: AlpacaClient, cfg: dict) -> tuple[list[dict], dict]:
+async def scan_stocks(client: AlpacaClient, cfg: dict, market_open: bool) -> tuple[list[dict], dict]:
     f = cfg["stocks"]
     movers = await client.stock_movers(top=50)
     gainers = movers.get("gainers", [])
@@ -152,7 +170,7 @@ async def scan_stocks(client: AlpacaClient, cfg: dict) -> tuple[list[dict], dict
         snapshot = snapshots.get(symbol) or {}
         price = float(gainer.get("price") or 0)
         change_pct = float(gainer.get("percent_change") or 0)
-        dollar_volume = _daily_dollar_volume(snapshot)
+        dollar_volume = _stock_session_volume(snapshot, market_open)
         if best is None or change_pct > best[1]:
             best = (symbol, change_pct, price, dollar_volume)
         if _passes(f, cfg["exclude_symbols"], price, change_pct, dollar_volume, symbol):
@@ -233,7 +251,7 @@ async def scan(session: Session, client: AlpacaClient) -> dict[str, Any]:
 
     if cfg["stocks"]["enabled"]:
         try:
-            result["stocks"], result["stocks_meta"] = await scan_stocks(client, cfg)
+            result["stocks"], result["stocks_meta"] = await scan_stocks(client, cfg, bool(result["market_open"]))
         except AlpacaError as exc:
             result["errors"].append(f"Stock scan failed ({exc.status_code}): {exc}")
         except Exception as exc:

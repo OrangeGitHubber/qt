@@ -40,7 +40,7 @@ export const GLOSSARY: Record<string, GlossaryEntry> = {
   dollar_volume: {
     term: "Dollar volume (on Alpaca's feed)",
     explain:
-      "Quantity traded × price. IMPORTANT: this is only what Alpaca's FREE feed saw, not the whole market. Stocks use the IEX exchange (~2–3% of US volume, today's session); crypto is a rolling 24-hour total from Alpaca's aggregated feed (no midnight reset). So a real BTC day is billions, but this column may show only a few thousand — treat it as a liquidity signal to compare LIKE-for-like across symbols, not the true market total.",
+      "Quantity traded × price. IMPORTANT: this is only what Alpaca's FREE feed saw, not the whole market. Stocks use the last completed trading session on IEX (~2–3% of US volume) — a stable full day, since today's bar is only partial while the market is open. Crypto is a rolling 24-hour total from Alpaca's aggregated feed. So a real BTC day is billions, but this column may show only a few thousand — treat it as a liquidity signal to compare LIKE-for-like across symbols, not the true market total.",
     url: "https://www.investopedia.com/terms/v/volume.asp",
   },
   wash_sale: {

@@ -40,9 +40,10 @@ The bot earns trust in rungs. Each rung is a deliberate switch you flip:
   rules: price range, minimum
   [dollar volume](https://www.investopedia.com/terms/v/volume.asp), minimum
   gain, exclusions. Crypto is measured over a **rolling 24 hours** (no midnight
-  boundary — the same "24h change" every crypto site quotes), while stocks use
-  today's trading session. **The "$ volume" you see is feed volume, not the
-  whole market.** Free stock data comes from the
+  boundary — the same "24h change" every crypto site quotes); stock volume is
+  the **last completed trading session** (a stable full day — today's bar is
+  only partial while the market is open). **The "$ volume" you see is feed
+  volume, not the whole market.** Free stock data comes from the
   [IEX exchange](https://en.wikipedia.org/wiki/IEX) (~2–3% of US volume), and
   crypto volume is a rolling-24h total from Alpaca's aggregated feed — so BTC,
   which really trades billions a day, can show only a few thousand dollars here.
