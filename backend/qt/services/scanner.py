@@ -3,6 +3,7 @@ UI-configurable rules. Results are cached briefly to respect Alpaca's
 rate limits no matter how often the UI polls."""
 
 import time
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -172,9 +173,15 @@ async def scan_crypto(client: AlpacaClient, cfg: dict) -> tuple[list[dict], dict
     f = cfg["crypto"]
     assets = await client.crypto_assets()
     usd_pairs = [a["symbol"] for a in assets if a["symbol"].endswith("/USD")]
-    # Hourly bars for a rolling 24h read (25 = 24h + the current partial hour),
-    # instead of the 00:00-UTC daily bar. One request for all pairs.
-    bars_by_symbol = await client.crypto_bars(usd_pairs, timeframe="1Hour", limit=25)
+    # Hourly bars over a rolling 24h window instead of the 00:00-UTC daily bar.
+    # IMPORTANT: use the time-windowed, paginated historical endpoint — NOT
+    # crypto_bars(limit=N). Alpaca's `limit` on the multi-symbol bars endpoint
+    # is a TOTAL cap across all symbols, so a small limit gets consumed by the
+    # first symbol or two and every other pair comes back empty (that bug read
+    # as "scanned 2 symbols" with ~$0 volume). `start` = ~25h ago (24h + the
+    # current partial hour) gives each pair its full window.
+    start_iso = (datetime.now(timezone.utc) - timedelta(hours=25)).isoformat()
+    bars_by_symbol = await client.historical_bars(usd_pairs, "crypto", "1Hour", start_iso)
 
     rows = []
     scanned = 0

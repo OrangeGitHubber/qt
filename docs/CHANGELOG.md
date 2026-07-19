@@ -3,6 +3,16 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Fix: crypto scanner was only reading a couple of coins (2026-07-18)
+
+The rolling-24h crypto change had a bug: it fetched hourly bars with a
+`limit`, but Alpaca caps that limit across **all** symbols combined, not per
+symbol — so the first coin or two consumed the whole budget and every other
+pair came back with no/partial data. That showed up as "scanned 2 symbols"
+and volumes reading ~$0. Fixed by fetching bars over a **time window** (the
+last ~25 hours) with pagination, so every pair gets its full 24h of data and
+the `$ volume` numbers are real again.
+
 ## App icon (2026-07-18)
 
 QT now has an icon — a blue "QT" monogram badge — shown in the browser tab

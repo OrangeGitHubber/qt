@@ -107,7 +107,7 @@ async def test_scan_crypto_rolling_24h_change_and_filters_losers():
     cfg = _cfg(crypto={"min_dollar_volume": 0})
     with (
         patch.object(AlpacaClient, "crypto_assets", new=AsyncMock(return_value=CRYPTO_ASSETS)),
-        patch.object(AlpacaClient, "crypto_bars", new=AsyncMock(return_value=CRYPTO_BARS)),
+        patch.object(AlpacaClient, "historical_bars", new=AsyncMock(return_value=CRYPTO_BARS)),
     ):
         rows, meta = await scanner.scan_crypto(_client(), cfg)
     # BTC is +5% over the rolling 24h window; DOGE is down and filtered out.
@@ -130,7 +130,7 @@ async def test_scan_reports_errors_instead_of_crashing(db_session):
         patch.object(AlpacaClient, "clock", new=AsyncMock(return_value={"is_open": True})),
         patch.object(AlpacaClient, "stock_movers", new=AsyncMock(side_effect=RuntimeError("boom"))),
         patch.object(AlpacaClient, "crypto_assets", new=AsyncMock(return_value=[])),
-        patch.object(AlpacaClient, "crypto_bars", new=AsyncMock(return_value={})),
+        patch.object(AlpacaClient, "historical_bars", new=AsyncMock(return_value={})),
     ):
         result = await scanner.scan(db_session, _client())
     assert result["stocks"] == []
