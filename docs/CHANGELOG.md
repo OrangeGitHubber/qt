@@ -3,6 +3,14 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## App icon (2026-07-18)
+
+QT now has an icon — a blue "QT" monogram badge — shown in the browser tab
+(favicon), at the top of the README on GitHub, and as the container icon in
+unraid / Docker (the unraid template already points at it). Source is
+`frontend/public/favicon.svg`; a 256×256 `frontend/public/icon.png` is the
+raster used by unraid and as the PNG/apple-touch fallback.
+
 ## Strategies: custom symbol universe + clearer asset-class scoping (2026-07-18)
 
 - **"Specific symbols" universe.** A strategy can now target a **hand-picked list

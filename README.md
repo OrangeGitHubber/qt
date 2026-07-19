@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="frontend/public/icon.png" width="96" height="96" alt="QT Auto-Trader logo" />
+</p>
+
 # QT Auto-Trader
 
 Self-hosted momentum trading bot for US stocks and crypto, built on the official
