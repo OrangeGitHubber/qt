@@ -252,6 +252,13 @@ function Editor({
             onChange={(e) => setEntry("entry_window_end", e.target.value || null)} />
         </label>
       </div>
+      {s.asset_class === "crypto" && (
+        <p className="hint">
+          Crypto trades 24/7, so the <strong>entry window</strong> is optional — leave it blank to allow entries
+          around the clock. If you do set it, it limits entries to those <em>ET</em> hours (e.g. to skip thin
+          overnight liquidity) — unusual for crypto, but it works.
+        </p>
+      )}
 
       <h4>Exit rules — "the configurable downturn"</h4>
       <div className="filter-grid">
@@ -280,11 +287,13 @@ function Editor({
             onChange={(e) => setExit("exit_below_vwap", e.target.checked)} />
           Exit if price falls below VWAP <InfoTip k="vwap" />
         </label>
-        <label className="check">
-          <input type="checkbox" checked={p.exit.flatten_before_close}
-            onChange={(e) => setExit("flatten_before_close", e.target.checked)} />
-          Flatten before market close
-        </label>
+        {s.asset_class === "stock" && (
+          <label className="check">
+            <input type="checkbox" checked={p.exit.flatten_before_close}
+              onChange={(e) => setExit("flatten_before_close", e.target.checked)} />
+            Flatten before market close
+          </label>
+        )}
       </div>
 
       <h4>Sizing & safety</h4>

@@ -308,7 +308,10 @@ async def _manage_exits(
             price,
             vwap,
             now,
-            closes_soon,
+            # "flatten before close" is a stock concept — crypto has no close,
+            # and closes_soon is derived from the stock clock. Never let it
+            # flatten a 24/7 crypto position.
+            closes_soon and trade.asset_class == "stock",
         )
         if not should_exit:
             continue

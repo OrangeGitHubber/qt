@@ -1,6 +1,7 @@
 """End-to-end shadow mode: a full engine tick against a mocked Alpaca —
 entry decision, journal row with reasons, then a price collapse and exit."""
 
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -113,6 +114,65 @@ async def test_shadow_entry_then_stop_loss_exit(client, shadow_world):
     assert len(closed) == 1
     assert "stop-loss" in closed[0]["exit_reason"]
     assert closed[0]["pnl"] == pytest.approx((20.0 - 21.2) * 9, abs=0.01)
+
+
+async def test_crypto_position_not_flattened_at_stock_close(client):
+    # A crypto strategy with flatten_before_close ON must NOT flatten when the
+    # STOCK market closes — crypto trades 24/7 and has no close.
+    crypto_strat = {
+        **STRATEGY,
+        "name": "Crypto flatten guard",
+        "asset_class": "crypto",
+        "swing_mode": False,
+        "params": {
+            "entry": {"min_day_gain_pct": 2, "require_above_vwap": False,
+                      "entry_window_start": None, "entry_window_end": None},
+            "exit": {"trailing_stop_pct": 5, "stop_loss_pct": 4, "take_profit_pct": 0,
+                     "max_holding_hours": 0, "flatten_before_close": True, "exit_below_vwap": False},
+        },
+    }
+    scanner.invalidate_cache()
+    regime.invalidate_cache()
+    with session_scope() as s:
+        security.set_secret(s, SECRET_KEY_ID, "k")
+        security.set_secret(s, SECRET_KEY_SECRET, "s")
+        set_setting(s, "engine_mode", "shadow")
+        set_setting(s, "risk_config", {})
+    sid = client.post("/api/strategies", json=crypto_strat).json()["id"]
+    client.post(f"/api/strategies/{sid}/toggle")
+    with session_scope() as s:
+        s.add(Trade(strategy_id=sid, mode="shadow", symbol="BTC/USD", asset_class="crypto",
+                    qty=0.01, notional=200, status="open", entry_price=100.0, high_water=100.0,
+                    entry_at=datetime.now(timezone.utc) - timedelta(hours=1)))
+
+    closing_soon = (datetime.now(timezone.utc) + timedelta(minutes=5)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    with patch.multiple(
+        AlpacaClient,
+        account=AsyncMock(return_value=ACCOUNT),
+        clock=AsyncMock(return_value={"is_open": True, "next_close": closing_soon}),
+        stock_movers=AsyncMock(return_value={"gainers": [], "losers": []}),
+        stock_snapshots=AsyncMock(return_value={}),
+        stock_bars=AsyncMock(return_value=SPY_BARS_BULL),
+        crypto_assets=AsyncMock(return_value=[]),
+        historical_bars=AsyncMock(return_value={}),
+        # healthy price → the only thing that could close it is a (wrong) flatten
+        crypto_snapshots=AsyncMock(return_value={"BTC/USD": {"latestTrade": {"p": 101.0},
+                                                             "dailyBar": {"c": 101.0, "vw": 101.0}}}),
+    ):
+        await tick(leverage_unlocked=False)
+
+    journal = client.get("/api/engine/journal?mode=shadow").json()
+    btc = [t for t in journal if t["symbol"] == "BTC/USD"]
+    assert btc and btc[0]["status"] == "open"  # not flattened
+
+    with session_scope() as s:
+        set_setting(s, "engine_mode", "off")
+        s.query(Trade).delete()
+        security.delete_secret(s, SECRET_KEY_ID)
+        security.delete_secret(s, SECRET_KEY_SECRET)
+    client.delete(f"/api/strategies/{sid}")
+    scanner.invalidate_cache()
+    regime.invalidate_cache()
 
 
 async def test_shadow_regime_blocks_entries_in_bear_market(client, shadow_world):
