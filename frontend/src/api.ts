@@ -256,6 +256,9 @@ export interface BacktestTrade {
 export interface BacktestResult {
   strategy_name: string;
   symbols: string[];
+  scanner_replay?: boolean;
+  universe_size?: number;
+  days_replayed?: number;
   timeframe: string;
   days: number;
   starting_cash: number;
@@ -296,6 +299,7 @@ export interface BacktestResult {
 export const runBacktest = (body: {
   strategy_id: number;
   symbols: string[];
+  scanner_replay?: boolean;
   days: number;
   timeframe: string;
   starting_cash: number;

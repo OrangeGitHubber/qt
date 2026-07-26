@@ -131,9 +131,15 @@ def run_backtest(
     risk: dict,
     starting_cash: float = 5000.0,
     spread_pct: float = 0.1,
+    eligible_by_day: dict[str, set[str]] | None = None,
 ) -> dict:
     """Pure simulation: strategy dict (same shape as the DB row), raw bars per
-    symbol, global risk config. Returns metrics + equity curve + trades."""
+    symbol, global risk config. Returns metrics + equity curve + trades.
+
+    `eligible_by_day` powers "scanner replay": when given, a symbol may only be
+    ENTERED on a day it appears in that day's set (the day's reconstructed
+    top-N risers). Exits are never gated — an open position always manages
+    itself. When None, every symbol is eligible every day (fixed-list mode)."""
     params = strategy["params"]
     swing = strategy["swing_mode"]
     sizing = strategy["sizing_usd"]
@@ -197,7 +203,10 @@ def run_backtest(
             del state.open_trades[symbol]
 
         # ---- entries ----
+        eligible = eligible_by_day.get(day) if eligible_by_day is not None else None
         for symbol, bar in bars.items():
+            if eligible is not None and symbol not in eligible:
+                continue  # scanner replay: not a top-N riser on this day
             if bar["change_pct"] is None:
                 continue
             diag["bars_evaluated"] += 1

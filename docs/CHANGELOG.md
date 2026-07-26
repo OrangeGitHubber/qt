@@ -3,6 +3,28 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Backtest: "Scanner replay" mode — test against each day's real risers (2026-07-26)
+
+The backtest can now replay against **the market's actual top-10 risers on each
+past day** — the names the live "today's risers" scanner would have surfaced —
+instead of a fixed symbol list you type in. Tick **Scanner replay** on the
+Backtest screen (the symbol picker greys out; it's stocks-only for now), and each
+day only that day's cached top-10 are eligible to enter — your strategy's own
+entry rules then decide. It's the closest a backtest gets to what the live engine
+really does.
+
+- Runs **fully offline** on the cached daily bars, so **run a sweep first**
+  (Settings → Historical bar cache). If the cache is empty it says so rather than
+  silently returning nothing.
+- The results header summarises the run ("scanner replay — N days, M unique
+  movers") since there's no short symbol list to show; the broad-market **SPY**
+  line is still drawn for comparison.
+- Fixed a day-alignment bug found in testing: cached daily bars were timestamped
+  at midnight UTC, which the engine reads as the *previous* trading day — that
+  misalignment would have quietly let every symbol through the daily filter.
+  Bars are now stamped inside the trading day so the "day's movers" gate is
+  applied to the right day.
+
 ## Bar cache: "Run sweep" button in Settings (2026-07-26)
 
 Settings now has a **Historical bar cache** panel: a **Run sweep** button that

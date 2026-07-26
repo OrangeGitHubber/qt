@@ -30,6 +30,7 @@ export default function Backtest() {
   const [baskets, setBaskets] = useState<Basket[]>([]);
   const [basketNote, setBasketNote] = useState<string | null>(null);
   const [symbols, setSymbols] = useState<string[]>([]);
+  const [scannerReplay, setScannerReplay] = useState(false);
   const [days, setDays] = useState(90);
   const [timeframe, setTimeframe] = useState("1Hour");
   const [cash, setCash] = useState(5000);
@@ -128,6 +129,7 @@ export default function Backtest() {
       const r = await runBacktest({
         strategy_id: strategyId,
         symbols,
+        scanner_replay: scannerReplay,
         days,
         timeframe,
         starting_cash: cash,
@@ -174,11 +176,12 @@ export default function Backtest() {
                 re-dispatch clicks into it */}
             <div className="field">
               <span className="field-cap">Symbols (none picked = your watchlist)</span>
-              <SymbolPicker assetClass={assetClass} value={symbols} onChange={setSymbols} multi />
+              <SymbolPicker assetClass={assetClass} value={symbols} onChange={setSymbols} multi disabled={scannerReplay} />
               {baskets.length > 0 && (
                 <select
                   className="load-basket"
                   value=""
+                  disabled={scannerReplay}
                   onChange={(e) => e.target.value && loadBasket(Number(e.target.value))}
                 >
                   <option value="">Load basket ▾</option>
@@ -191,6 +194,23 @@ export default function Backtest() {
               )}
             </div>
           </div>
+          <label className="check">
+            <input
+              type="checkbox"
+              checked={scannerReplay}
+              disabled={assetClass === "crypto"}
+              onChange={(e) => setScannerReplay(e.target.checked)}
+            />
+            Scanner replay — test against the historical <strong>top-10 risers each day</strong> (not a fixed list){" "}
+            <InfoTip k="scanner_replay" />
+          </label>
+          {scannerReplay && (
+            <p className="hint">
+              Uses the cached daily movers, so it runs on <strong>daily bars</strong> and needs a completed sweep first
+              (Settings → Historical bar cache). Each day, only that day's top-10 are eligible to enter; your strategy's
+              entry rules then decide. Stocks only.
+            </p>
+          )}
           {/* HOW to test: numeric/timeframe params, all uniform height. */}
           <div className="filter-grid">
             <label>
@@ -231,7 +251,11 @@ export default function Backtest() {
         <>
           <div className="card">
             <h3>
-              {result.strategy_name} · {result.symbols.join(", ")} · last {result.days} days ({result.timeframe})
+              {result.strategy_name} ·{" "}
+              {result.scanner_replay
+                ? `scanner replay — ${result.days_replayed ?? 0} days, ${result.universe_size ?? 0} unique movers`
+                : result.symbols.join(", ")}{" "}
+              · last {result.days} days ({result.timeframe})
             </h3>
             {result.trades === 0 && result.diagnosis?.summary && (
               <div className="card note" style={{ cursor: "default" }}>

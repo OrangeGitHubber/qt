@@ -9,12 +9,14 @@ export default function SymbolPicker({
   onChange,
   multi = false,
   placeholder,
+  disabled = false,
 }: {
   assetClass?: "stock" | "crypto";
   value: string[];
   onChange: (symbols: string[]) => void;
   multi?: boolean;
   placeholder?: string;
+  disabled?: boolean;
 }) {
   const [q, setQ] = useState("");
   const [rows, setRows] = useState<AssetRow[]>([]);
@@ -110,10 +112,15 @@ export default function SymbolPicker({
       )}
       <input
         value={q}
+        disabled={disabled}
         onChange={(e) => setQ(e.target.value)}
         onKeyDown={onKeyDown}
         onFocus={() => rows.length && setOpen(true)}
-        placeholder={placeholder ?? (assetClass === "crypto" ? "Search: bitcoin or BTC/USD" : "Search: nvidia or NVDA")}
+        placeholder={
+          disabled
+            ? "— scanner replay uses the day's movers —"
+            : placeholder ?? (assetClass === "crypto" ? "Search: bitcoin or BTC/USD" : "Search: nvidia or NVDA")
+        }
         autoComplete="off"
       />
       {!multi && value.length > 0 && !q && <div className="picked">Selected: {value[0]}</div>}

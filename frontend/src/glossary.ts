@@ -31,6 +31,12 @@ export const GLOSSARY: Record<string, GlossaryEntry> = {
       "Volume-Weighted Average Price — today's average price weighted by how much traded at each level. Price above VWAP suggests buyers are in control today.",
     url: "https://www.investopedia.com/terms/v/vwap.asp",
   },
+  scanner_replay: {
+    term: "Scanner replay",
+    explain:
+      "Backtests against the market's actual top-10 risers on each past day — the names the live scanner would have surfaced — instead of a fixed symbol list. It's reconstructed from a cached year of daily bars (run a sweep in Settings first), so it runs on daily bars. Each day only that day's top-10 are eligible to enter; your strategy's entry rules then decide. This is the closest a backtest gets to what the live 'today's risers' engine actually does.",
+    url: "https://www.investopedia.com/terms/b/backtesting.asp",
+  },
   share_price_band: {
     term: "Share-price band",
     explain:

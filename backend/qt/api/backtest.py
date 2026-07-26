@@ -22,6 +22,7 @@ TIMEFRAMES = ("15Min", "1Hour", "1Day")
 class BacktestBody(BaseModel):
     strategy_id: int
     symbols: list[str] = []  # empty = use the watchlist for the strategy's asset class
+    scanner_replay: bool = False  # replay the cached historical daily top-N risers instead
     days: int = Field(default=90, ge=7, le=730)
     timeframe: str = Field(default="1Hour", pattern="^(15Min|1Hour|1Day)$")
     starting_cash: float = Field(default=5000, ge=100, le=10_000_000)
@@ -37,6 +38,18 @@ async def run(
     strategy = session.get(Strategy, body.strategy_id)
     if not strategy:
         raise HTTPException(status_code=404, detail="Strategy not found.")
+
+    strategy_dict = {
+        "asset_class": strategy.asset_class,
+        "swing_mode": strategy.swing_mode,
+        "sizing_usd": strategy.sizing_usd,
+        "sleeve_usd": strategy.sleeve_usd,
+        "max_positions": strategy.max_positions,
+        "params": json.loads(strategy.params),
+    }
+
+    if body.scanner_replay:
+        return await _scanner_replay(body, strategy, strategy_dict, session, client)
 
     symbols = [s.strip().upper() for s in body.symbols if s.strip()]
     if not symbols:
@@ -66,14 +79,6 @@ async def run(
     except AlpacaError as exc:
         raise HTTPException(status_code=502, detail=f"Bar download failed ({exc.status_code}): {exc}")
 
-    strategy_dict = {
-        "asset_class": strategy.asset_class,
-        "swing_mode": strategy.swing_mode,
-        "sizing_usd": strategy.sizing_usd,
-        "sleeve_usd": strategy.sleeve_usd,
-        "max_positions": strategy.max_positions,
-        "params": json.loads(strategy.params),
-    }
     result = backtest.run_backtest(
         strategy_dict, bars, get_risk(session),
         starting_cash=body.starting_cash, spread_pct=body.spread_pct,
@@ -101,5 +106,62 @@ async def run(
     result["strategy_name"] = strategy.name
     result["symbols"] = symbols
     result["timeframe"] = body.timeframe
+    result["days"] = body.days
+    return result
+
+
+async def _scanner_replay(
+    body: BacktestBody, strategy: Strategy, strategy_dict: dict, session: Session, client: AlpacaClient
+) -> dict:
+    """Replay the historical 'today's risers' the scanner would have surfaced:
+    for each past day, only that day's cached top-N movers are eligible to
+    enter. Runs on cached DAILY bars — fully offline, no Alpaca fetch (run a
+    sweep first in Settings). Stocks only for now."""
+    if strategy.asset_class != "stock":
+        raise HTTPException(status_code=422, detail="Scanner replay is stocks-only for now.")
+
+    from qt.services import barcache
+
+    start_day = (datetime.now(timezone.utc) - timedelta(days=body.days)).strftime("%Y-%m-%d")
+    cache = barcache.session()
+    try:
+        movers = barcache.movers_between(cache, start_day)
+        if not movers:
+            raise HTTPException(
+                status_code=422,
+                detail="No cached movers yet — run a sweep first (Settings → Historical bar cache).",
+            )
+        eligible_by_day = {day: set(syms) for day, syms in movers.items()}
+        union = sorted({s for syms in movers.values() for s in syms})
+        bars = barcache.cached_daily_bars(cache, union, start_day)
+    finally:
+        cache.close()
+
+    result = backtest.run_backtest(
+        strategy_dict, bars, get_risk(session),
+        starting_cash=body.starting_cash, spread_pct=body.spread_pct,
+        eligible_by_day=eligible_by_day,
+    )
+    if "error" in result:
+        raise HTTPException(status_code=422, detail=result["error"])
+
+    # Broad-market benchmark (SPY), best-effort — the tested-symbols hold
+    # benchmark is meaningless here (hundreds of names), so drop it.
+    result["hold_benchmark"] = None
+    result["hold_benchmark_label"] = None
+    result["benchmark"] = None
+    result["benchmark_symbol"] = None
+    try:
+        result["benchmark"] = await backtest.fetch_benchmark(client, "stock", start_day, result["equity_days"])
+        result["benchmark_symbol"] = "SPY"
+    except Exception:
+        pass
+
+    result["strategy_name"] = strategy.name
+    result["scanner_replay"] = True
+    result["universe_size"] = len(union)
+    result["days_replayed"] = len(movers)
+    result["symbols"] = []  # too many to list; summarized by universe_size
+    result["timeframe"] = "1Day"
     result["days"] = body.days
     return result

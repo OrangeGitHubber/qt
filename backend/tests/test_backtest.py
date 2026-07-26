@@ -67,6 +67,26 @@ def test_rise_then_trail_exit():
     assert result["win_rate"] == 0.0
 
 
+def test_eligible_by_day_gates_entries_to_the_days_movers():
+    # Both AAA and BBB qualify on day 2 (+4%), but scanner replay says only AAA
+    # was a top-N riser that day → BBB must never enter.
+    aaa = _spread_day([100, 100, 100], [104, 104, 104])
+    bbb = _spread_day([100, 100, 100], [104, 104, 104])
+    eligible = {"2026-05-05": {"AAA"}}  # BBB not a mover this day
+    result = run_backtest(
+        STRATEGY, {"AAA": aaa, "BBB": bbb}, RISK,
+        starting_cash=5000, spread_pct=0, eligible_by_day=eligible,
+    )
+    assert result["trades"] == 1
+    assert result["trade_list"][0]["symbol"] == "AAA"
+
+    # Without the gate, both enter — proving the gate, not the data, blocked BBB.
+    ungated = run_backtest(
+        STRATEGY, {"AAA": aaa, "BBB": bbb}, RISK, starting_cash=5000, spread_pct=0,
+    )
+    assert ungated["trades"] == 2
+
+
 def test_stop_loss_and_costs():
     # Entry at 104, collapse to 99 → stop-loss. Spread cost should worsen P&L.
     series = _spread_day([100, 100, 100], [104, 99, 99])

@@ -5,11 +5,15 @@ from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
 
 from qt import security
 from qt.broker.alpaca import SECRET_KEY_ID, SECRET_KEY_SECRET, AlpacaClient
 from qt.db import session_scope
 from qt.models import Strategy, StrategyConfigVersion, Trade
+from qt.services import barcache
 
 
 def hourly(closes: list[float], symbol_days: int = 6) -> list[dict]:
@@ -90,6 +94,69 @@ def test_market_benchmark_kept_when_it_differs(client, configured):
     assert body["benchmark_symbol"] == "SPY"
     assert body["hold_benchmark_label"] == "NVDA"
     assert fetch.await_count == 2
+
+
+@pytest.fixture()
+def seeded_cache(monkeypatch):
+    """Point the global bar cache at a fresh in-memory DB and seed two recent
+    trading days of daily bars + reconstructed movers."""
+    eng = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    barcache.CacheBase.metadata.create_all(eng)
+    Sess = sessionmaker(bind=eng, expire_on_commit=False)
+    monkeypatch.setattr(barcache, "_engine", eng)
+    monkeypatch.setattr(barcache, "_Session", Sess)
+
+    # Two consecutive recent days: D0 baseline, D1 the +gain day.
+    d0 = (datetime.now(timezone.utc) - timedelta(days=6)).strftime("%Y-%m-%d")
+    d1 = (datetime.now(timezone.utc) - timedelta(days=5)).strftime("%Y-%m-%d")
+    with Sess() as s:
+        for sym in ("MOVER", "OTHER"):
+            barcache.save_daily_bars(s, sym, [
+                {"t": f"{d0}T14:00:00Z", "o": 100, "h": 100, "l": 100, "c": 100, "v": 1e6, "vw": 100},
+                {"t": f"{d1}T14:00:00Z", "o": 105, "h": 105, "l": 105, "c": 105, "v": 1e6, "vw": 105},
+            ])
+        # Only MOVER made the top-N on D1 → OTHER must be gated out.
+        barcache.store_movers(s, d1, [("MOVER", 5.0, 105.0, 1e8)])
+        s.commit()
+    return d1
+
+
+def test_scanner_replay_gates_to_cached_movers(client, configured, seeded_cache):
+    """End-to-end: replay uses the cached day's movers, not a symbol list. Only
+    MOVER was a riser on D1, so OTHER (same +5%) must never trade."""
+    sid = _make(client, "stock")
+    fetch = AsyncMock(side_effect=Exception("no benchmark in test"))  # SPY best-effort
+    with patch.object(AlpacaClient, "historical_bars", new=fetch):
+        body = client.post(
+            "/api/backtest",
+            json={"strategy_id": sid, "scanner_replay": True, "days": 30,
+                  "starting_cash": 5000, "spread_pct": 0},
+        ).json()
+    assert body["scanner_replay"] is True
+    assert body["universe_size"] == 1        # one unique mover across the window
+    assert body["days_replayed"] == 1
+    assert body["timeframe"] == "1Day"
+    assert body["trades"] == 1               # MOVER entered; OTHER gated out
+    assert body["trade_list"][0]["symbol"] == "MOVER"
+
+
+def test_scanner_replay_needs_a_sweep_first(client, configured, monkeypatch):
+    """With an empty cache, replay explains itself instead of silently doing nothing."""
+    eng = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    barcache.CacheBase.metadata.create_all(eng)
+    monkeypatch.setattr(barcache, "_engine", eng)
+    monkeypatch.setattr(barcache, "_Session", sessionmaker(bind=eng, expire_on_commit=False))
+    sid = _make(client, "stock")
+    r = client.post("/api/backtest", json={"strategy_id": sid, "scanner_replay": True, "days": 30})
+    assert r.status_code == 422
+    assert "sweep" in r.json()["detail"].lower()
+
+
+def test_scanner_replay_rejects_crypto(client, configured):
+    sid = _make(client, "crypto")
+    r = client.post("/api/backtest", json={"strategy_id": sid, "scanner_replay": True, "days": 30})
+    assert r.status_code == 422
+    assert "stocks-only" in r.json()["detail"].lower()
 
 
 def test_market_benchmark_kept_for_a_basket_including_it(client, configured):

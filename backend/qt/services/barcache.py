@@ -190,3 +190,43 @@ def store_movers(sess: OrmSession, day: str, ranked: list[tuple[str, float, floa
 def top_movers(sess: OrmSession, day: str) -> list[DailyMover]:
     """The cached risers for a day, best first."""
     return sess.query(DailyMover).filter(DailyMover.day == day).order_by(DailyMover.rank).all()
+
+
+def movers_between(sess: OrmSession, start_day: str) -> dict[str, list[str]]:
+    """{day: [symbols ranked]} for all reconstructed days on/after start_day —
+    the per-day 'today's risers' a scanner-replay backtest gates entries on."""
+    rows = (
+        sess.query(DailyMover)
+        .filter(DailyMover.day >= start_day)
+        .order_by(DailyMover.day, DailyMover.rank)
+        .all()
+    )
+    out: dict[str, list[str]] = {}
+    for m in rows:
+        out.setdefault(m.day, []).append(m.symbol)
+    return out
+
+
+def cached_daily_bars(sess: OrmSession, symbols: list[str], start_day: str) -> dict[str, list[dict]]:
+    """Cached daily bars for `symbols` on/after start_day, shaped like Alpaca
+    bar dicts (t/o/h/l/c/v/vw) so the backtester consumes them unchanged."""
+    if not symbols:
+        return {}
+    out: dict[str, list[dict]] = {}
+    # Chunk the IN() list so a large movers union doesn't build a giant query.
+    for i in range(0, len(symbols), 500):
+        chunk = symbols[i : i + 500]
+        rows = (
+            sess.query(DailyBar)
+            .filter(DailyBar.symbol.in_(chunk), DailyBar.day >= start_day)
+            .order_by(DailyBar.symbol, DailyBar.day)
+            .all()
+        )
+        for b in rows:
+            # Stamp at 14:00Z (10:00 ET) — INSIDE the ET trading day — not midnight
+            # UTC, which _et_day() would roll back to the previous calendar day and
+            # so misalign the backtest's day key from the movers/eligible-by-day key.
+            out.setdefault(b.symbol, []).append(
+                {"t": f"{b.day}T14:00:00Z", "o": b.o, "h": b.h, "l": b.l, "c": b.c, "v": b.v, "vw": b.vw}
+            )
+    return out
