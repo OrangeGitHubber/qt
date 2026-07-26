@@ -252,22 +252,42 @@ function Editor({
             onChange={(e) => setEntry("require_above_vwap", e.target.checked)} />
           Require price above VWAP <InfoTip k="vwap" />
         </label>
-        <label>
-          Entry window start (ET, blank = any)
-          <input value={p.entry.entry_window_start ?? ""} placeholder="09:30"
-            onChange={(e) => setEntry("entry_window_start", e.target.value || null)} />
+        <label className="check">
+          <input
+            type="checkbox"
+            checked={!!(p.entry.entry_window_start && p.entry.entry_window_end)}
+            onChange={(e) => {
+              if (e.target.checked) {
+                setEntry("entry_window_start", "09:30");
+                setEntry("entry_window_end", "15:30");
+              } else {
+                setEntry("entry_window_start", null);
+                setEntry("entry_window_end", null);
+              }
+            }}
+          />
+          Limit entries to a time window (ET)
         </label>
-        <label>
-          Entry window end (ET)
-          <input value={p.entry.entry_window_end ?? ""} placeholder="15:30"
-            onChange={(e) => setEntry("entry_window_end", e.target.value || null)} />
-        </label>
+        {p.entry.entry_window_start && p.entry.entry_window_end && (
+          <>
+            <label>
+              Entry window start (ET)
+              <input type="time" value={p.entry.entry_window_start}
+                onChange={(e) => setEntry("entry_window_start", e.target.value || null)} />
+            </label>
+            <label>
+              Entry window end (ET)
+              <input type="time" value={p.entry.entry_window_end}
+                onChange={(e) => setEntry("entry_window_end", e.target.value || null)} />
+            </label>
+          </>
+        )}
       </div>
       {s.asset_class === "crypto" && (
         <p className="hint">
-          Crypto trades 24/7, so the <strong>entry window</strong> is optional — leave it blank to allow entries
-          around the clock. If you do set it, it limits entries to those <em>ET</em> hours (e.g. to skip thin
-          overnight liquidity) — unusual for crypto, but it works.
+          Crypto trades 24/7, so the <strong>entry window</strong> is usually left <strong>off</strong> (uncheck
+          "Limit entries to a time window") — the ET hours don't mean much for a 24-hour market. Turn it on only if
+          you want to avoid, say, thin overnight liquidity.
         </p>
       )}
 

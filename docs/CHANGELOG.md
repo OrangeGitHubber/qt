@@ -3,6 +3,15 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Strategies: entry window is a proper time picker with an on/off toggle (2026-07-26)
+
+The entry-window fields were free-text, so you could type an ambiguous value like
+"0930" that wouldn't match the HH:MM format the engine expects. They're now native
+**time pickers** (clock selection, always valid HH:MM), gated by a **"Limit entries
+to a time window (ET)"** checkbox — untick it and the window is off (entries any
+time the market is open). That's the easy way to turn it off for crypto, which
+trades 24/7.
+
 ## Journal: separate buy and sell rows (2026-07-26)
 
 The journal used to collapse a whole position onto one line (entry price + exit
