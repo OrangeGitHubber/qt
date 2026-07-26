@@ -3,6 +3,29 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Backtest groundwork: historical universe sweep + movers reconstruction (2026-07-26)
+
+Laying the data foundation for the upcoming "scanner replay" backtest. Alpaca
+has no historical *movers* endpoint, so to ask "what would the scanner have
+surfaced last March?" QT now rebuilds that answer from raw price history.
+
+- A new **sweep** downloads about a year of daily bars for the whole tradable
+  US-stock universe (real exchanges only — OTC/pink-sheet junk excluded, same
+  as the live scanner). It works in batches, saving as it goes and skipping any
+  batch the broker rejects, so a hiccup never aborts the whole run.
+- A **reconstruction** step then replays each past day and recomputes that day's
+  **top risers** — the biggest % gainers that clear the scanner's usual price,
+  change, and dollar-volume floors — and stores them.
+- Two new endpoints drive it: **POST `/api/barcache/sweep`** starts the run in
+  the background (only one at a time) and returns straight away, and **GET
+  `/api/barcache/status`** reports progress plus which cache database is in use
+  (SQLite or your Postgres — host only, never the password). Starting a sweep
+  also creates the cache tables, so a successful call doubles as a check that
+  your cache-DB connection works.
+
+This is backend + data only — no UI yet, and the sweep itself must be run on
+your own instance (against real Alpaca and your database).
+
 ## Strategies: per-strategy share-price band (2026-07-26)
 
 New entry rules **Min share price** and **Max share price ($)**. A strategy will

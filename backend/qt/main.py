@@ -14,6 +14,7 @@ from qt.api import (
     assets as assets_api,
     auth,
     backtest,
+    barcache as barcache_api,
     baskets,
     engine as engine_api,
     market,
@@ -185,6 +186,7 @@ app.include_router(engine_api.router, dependencies=[Depends(require_user)])
 app.include_router(backtest.router, dependencies=[Depends(require_user)])
 app.include_router(assets_api.router, dependencies=[Depends(require_user)])
 app.include_router(baskets.router, dependencies=[Depends(require_user)])
+app.include_router(barcache_api.router, dependencies=[Depends(require_user)])
 app.include_router(about.router, dependencies=[Depends(require_user)])
 
 
