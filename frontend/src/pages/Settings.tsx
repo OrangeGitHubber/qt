@@ -2,12 +2,15 @@ import { FormEvent, useCallback, useEffect, useState } from "react";
 import {
   addAllowlist,
   AssetStatus,
+  BarCacheStatus,
   EngineState,
   getAllowlist,
   getAssetStatus,
+  getBarCacheStatus,
   getEngine,
   removeAllowlist,
   RiskConfig,
+  runBarSweep,
   setRegimeEnabled,
   setRisk,
   setSlack,
@@ -26,6 +29,7 @@ export default function Settings() {
   const [leverageConfirm, setLeverageConfirm] = useState("");
   const [assetStatus, setAssetStatus] = useState<AssetStatus | null>(null);
   const [syncing, setSyncing] = useState(false);
+  const [bars, setBars] = useState<BarCacheStatus | null>(null);
   const [note, setNote] = useState<string | null>(null);
 
   const refresh = useCallback(() => {
@@ -35,9 +39,28 @@ export default function Settings() {
     });
     getAllowlist().then(setAllow).catch(() => setAllow(null));
     getAssetStatus().then(setAssetStatus).catch(() => setAssetStatus(null));
+    getBarCacheStatus().then(setBars).catch(() => setBars(null));
   }, []);
 
   useEffect(refresh, [refresh]);
+
+  // Poll the sweep status while a sweep is running so progress updates live.
+  useEffect(() => {
+    if (!bars?.running) return;
+    const t = setInterval(() => getBarCacheStatus().then(setBars).catch(() => {}), 3000);
+    return () => clearInterval(t);
+  }, [bars?.running]);
+
+  async function runSweep() {
+    setNote(null);
+    try {
+      await runBarSweep();
+      const s = await getBarCacheStatus();
+      setBars(s); // flips running=true, which starts the poll above
+    } catch (e) {
+      setNote((e as Error).message);
+    }
+  }
 
   function num(key: keyof RiskConfig) {
     return {
@@ -201,6 +224,46 @@ export default function Settings() {
           }}
         >
           {syncing ? "Syncing…" : "Sync now"}
+        </button>
+      </div>
+
+      <div className="card">
+        <h3>Historical bar cache</h3>
+        <p className="hint">
+          Caches daily bars across the market and reconstructs each past day's top-10 risers — the data a
+          "scanner replay" backtest needs. Runs against{" "}
+          {bars ? (
+            <strong>
+              {bars.backend.kind === "postgres"
+                ? `Postgres${bars.backend.host ? ` (${bars.backend.host})` : ""}`
+                : "a local SQLite file"}
+            </strong>
+          ) : (
+            "…"
+          )}
+          . One sweep is enough — it's cached and idempotent, and takes several minutes.
+        </p>
+        {bars && (
+          <dl>
+            <dt>Status</dt>
+            <dd>
+              {bars.running ? "sweeping…" : "idle"}
+              {bars.last_error && <span className="error"> — {bars.last_error}</span>}
+            </dd>
+            <dt>Symbols</dt>
+            <dd>
+              {bars.symbols_saved.toLocaleString()} saved
+              {bars.symbols_total ? ` of ${bars.symbols_total.toLocaleString()}` : ""}
+              {bars.batches_total ? ` · batch ${bars.batches_done}/${bars.batches_total}` : ""}
+            </dd>
+            <dt>Days reconstructed</dt>
+            <dd>{bars.days_reconstructed.toLocaleString()}</dd>
+            <dt>Last run</dt>
+            <dd>{bars.last_run_at ? new Date(bars.last_run_at).toLocaleString() : "never"}</dd>
+          </dl>
+        )}
+        <button className="small" disabled={bars?.running} onClick={runSweep}>
+          {bars?.running ? "Sweeping…" : "Run sweep"}
         </button>
       </div>
 

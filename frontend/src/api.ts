@@ -196,6 +196,24 @@ export const getJournal = (mode?: string, status?: string, assetClass?: string) 
 };
 export const getScoreboard = () => fetch("/api/engine/scoreboard").then((r) => handle<Scoreboard>(r));
 
+export interface BarCacheStatus {
+  running: boolean;
+  started_at: string | null;
+  last_run_at: string | null;
+  batches_total: number;
+  batches_done: number;
+  symbols_total: number;
+  symbols_saved: number;
+  days_reconstructed: number;
+  errors: number;
+  last_error: string | null;
+  backend: { kind: string; scheme: string; host: string | null };
+}
+
+export const getBarCacheStatus = () => fetch("/api/barcache/status").then((r) => handle<BarCacheStatus>(r));
+export const runBarSweep = (days?: number) =>
+  fetch(`/api/barcache/sweep${days ? `?days=${days}` : ""}`, { method: "POST" }).then((r) => handle(r));
+
 export interface AssetRow {
   symbol: string;
   name: string;

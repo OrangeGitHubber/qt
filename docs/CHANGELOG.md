@@ -3,6 +3,14 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Bar cache: "Run sweep" button in Settings (2026-07-26)
+
+Settings now has a **Historical bar cache** panel: a **Run sweep** button that
+kicks off the universe daily-bar sweep + movers reconstruction (no more browser
+console), with live progress — symbols saved, batches, days reconstructed, last
+run — and the cache backend in use (local SQLite, or your Postgres host). Bad
+DB connections or Alpaca auth errors surface right there.
+
 ## Backtest groundwork: historical universe sweep + movers reconstruction (2026-07-26)
 
 Laying the data foundation for the upcoming "scanner replay" backtest. Alpaca
