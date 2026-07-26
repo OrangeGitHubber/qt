@@ -3,7 +3,7 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
-## Journal: timestamp column + filter out rejected noise (2026-07-18)
+## Journal: timestamp column + filter out rejected noise (2026-07-26)
 
 - **Time column, leftmost, in your local time.** Every journal entry now shows
   when it was logged — including rejected ones — as the first column, formatted
@@ -15,7 +15,7 @@ Newest first. Each phase links to the technical details in
 - **Filter by asset class.** An All / Stocks / Crypto toggle too. It composes
   with the outcome and mode filters (e.g. crypto + trades only).
 
-## Watchlist: sort by any column + filter by asset class (2026-07-18)
+## Watchlist: sort by any column + filter by asset class (2026-07-26)
 
 - **Click any column to sort** — Symbol, Type, Price, Today, 30-day, Daily move,
   or vs-200d-avg. Click again to flip the direction (an ▲/▼ shows which column
