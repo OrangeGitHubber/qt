@@ -3,6 +3,14 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Strategies: per-strategy share-price band (2026-07-26)
+
+New entry rules **Min share price** and **Max share price ($)**. A strategy will
+only buy symbols whose price sits in that band — e.g. set Max to 10 to trade
+only movers **under $10**, or a Min to avoid sub-$1 names. It narrows this
+strategy's universe on top of the scanner's own price floor; 0 on either side
+means no limit that way. (Applies to the live engine's entry decision.)
+
 ## Strategies: entry window is a proper time picker with an on/off toggle (2026-07-26)
 
 The entry-window fields were free-text, so you could type an ambiguous value like

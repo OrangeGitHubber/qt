@@ -93,6 +93,12 @@ def evaluate_entry(params: dict, candidate: Candidate, now_et: datetime) -> tupl
     max_gain = entry.get("max_day_gain_pct", 0)
     if max_gain and candidate.change_pct > max_gain:
         return False, f"day gain {candidate.change_pct:.2f}% > max {max_gain}% (too extended to chase)"
+    min_price = entry.get("min_price", 0)
+    if min_price and candidate.price < min_price:
+        return False, f"price ${candidate.price:.2f} < min ${min_price:g}"
+    max_price = entry.get("max_price", 0)
+    if max_price and candidate.price > max_price:
+        return False, f"price ${candidate.price:.2f} > max ${max_price:g}"
     if entry.get("require_above_vwap"):
         if candidate.vwap is None:
             return False, "VWAP unavailable — rule requires price above VWAP"

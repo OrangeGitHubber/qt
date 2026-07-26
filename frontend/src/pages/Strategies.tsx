@@ -41,6 +41,8 @@ const EMPTY: Partial<StrategyRow> = {
     entry: {
       min_day_gain_pct: 3,
       max_day_gain_pct: 0,
+      min_price: 0,
+      max_price: 0,
       require_above_vwap: true,
       entry_window_start: "09:30",
       entry_window_end: "15:30",
@@ -246,6 +248,16 @@ function Editor({
           Max gain today (%, 0 = off) <InfoTip k="max_day_gain" />
           <NumberField step="0.1" min="0" value={p.entry.max_day_gain_pct ?? 0}
             onChange={(n) => setEntry("max_day_gain_pct", n)} />
+        </label>
+        <label>
+          Min share price ($, 0 = any) <InfoTip k="share_price_band" />
+          <NumberField step="any" min="0" value={p.entry.min_price ?? 0}
+            onChange={(n) => setEntry("min_price", n)} />
+        </label>
+        <label>
+          Max share price ($, 0 = none) <InfoTip k="share_price_band" />
+          <NumberField step="any" min="0" value={p.entry.max_price ?? 0}
+            onChange={(n) => setEntry("max_price", n)} />
         </label>
         <label className="check">
           <input type="checkbox" checked={p.entry.require_above_vwap}

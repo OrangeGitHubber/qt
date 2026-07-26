@@ -91,6 +91,22 @@ def test_entry_max_gain_off_by_default():
     assert ok
 
 
+def test_entry_rejects_above_max_price():
+    # "only movers under $10" — a $20 stock is skipped
+    ok, reason = evaluate_entry(params(entry={"max_price": 10}), cand(price=20.0), NOON_ET)
+    assert not ok and "> max $10" in reason
+
+
+def test_entry_rejects_below_min_price():
+    ok, reason = evaluate_entry(params(entry={"min_price": 5}), cand(price=3.0, vwap=2.5), NOON_ET)
+    assert not ok and "< min $5" in reason
+
+
+def test_entry_price_band_passes_inside():
+    ok, _ = evaluate_entry(params(entry={"min_price": 1, "max_price": 10}), cand(price=6.0, vwap=5.5), NOON_ET)
+    assert ok
+
+
 def test_entry_rejects_below_vwap():
     ok, reason = evaluate_entry(params(), cand(price=19.0), NOON_ET)
     assert not ok and "VWAP" in reason

@@ -31,6 +31,12 @@ export const GLOSSARY: Record<string, GlossaryEntry> = {
       "Volume-Weighted Average Price — today's average price weighted by how much traded at each level. Price above VWAP suggests buyers are in control today.",
     url: "https://www.investopedia.com/terms/v/vwap.asp",
   },
+  share_price_band: {
+    term: "Share-price band",
+    explain:
+      "Limit this strategy to symbols within a per-share price range — e.g. set Max to 10 to trade only movers under $10, or a Min to avoid sub-$1 names. It narrows the strategy's universe on top of the scanner's own price floor. 0 on either side means no limit that way.",
+    url: "https://www.investopedia.com/terms/s/stock.asp",
+  },
   max_day_gain: {
     term: "Max gain today",
     explain:

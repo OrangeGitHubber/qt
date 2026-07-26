@@ -18,6 +18,8 @@ router = APIRouter(prefix="/api/strategies", tags=["strategies"])
 class EntryRules(BaseModel):
     min_day_gain_pct: float = Field(default=3.0, ge=0, le=100)
     max_day_gain_pct: float = Field(default=0, ge=0, le=1000)  # 0 = no ceiling; skip over-extended movers
+    min_price: float = Field(default=0, ge=0)  # $/share floor for this strategy; 0 = any
+    max_price: float = Field(default=0, ge=0)  # $/share cap; 0 = none (e.g. only movers under $10)
     require_above_vwap: bool = True
     entry_window_start: str | None = None  # "HH:MM" US/Eastern; None = any time
     entry_window_end: str | None = None

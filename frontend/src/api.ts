@@ -32,6 +32,8 @@ export interface StrategyParams {
   entry: {
     min_day_gain_pct: number;
     max_day_gain_pct: number;
+    min_price: number;
+    max_price: number;
     require_above_vwap: boolean;
     entry_window_start: string | null;
     entry_window_end: string | null;
