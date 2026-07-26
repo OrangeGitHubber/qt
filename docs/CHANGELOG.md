@@ -3,6 +3,16 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Journal: separate buy and sell rows (2026-07-26)
+
+The journal used to collapse a whole position onto one line (entry price + exit
+price + P&L together). Now each position shows as **separate rows**: a **▲ Bought**
+row and, once it exits, a **▼ Sold** row, sorted by time. Each row shows the
+position's **status** (open / closed), and expanding a Sold row **links back to
+the buy** it closes (quantity, entry price, entry time, realized P&L). Rejected
+decisions stay a single **⊘ Rejected** row. (One buy per position today — QT
+doesn't scale into a position, so a sell maps to exactly one buy.)
+
 ## Fix: crypto trades were wrongly auto-closed by reconciliation (2026-07-26)
 
 A real bug: crypto positions were being closed within minutes of opening, with

@@ -412,6 +412,10 @@ tr:last-child td {
   white-space: nowrap;
 }
 
+.warn-text {
+  color: var(--warn);
+}
+
 /* Segmented single-choice control (e.g. watchlist All / Stocks / Crypto). */
 .seg {
   display: inline-flex;
