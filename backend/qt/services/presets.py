@@ -17,7 +17,7 @@ PRESETS: dict[str, dict] = {
             "entry": {
                 "min_day_gain_pct": 3.0,
                 "require_above_vwap": True,
-                "entry_window_start": "10:00",
+                "entry_window_start": "09:30",
                 "entry_window_end": "15:30",
             },
             "exit": {
@@ -71,7 +71,7 @@ PRESETS: dict[str, dict] = {
             "entry": {
                 "min_day_gain_pct": 1.5,
                 "require_above_vwap": True,
-                "entry_window_start": "10:00",
+                "entry_window_start": "09:30",
                 "entry_window_end": "15:30",
             },
             "exit": {

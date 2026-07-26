@@ -38,7 +38,7 @@ const EMPTY: Partial<StrategyRow> = {
   sleeve_usd: 1000,
   max_positions: 3,
   params: {
-    entry: { min_day_gain_pct: 3, require_above_vwap: true, entry_window_start: "10:00", entry_window_end: "15:30" },
+    entry: { min_day_gain_pct: 3, require_above_vwap: true, entry_window_start: "09:30", entry_window_end: "15:30" },
     exit: {
       trailing_stop_pct: 5,
       stop_loss_pct: 4,
@@ -243,7 +243,7 @@ function Editor({
         </label>
         <label>
           Entry window start (ET, blank = any)
-          <input value={p.entry.entry_window_start ?? ""} placeholder="10:00"
+          <input value={p.entry.entry_window_start ?? ""} placeholder="09:30"
             onChange={(e) => setEntry("entry_window_start", e.target.value || null)} />
         </label>
         <label>

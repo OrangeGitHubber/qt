@@ -3,6 +3,16 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Strategies: default entry window starts at the market open (2026-07-26)
+
+Stock strategy presets (and new custom strategies) now default the entry
+window to **09:30–15:30 ET** instead of 10:00–15:30 — so the bot can enter
+risers **from the start of the trading day** rather than sitting out the first
+half hour and buying in late, after a move has already run. (Trade-off: the
+first ~30 minutes are the most volatile with the widest spreads on the free
+feed.) You can still set any window per strategy, and crypto stays 24/7.
+Existing strategies keep their saved window until you edit and save them.
+
 ## Journal: timestamp column + filter out rejected noise (2026-07-26)
 
 - **Time column, leftmost, in your local time.** Every journal entry now shows
