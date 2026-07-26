@@ -79,6 +79,18 @@ def test_movers_between_groups_by_day_and_honors_start():
     assert got == {"2026-06-01": ["CCC", "AAA"], "2026-06-02": ["BBB"]}  # ranked, OLD excluded
 
 
+def test_movers_between_narrows_to_top_n_at_read_time():
+    s = _mem_session()
+    barcache.store_movers(s, "2026-06-01", [
+        ("CCC", 50.0, 15.0, 3e7), ("AAA", 20.0, 12.0, 1e7), ("BBB", 10.0, 8.0, 2e7),
+    ])
+    s.commit()
+    # Store-wide, narrow-at-read: the same cache serves any riser count with no re-sweep.
+    assert barcache.movers_between(s, "2026-06-01", top_n=2) == {"2026-06-01": ["CCC", "AAA"]}
+    assert barcache.movers_between(s, "2026-06-01", top_n=1) == {"2026-06-01": ["CCC"]}
+    assert barcache.movers_between(s, "2026-06-01") == {"2026-06-01": ["CCC", "AAA", "BBB"]}  # all
+
+
 def test_cached_daily_bars_shapes_like_alpaca_and_filters():
     s = _mem_session()
     barcache.save_daily_bars(s, "AAA", [

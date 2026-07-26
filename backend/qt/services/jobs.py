@@ -61,6 +61,48 @@ async def reconcile_open_trades() -> None:
         log.exception("reconciliation job failed")
 
 
+async def daily_movers_sweep() -> None:
+    """Keep the scanner-replay cache current: after the US close, pull the day's
+    universe daily bars and re-rank the recent days' risers.
+
+    Only MAINTAINS a cache the user already built — it never bootstraps one, so
+    users who don't use scanner replay pay no daily Alpaca cost. Skips non-trading
+    days. Best-effort; failures are logged, not fatal."""
+    try:
+        from qt.services import barcache, barsweep, calendar, scanner
+
+        with session_scope() as session:
+            client = get_client(session)
+            if client is None:
+                return
+            try:
+                if not await calendar.is_trading_today(client):
+                    return  # holiday/weekend — no new bar to fetch
+            except Exception:
+                log.warning("daily movers sweep: calendar check failed, proceeding anyway")
+
+            try:
+                barcache.init_cache()
+            except Exception:
+                log.exception("daily movers sweep: could not open the bar cache")
+                return
+            sess = barcache.session()
+            try:
+                if sess.query(barcache.DailyBar).first() is None:
+                    return  # no historical cache yet — nothing to maintain
+                f = scanner.STOCK_DEFAULTS
+                summary = await barsweep.daily_movers_update(
+                    client, sess,
+                    min_change_pct=f["min_change_pct"], min_price=f["min_price"],
+                    max_price=f["max_price"], min_dollar_volume=f["min_dollar_volume"],
+                )
+                log.info("daily movers sweep done: %s", summary)
+            finally:
+                sess.close()
+    except Exception:
+        log.exception("daily movers sweep failed")
+
+
 async def snapshot_benchmarks() -> None:
     try:
         with session_scope() as session:

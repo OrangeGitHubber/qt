@@ -31,6 +31,7 @@ export default function Backtest() {
   const [basketNote, setBasketNote] = useState<string | null>(null);
   const [symbols, setSymbols] = useState<string[]>([]);
   const [scannerReplay, setScannerReplay] = useState(false);
+  const [replayTopN, setReplayTopN] = useState(10);
   const [days, setDays] = useState(90);
   const [timeframe, setTimeframe] = useState("1Hour");
   const [cash, setCash] = useState(5000);
@@ -130,6 +131,7 @@ export default function Backtest() {
         strategy_id: strategyId,
         symbols,
         scanner_replay: scannerReplay,
+        replay_top_n: replayTopN,
         days,
         timeframe,
         starting_cash: cash,
@@ -201,15 +203,24 @@ export default function Backtest() {
               disabled={assetClass === "crypto"}
               onChange={(e) => setScannerReplay(e.target.checked)}
             />
-            Scanner replay — test against the historical <strong>top-10 risers each day</strong> (not a fixed list){" "}
+            Scanner replay — test against the historical <strong>top risers each day</strong> (not a fixed list){" "}
             <InfoTip k="scanner_replay" />
           </label>
           {scannerReplay && (
-            <p className="hint">
-              Uses the cached daily movers, so it runs on <strong>daily bars</strong> and needs a completed sweep first
-              (Settings → Historical bar cache). Each day, only that day's top-10 are eligible to enter; your strategy's
-              entry rules then decide. Stocks only.
-            </p>
+            <>
+              <label style={{ display: "block", marginTop: 8 }}>
+                <span className="field-cap">
+                  Risers per day (top N) <InfoTip k="replay_top_n" />
+                </span>
+                <NumberField min={1} max={50} step={1} value={replayTopN} onChange={setReplayTopN} />
+              </label>
+              <p className="hint">
+                Uses the cached daily movers, so it runs on <strong>daily bars</strong> and needs a completed sweep first
+                (Settings → Historical bar cache). Each day, only that day's <strong>top {replayTopN}</strong> are
+                eligible to enter; your strategy's entry rules then decide. The cache stores a wide set, so changing this
+                number re-runs instantly — no re-sweep. Stocks only.
+              </p>
+            </>
           )}
           {/* HOW to test: numeric/timeframe params, all uniform height. */}
           <div className="filter-grid">
@@ -253,7 +264,7 @@ export default function Backtest() {
             <h3>
               {result.strategy_name} ·{" "}
               {result.scanner_replay
-                ? `scanner replay — ${result.days_replayed ?? 0} days, ${result.universe_size ?? 0} unique movers`
+                ? `scanner replay (top ${result.replay_top_n ?? replayTopN}) — ${result.days_replayed ?? 0} days, ${result.universe_size ?? 0} unique movers`
                 : result.symbols.join(", ")}{" "}
               · last {result.days} days ({result.timeframe})
             </h3>

@@ -56,6 +56,22 @@ def _backend_info() -> dict:
     }
 
 
+def _reconstruct(sess) -> int:
+    """Re-rank every cached day's movers with the live stock scanner's filters,
+    storing a generous set (SWEEP_STORE_TOP_N) so the backtest can pick its own
+    riser count at read time. Shared by the full sweep and the reconstruct-only
+    endpoint."""
+    f = scanner.STOCK_DEFAULTS
+    return barsweep.reconstruct_movers(
+        sess,
+        top_n=barsweep.SWEEP_STORE_TOP_N,
+        min_change_pct=f["min_change_pct"],
+        min_price=f["min_price"],
+        max_price=f["max_price"],
+        min_dollar_volume=f["min_dollar_volume"],
+    )
+
+
 async def _run_sweep(client: AlpacaClient, days: int) -> None:
     """Background worker: sweep the universe, then reconstruct movers using the
     same defaults the live stock scanner applies."""
@@ -73,17 +89,25 @@ async def _run_sweep(client: AlpacaClient, days: int) -> None:
         _progress.batches_done = summary["batches"]
         _progress.errors = summary["errors"]
 
-        f = scanner.STOCK_DEFAULTS
-        _progress.days_reconstructed = barsweep.reconstruct_movers(
-            sess,
-            top_n=scanner.DEFAULT_CONFIG["top_n"],
-            min_change_pct=f["min_change_pct"],
-            min_price=f["min_price"],
-            max_price=f["max_price"],
-            min_dollar_volume=f["min_dollar_volume"],
-        )
+        _progress.days_reconstructed = _reconstruct(sess)
     except Exception as exc:  # noqa: BLE001 — record any failure for the status view
         log.exception("bar sweep failed")
+        _progress.last_error = str(exc)
+    finally:
+        sess.close()
+        _progress.running = False
+        _progress.last_run_at = datetime.now(timezone.utc).isoformat()
+
+
+async def _run_reconstruct() -> None:
+    """Background worker: re-rank movers from the bars ALREADY cached — no
+    download. Cheap way to apply new scanner filters, or to widen the stored
+    riser set, across the whole history."""
+    sess = barcache.session()
+    try:
+        _progress.days_reconstructed = _reconstruct(sess)
+    except Exception as exc:  # noqa: BLE001
+        log.exception("movers reconstruct failed")
         _progress.last_error = str(exc)
     finally:
         sess.close()
@@ -117,6 +141,29 @@ async def trigger_sweep(
     _progress.last_error = None
     _task = asyncio.create_task(_run_sweep(client, days))
     return {"ok": True, "started": True, "days": days, "backend": _backend_info()}
+
+
+@router.post("/reconstruct")
+async def trigger_reconstruct() -> dict:
+    """Re-rank the movers from bars ALREADY in the cache — no re-download.
+
+    Use after changing the scanner's filters, or to (re)build the generous
+    stored riser set on a cache swept before that was the default. Seconds, not
+    the full sweep. Returns immediately; poll /status."""
+    global _task
+    if _progress.running:
+        raise HTTPException(status_code=409, detail="A sweep or reconstruct is already running.")
+    try:
+        barcache.init_cache()
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=f"Could not open the bar cache DB: {exc}")
+
+    _progress.running = True
+    _progress.started_at = datetime.now(timezone.utc).isoformat()
+    _progress.days_reconstructed = 0
+    _progress.last_error = None
+    _task = asyncio.create_task(_run_reconstruct())
+    return {"ok": True, "started": True, "reconstruct_only": True, "backend": _backend_info()}
 
 
 @router.get("/status")

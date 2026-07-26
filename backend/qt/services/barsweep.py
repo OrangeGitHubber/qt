@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from sqlalchemy.orm import Session
 
@@ -26,6 +26,12 @@ from qt.services import barcache
 from qt.services.barcache import DailyBar, DayQuote
 
 log = logging.getLogger("qt.barsweep")
+
+# Store a GENEROUS set of risers per day, not the live scanner's display count.
+# The backtest narrows to its chosen top-N at read time (barcache.movers_between),
+# so widening/narrowing the replay's riser count never needs a re-sweep — the
+# expensive part (downloading bars) is decoupled from the cheap ranking knob.
+SWEEP_STORE_TOP_N = 50
 
 # Real exchanges we keep. Alpaca us_equity `exchange` values are things like
 # NYSE, NASDAQ, ARCA, AMEX, BATS, OTC (and occasionally blank). Momentum movers
@@ -102,11 +108,13 @@ async def sweep_daily_bars(
 def reconstruct_movers(
     sess: Session,
     *,
-    top_n: int = 10,
+    top_n: int = SWEEP_STORE_TOP_N,
     min_change_pct: float,
     min_price: float,
     max_price: float,
     min_dollar_volume: float,
+    since_day: str | None = None,
+    lookback_days: int = 15,
 ) -> int:
     """Recompute each past day's 'today's risers' from the cached daily bars.
 
@@ -114,8 +122,17 @@ def reconstruct_movers(
     available bar's close (the prior stored row — so gaps/weekends use the last
     earlier bar, NOT calendar day-1). The earliest day has no prior close and is
     skipped. Filters mirror what the live scanner would have surfaced. Returns
-    the number of days reconstructed."""
-    rows = sess.query(DailyBar).order_by(DailyBar.symbol, DailyBar.day).all()
+    the number of days reconstructed.
+
+    `since_day` limits the work to recent days (the forward daily job): only
+    days on/after it are re-ranked and stored, but bars from `lookback_days`
+    before it are still loaded so each of those days has a real prior close.
+    None (the default) rebuilds the whole cache — the initial sweep's behaviour."""
+    q = sess.query(DailyBar)
+    if since_day is not None:
+        load_from = (date.fromisoformat(since_day) - timedelta(days=lookback_days)).isoformat()
+        q = q.filter(DailyBar.day >= load_from)
+    rows = q.order_by(DailyBar.symbol, DailyBar.day).all()
 
     quotes_by_day: dict[str, list[DayQuote]] = {}
     prev_symbol: str | None = None
@@ -130,7 +147,7 @@ def reconstruct_movers(
             )
         prev_close = bar.c
 
-    days = sorted(quotes_by_day)
+    days = [d for d in sorted(quotes_by_day) if since_day is None or d >= since_day]
     for day in days:
         ranked = barcache.rank_movers(
             quotes_by_day[day],
@@ -143,3 +160,33 @@ def reconstruct_movers(
         barcache.store_movers(sess, day, ranked)
     sess.commit()
     return len(days)
+
+
+async def daily_movers_update(
+    client,
+    sess: Session,
+    *,
+    min_change_pct: float,
+    min_price: float,
+    max_price: float,
+    min_dollar_volume: float,
+    top_n: int = SWEEP_STORE_TOP_N,
+    overlap_days: int = 5,
+) -> dict:
+    """Keep the movers cache current going forward. Pulls the last `overlap_days`
+    of universe daily bars (a small overlap so a weekend/holiday/missed run is
+    caught, deduped by the idempotent upsert) and re-ranks only those recent
+    days. Cheap compared to the historical sweep — one handful of days, not a
+    year. Returns a summary."""
+    swept = await sweep_daily_bars(client, sess, days=overlap_days)
+    since = (datetime.now(timezone.utc) - timedelta(days=overlap_days)).strftime("%Y-%m-%d")
+    days = reconstruct_movers(
+        sess,
+        top_n=top_n,
+        min_change_pct=min_change_pct,
+        min_price=min_price,
+        max_price=max_price,
+        min_dollar_volume=min_dollar_volume,
+        since_day=since,
+    )
+    return {**swept, "days_reconstructed": days, "since_day": since}

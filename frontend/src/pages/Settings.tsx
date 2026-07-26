@@ -11,6 +11,7 @@ import {
   removeAllowlist,
   RiskConfig,
   runBarSweep,
+  runBarReconstruct,
   setRegimeEnabled,
   setRisk,
   setSlack,
@@ -57,6 +58,16 @@ export default function Settings() {
       await runBarSweep();
       const s = await getBarCacheStatus();
       setBars(s); // flips running=true, which starts the poll above
+    } catch (e) {
+      setNote((e as Error).message);
+    }
+  }
+
+  async function runReconstruct() {
+    setNote(null);
+    try {
+      await runBarReconstruct();
+      setBars(await getBarCacheStatus());
     } catch (e) {
       setNote((e as Error).message);
     }
@@ -230,8 +241,8 @@ export default function Settings() {
       <div className="card">
         <h3>Historical bar cache</h3>
         <p className="hint">
-          Caches daily bars across the market and reconstructs each past day's top-10 risers — the data a
-          "scanner replay" backtest needs. Runs against{" "}
+          Caches daily bars across the market and reconstructs each past day's top risers (a generous set of 50) — the
+          data a "scanner replay" backtest needs; the backtest then picks how many risers per day to use. Runs against{" "}
           {bars ? (
             <strong>
               {bars.backend.kind === "postgres"
@@ -241,7 +252,10 @@ export default function Settings() {
           ) : (
             "…"
           )}
-          . One sweep is enough — it's cached and idempotent, and takes several minutes.
+          . One sweep is enough — it's cached and idempotent, and takes several minutes. To go further back, run it again
+          with more history; the extra days are added without re-downloading what you already have. After the first
+          sweep, QT keeps the cache current automatically each trading evening. <strong>Re-rank</strong> re-computes the
+          risers from bars already cached (seconds, no download) — use it after changing the scanner's filters.
         </p>
         {bars && (
           <dl>
@@ -264,6 +278,9 @@ export default function Settings() {
         )}
         <button className="small" disabled={bars?.running} onClick={runSweep}>
           {bars?.running ? "Sweeping…" : "Run sweep"}
+        </button>{" "}
+        <button className="small" disabled={bars?.running} onClick={runReconstruct}>
+          Re-rank
         </button>
       </div>
 

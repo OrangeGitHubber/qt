@@ -23,6 +23,7 @@ class BacktestBody(BaseModel):
     strategy_id: int
     symbols: list[str] = []  # empty = use the watchlist for the strategy's asset class
     scanner_replay: bool = False  # replay the cached historical daily top-N risers instead
+    replay_top_n: int = Field(default=10, ge=1, le=50)  # how many of each day's risers are eligible
     days: int = Field(default=90, ge=7, le=730)
     timeframe: str = Field(default="1Hour", pattern="^(15Min|1Hour|1Day)$")
     starting_cash: float = Field(default=5000, ge=100, le=10_000_000)
@@ -125,7 +126,7 @@ async def _scanner_replay(
     start_day = (datetime.now(timezone.utc) - timedelta(days=body.days)).strftime("%Y-%m-%d")
     cache = barcache.session()
     try:
-        movers = barcache.movers_between(cache, start_day)
+        movers = barcache.movers_between(cache, start_day, top_n=body.replay_top_n)
         if not movers:
             raise HTTPException(
                 status_code=422,
@@ -159,6 +160,7 @@ async def _scanner_replay(
 
     result["strategy_name"] = strategy.name
     result["scanner_replay"] = True
+    result["replay_top_n"] = body.replay_top_n
     result["universe_size"] = len(union)
     result["days_replayed"] = len(movers)
     result["symbols"] = []  # too many to list; summarized by universe_size

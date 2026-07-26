@@ -192,9 +192,16 @@ def top_movers(sess: OrmSession, day: str) -> list[DailyMover]:
     return sess.query(DailyMover).filter(DailyMover.day == day).order_by(DailyMover.rank).all()
 
 
-def movers_between(sess: OrmSession, start_day: str) -> dict[str, list[str]]:
+def movers_between(
+    sess: OrmSession, start_day: str, top_n: int | None = None
+) -> dict[str, list[str]]:
     """{day: [symbols ranked]} for all reconstructed days on/after start_day —
-    the per-day 'today's risers' a scanner-replay backtest gates entries on."""
+    the per-day 'today's risers' a scanner-replay backtest gates entries on.
+
+    `top_n` narrows each day to its best N at READ time: the cache stores a
+    generous set (see barsweep.SWEEP_STORE_TOP_N), so the backtest can dial the
+    riser count up or down instantly without re-sweeping or re-ranking. None
+    returns everything stored."""
     rows = (
         sess.query(DailyMover)
         .filter(DailyMover.day >= start_day)
@@ -202,8 +209,10 @@ def movers_between(sess: OrmSession, start_day: str) -> dict[str, list[str]]:
         .all()
     )
     out: dict[str, list[str]] = {}
-    for m in rows:
-        out.setdefault(m.day, []).append(m.symbol)
+    for m in rows:  # rows are rank-ordered, so appending while under the cap keeps the top N
+        lst = out.setdefault(m.day, [])
+        if top_n is None or len(lst) < top_n:
+            lst.append(m.symbol)
     return out
 
 

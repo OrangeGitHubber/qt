@@ -135,3 +135,41 @@ def test_reconstruct_movers_applies_price_and_volume_filters():
     )
     movers = barcache.top_movers(s, "2026-06-02")
     assert [m.symbol for m in movers] == ["GOOD"]   # PENNY (price) and THIN (volume) excluded
+
+
+def test_reconstruct_since_day_reranks_only_recent_days_with_a_real_prior_close():
+    s = _mem_session()
+    # AAA has bars on 06-01..06-04. Reconstructing only since 06-03 must still
+    # measure 06-03's gain against 06-02's close (from the lookback window), and
+    # must NOT (re)store movers for 06-02.
+    barcache.save_daily_bars(s, "AAA", [
+        _bar("2026-06-01", 10.0), _bar("2026-06-02", 10.0),
+        _bar("2026-06-03", 12.0), _bar("2026-06-04", 12.0),
+    ])
+    s.commit()
+    days = barsweep.reconstruct_movers(
+        s, top_n=10, min_change_pct=0.0, min_price=0.0, max_price=0.0, min_dollar_volume=0.0,
+        since_day="2026-06-03", lookback_days=15,
+    )
+    assert days == 2                                        # 06-03 and 06-04 only
+    assert barcache.top_movers(s, "2026-06-02") == []       # pre-window day untouched
+    m03 = barcache.top_movers(s, "2026-06-03")
+    assert m03[0].symbol == "AAA" and round(m03[0].change_pct) == 20  # 10.0 → 12.0 vs prior close
+
+
+def test_daily_movers_update_pulls_recent_and_reranks():
+    s = _mem_session()
+    from datetime import datetime, timedelta, timezone
+
+    d_prev = (datetime.now(timezone.utc) - timedelta(days=2)).strftime("%Y-%m-%d")
+    d_today = (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y-%m-%d")
+    bars = {"AAA": [_bar(d_prev, 10.0), _bar(d_today, 13.0)],   # +30%
+            "BBB": [_bar(d_prev, 20.0), _bar(d_today, 20.2)]}   # +1%
+    client = FakeClient([{"symbol": s_, "exchange": "NASDAQ", "tradable": True} for s_ in bars], bars)
+    summary = asyncio.run(barsweep.daily_movers_update(
+        client, s, min_change_pct=0.0, min_price=0.0, max_price=0.0, min_dollar_volume=0.0,
+        overlap_days=5,
+    ))
+    assert summary["days_reconstructed"] >= 1
+    movers = barcache.top_movers(s, d_today)
+    assert movers[0].symbol == "AAA" and movers[0].rank == 1   # biggest riser ranked first

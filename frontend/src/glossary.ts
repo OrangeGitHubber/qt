@@ -37,6 +37,12 @@ export const GLOSSARY: Record<string, GlossaryEntry> = {
       "Backtests against the market's actual top-10 risers on each past day — the names the live scanner would have surfaced — instead of a fixed symbol list. It's reconstructed from a cached year of daily bars (run a sweep in Settings first), so it runs on daily bars. Each day only that day's top-10 are eligible to enter; your strategy's entry rules then decide. This is the closest a backtest gets to what the live 'today's risers' engine actually does.",
     url: "https://www.investopedia.com/terms/b/backtesting.asp",
   },
+  replay_top_n: {
+    term: "Risers per day (top N)",
+    explain:
+      "In scanner replay, how many of each past day's biggest movers are eligible to enter that day — top 3, top 10, top 20. The cache stores a wide set (50) of risers per day, so this is a read-time filter: dial it up or down and the backtest re-runs instantly, no re-sweep. Fewer names = only the very strongest movers (more concentrated, more survivorship-flattering); more names = closer to what a broad scanner would surface.",
+    url: "https://www.investopedia.com/terms/b/backtesting.asp",
+  },
   share_price_band: {
     term: "Share-price band",
     explain:

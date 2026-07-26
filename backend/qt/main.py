@@ -37,6 +37,7 @@ def _start_scheduler():
     from qt.services.engine import tick
     from qt.services.jobs import (
         backup_database,
+        daily_movers_sweep,
         daily_summary,
         reconcile_open_trades,
         snapshot_benchmarks,
@@ -81,6 +82,15 @@ def _start_scheduler():
     )
     scheduler.add_job(
         backup_database, "date", run_date=datetime.now(timezone.utc) + timedelta(seconds=30)
+    )
+    # Scanner-replay cache upkeep: 18:00 ET on trading days, well after the 16:00
+    # close so the day's daily bars are finalized. No-op unless a historical
+    # sweep has already been run, so non-users pay nothing.
+    scheduler.add_job(
+        daily_movers_sweep,
+        CronTrigger(day_of_week="mon-fri", hour=18, minute=0, timezone="America/New_York"),
+        max_instances=1,
+        coalesce=True,
     )
     scheduler.start()
     return scheduler

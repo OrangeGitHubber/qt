@@ -3,6 +3,27 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Scanner replay: pick the riser count instantly, and keep the cache current (2026-07-26)
+
+Built on the "store wide, narrow at read" idea, so the expensive part (downloading
+bars) is decoupled from the cheap knob (how many risers per day):
+
+- **Riser count is now a backtest knob, not a sweep setting.** The cache stores a
+  generous top-50 per day; the Backtest screen has a **Risers per day (top N)**
+  field (1–50). Dial it from top-3 to top-20 and the backtest re-runs
+  instantly — no re-sweep, no re-download. Fewer names = only the very strongest
+  movers; more = closer to a broad scanner.
+- **Widen the history any time.** Re-running the sweep with more days adds the
+  older days via idempotent upserts — it never re-downloads what's already
+  cached — then re-ranks across the whole window.
+- **Re-rank button** (Settings → Historical bar cache): re-computes the risers
+  from bars already cached, in seconds, with no download. Use it after changing
+  the scanner's filters, or to widen an older cache to the new top-50 set.
+- **Automatic daily upkeep.** After your first sweep, QT pulls the day's universe
+  bars and re-ranks the recent days every trading evening (18:00 ET). It only
+  *maintains* a cache you already built, so if you don't use scanner replay it
+  costs nothing.
+
 ## Fix: daily risk counters now reset on the US trading day, not midnight UTC (2026-07-26)
 
 The **trade-rate limiter** ("max trades per day") and the **daily-loss kill

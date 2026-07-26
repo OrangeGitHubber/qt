@@ -213,6 +213,9 @@ export interface BarCacheStatus {
 export const getBarCacheStatus = () => fetch("/api/barcache/status").then((r) => handle<BarCacheStatus>(r));
 export const runBarSweep = (days?: number) =>
   fetch(`/api/barcache/sweep${days ? `?days=${days}` : ""}`, { method: "POST" }).then((r) => handle(r));
+// Re-rank movers from bars already cached — no re-download.
+export const runBarReconstruct = () =>
+  fetch("/api/barcache/reconstruct", { method: "POST" }).then((r) => handle(r));
 
 export interface AssetRow {
   symbol: string;
@@ -257,6 +260,7 @@ export interface BacktestResult {
   strategy_name: string;
   symbols: string[];
   scanner_replay?: boolean;
+  replay_top_n?: number;
   universe_size?: number;
   days_replayed?: number;
   timeframe: string;
@@ -300,6 +304,7 @@ export const runBacktest = (body: {
   strategy_id: number;
   symbols: string[];
   scanner_replay?: boolean;
+  replay_top_n?: number;
   days: number;
   timeframe: string;
   starting_cash: number;

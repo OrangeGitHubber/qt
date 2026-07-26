@@ -140,6 +140,43 @@ def test_scanner_replay_gates_to_cached_movers(client, configured, seeded_cache)
     assert body["trade_list"][0]["symbol"] == "MOVER"
 
 
+def test_scanner_replay_top_n_narrows_the_eligible_movers(client, configured, monkeypatch):
+    """replay_top_n narrows each day's eligible risers at read time — no re-sweep.
+    Three symbols all qualify on D1; top_n=1 lets only the rank-1 name trade."""
+    eng = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    barcache.CacheBase.metadata.create_all(eng)
+    Sess = sessionmaker(bind=eng, expire_on_commit=False)
+    monkeypatch.setattr(barcache, "_engine", eng)
+    monkeypatch.setattr(barcache, "_Session", Sess)
+    d0 = (datetime.now(timezone.utc) - timedelta(days=6)).strftime("%Y-%m-%d")
+    d1 = (datetime.now(timezone.utc) - timedelta(days=5)).strftime("%Y-%m-%d")
+    with Sess() as s:
+        for sym, c1 in (("TOP", 106), ("MID", 105), ("LOW", 104)):
+            barcache.save_daily_bars(s, sym, [
+                {"t": f"{d0}T14:00:00Z", "o": 100, "h": 100, "l": 100, "c": 100, "v": 1e6, "vw": 100},
+                {"t": f"{d1}T14:00:00Z", "o": c1, "h": c1, "l": c1, "c": c1, "v": 1e6, "vw": c1},
+            ])
+        barcache.store_movers(s, d1, [  # stored wide; ranked TOP > MID > LOW
+            ("TOP", 6.0, 106.0, 1e8), ("MID", 5.0, 105.0, 1e8), ("LOW", 4.0, 104.0, 1e8),
+        ])
+        s.commit()
+
+    def run(top_n):
+        fetch = AsyncMock(side_effect=Exception("no benchmark"))
+        with patch.object(AlpacaClient, "historical_bars", new=fetch):
+            return client.post("/api/backtest", json={
+                "strategy_id": sid, "scanner_replay": True, "replay_top_n": top_n,
+                "days": 30, "starting_cash": 50000, "spread_pct": 0}).json()
+
+    sid = _make(client, "stock")
+    one = run(1)
+    assert one["replay_top_n"] == 1 and one["universe_size"] == 1
+    assert [t["symbol"] for t in one["trade_list"]] == ["TOP"]
+    three = run(3)
+    assert three["universe_size"] == 3
+    assert {t["symbol"] for t in three["trade_list"]} == {"TOP", "MID", "LOW"}
+
+
 def test_scanner_replay_needs_a_sweep_first(client, configured, monkeypatch):
     """With an empty cache, replay explains itself instead of silently doing nothing."""
     eng = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
