@@ -23,3 +23,18 @@ def data_dir() -> Path:
 
 def db_url() -> str:
     return f"sqlite:///{data_dir() / 'qt.db'}"
+
+
+def bar_cache_url() -> str:
+    """Where the bulk, rebuildable historical bar / movers cache lives.
+
+    Separate from qt.db (which holds precious config/keys/journal and is
+    backed up). Defaults to a local bars.db SQLite file; set QT_BAR_CACHE_URL
+    to a Postgres DSN for a durable, shared cache. Accepts the 'postgres://'
+    scheme too (SQLAlchemy only understands 'postgresql://')."""
+    raw = os.environ.get("QT_BAR_CACHE_URL")
+    if raw:
+        if raw.startswith("postgres://"):
+            raw = "postgresql://" + raw[len("postgres://") :]
+        return raw
+    return f"sqlite:///{data_dir() / 'bars.db'}"
