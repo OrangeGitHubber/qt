@@ -16,6 +16,7 @@ PRESETS: dict[str, dict] = {
         "params": {
             "entry": {
                 "min_day_gain_pct": 3.0,
+                "max_day_gain_pct": 10.0,  # skip blow-off moves already too far to chase
                 "require_above_vwap": True,
                 "entry_window_start": "09:30",
                 "entry_window_end": "15:30",

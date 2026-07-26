@@ -79,6 +79,18 @@ def test_entry_rejects_weak_gain():
     assert not ok and "< required" in reason
 
 
+def test_entry_rejects_over_extended_gain():
+    # up 22% with a 10% ceiling → skipped as too extended to chase (CONL case)
+    ok, reason = evaluate_entry(params(entry={"max_day_gain_pct": 10}), cand(change_pct=22.0), NOON_ET)
+    assert not ok and "too extended" in reason
+
+
+def test_entry_max_gain_off_by_default():
+    # 0 / absent means no ceiling — even a huge riser passes the gain checks
+    ok, _ = evaluate_entry(params(), cand(change_pct=40.0), NOON_ET)
+    assert ok
+
+
 def test_entry_rejects_below_vwap():
     ok, reason = evaluate_entry(params(), cand(price=19.0), NOON_ET)
     assert not ok and "VWAP" in reason

@@ -31,6 +31,7 @@ export interface StatusResponse {
 export interface StrategyParams {
   entry: {
     min_day_gain_pct: number;
+    max_day_gain_pct: number;
     require_above_vwap: boolean;
     entry_window_start: string | null;
     entry_window_end: string | null;

@@ -3,6 +3,15 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Strategies: "max gain today" entry ceiling (2026-07-26)
+
+A new optional entry rule: **Max gain today (%)**. Momentum buys strength, but a
+stock already up 20%+ is often a blow-off top about to reverse — chasing it (as
+the engine did with CONL at +22%) means buying near the peak. Set a ceiling
+(e.g. 10) and the bot **skips anything already up more than that today**; 0
+leaves it off. The "Momentum — stocks, swing (recommended)" preset now defaults
+this to 10. Existing strategies keep their rules until you edit and save them.
+
 ## Strategies: default entry window starts at the market open (2026-07-26)
 
 Stock strategy presets (and new custom strategies) now default the entry

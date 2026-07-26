@@ -31,6 +31,12 @@ export const GLOSSARY: Record<string, GlossaryEntry> = {
       "Volume-Weighted Average Price — today's average price weighted by how much traded at each level. Price above VWAP suggests buyers are in control today.",
     url: "https://www.investopedia.com/terms/v/vwap.asp",
   },
+  max_day_gain: {
+    term: "Max gain today",
+    explain:
+      "A ceiling on how far a stock can already be up before the bot will buy it. Momentum buys strength, but a stock already up 20%+ is often near exhaustion — buying it means chasing a blow-off top that's prone to reverse. Set e.g. 10 to skip anything already up more than 10% today. 0 turns the ceiling off (no limit).",
+    url: "https://www.investopedia.com/terms/b/blowofftop.asp",
+  },
   regime_filter: {
     term: "Regime filter",
     explain:

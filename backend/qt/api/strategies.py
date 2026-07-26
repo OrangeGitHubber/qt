@@ -17,6 +17,7 @@ router = APIRouter(prefix="/api/strategies", tags=["strategies"])
 
 class EntryRules(BaseModel):
     min_day_gain_pct: float = Field(default=3.0, ge=0, le=100)
+    max_day_gain_pct: float = Field(default=0, ge=0, le=1000)  # 0 = no ceiling; skip over-extended movers
     require_above_vwap: bool = True
     entry_window_start: str | None = None  # "HH:MM" US/Eastern; None = any time
     entry_window_end: str | None = None
