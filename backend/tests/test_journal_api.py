@@ -28,8 +28,11 @@ def test_journal_status_filter_and_timestamp(client):
 
     all_rows = mine(client.get("/api/engine/journal").json())
     assert len(all_rows) == 3
-    # Every row carries a timestamp — including the rejected one (no entry_at).
+    # Every row carries a timestamp — including the rejected one (no entry_at) —
+    # and it MUST carry a UTC offset, or the browser parses the offset-less
+    # string as local time and shows the UTC wall-clock mislabeled as local.
     assert all(r["logged_at"] for r in all_rows)
+    assert all(r["logged_at"].endswith("+00:00") or r["logged_at"].endswith("Z") for r in all_rows)
 
     trades = mine(client.get("/api/engine/journal?status=trades").json())
     assert {r["status"] for r in trades} == {"open", "closed"}  # rejected excluded

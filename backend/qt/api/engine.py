@@ -1,5 +1,7 @@
 """Engine control endpoints: mode ladder, risk rails, journal, scoreboard."""
 
+from datetime import datetime, timezone
+
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy import func
@@ -173,6 +175,18 @@ async def test_slack(session: Session = Depends(get_session)) -> dict:
     return {"ok": True}
 
 
+def _iso_utc(dt: datetime | None) -> str | None:
+    """Emit an ISO timestamp that carries a UTC offset. Datetimes stored via
+    SQLite come back NAIVE (SQLite drops tzinfo), and a browser parses an
+    offset-less ISO string as LOCAL time — so without this the journal shows
+    the UTC wall-clock mislabeled as local. Stamp UTC so the client converts."""
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.isoformat()
+
+
 @router.get("/journal")
 def journal(
     mode: str | None = None,
@@ -198,14 +212,14 @@ def journal(
             "symbol": t.symbol,
             "asset_class": t.asset_class,
             "status": t.status,
-            "logged_at": t.created_at.isoformat() if t.created_at else None,
+            "logged_at": _iso_utc(t.created_at),
             "qty": t.qty,
             "notional": t.notional,
             "entry_price": t.entry_price,
-            "entry_at": t.entry_at.isoformat() if t.entry_at else None,
+            "entry_at": _iso_utc(t.entry_at),
             "entry_reason": t.entry_reason,
             "exit_price": t.exit_price,
-            "exit_at": t.exit_at.isoformat() if t.exit_at else None,
+            "exit_at": _iso_utc(t.exit_at),
             "exit_reason": t.exit_reason,
             "pnl": t.pnl,
             "config_version_id": t.config_version_id,
