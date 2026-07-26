@@ -215,10 +215,12 @@ export default function Backtest() {
                 <NumberField min={1} max={50} step={1} value={replayTopN} onChange={setReplayTopN} />
               </label>
               <p className="hint">
-                Uses the cached daily movers, so it runs on <strong>daily bars</strong> and needs a completed sweep first
-                (Settings → Historical bar cache). Each day, only that day's <strong>top {replayTopN}</strong> are
-                eligible to enter; your strategy's entry rules then decide. The cache stores a wide set, so changing this
-                number re-runs instantly — no re-sweep. Stocks only.
+                Each day, only that day's <strong>top {replayTopN}</strong> risers are eligible to enter; your
+                strategy's entry rules then decide. The cache stores a wide set, so changing this number re-runs
+                instantly — no re-sweep. Needs a completed sweep first (Settings → Historical bar cache). If you've also
+                run an <strong>intraday sweep</strong>, replay uses 15-minute bars so intraday exits
+                (flatten-before-close, VWAP, the entry window) behave for real; otherwise it falls back to daily bars,
+                which can't simulate those. Stocks only.
               </p>
             </>
           )}
@@ -264,7 +266,7 @@ export default function Backtest() {
             <h3>
               {result.strategy_name} ·{" "}
               {result.scanner_replay
-                ? `scanner replay (top ${result.replay_top_n ?? replayTopN}) — ${result.days_replayed ?? 0} days, ${result.universe_size ?? 0} unique movers`
+                ? `scanner replay (top ${result.replay_top_n ?? replayTopN}, ${result.replay_intraday ? "intraday 15-min" : "daily bars"}) — ${result.days_replayed ?? 0} days, ${result.universe_size ?? 0} unique movers`
                 : result.symbols.join(", ")}{" "}
               · last {result.days} days ({result.timeframe})
             </h3>

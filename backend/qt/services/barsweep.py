@@ -143,7 +143,10 @@ def reconstruct_movers(
             prev_close = None
         if prev_close is not None:
             quotes_by_day.setdefault(bar.day, []).append(
-                DayQuote(symbol=bar.symbol, close=bar.c, prev_close=prev_close, volume=bar.v, vwap=bar.vw)
+                DayQuote(
+                    symbol=bar.symbol, close=bar.c, prev_close=prev_close,
+                    volume=bar.v, vwap=bar.vw, high=bar.h,  # rank on the intraday peak
+                )
             )
         prev_close = bar.c
 
@@ -160,6 +163,68 @@ def reconstruct_movers(
         barcache.store_movers(sess, day, ranked)
     sess.commit()
     return len(days)
+
+
+async def sweep_intraday_movers(
+    client,
+    sess: Session,
+    *,
+    timeframe: str = "15Min",
+    baseline_days: int = 4,
+    since_day: str | None = None,
+    progress: ProgressFn | None = None,
+) -> dict:
+    """Stage 2: pull intraday bars for the reconstructed movers so an intraday
+    strategy can be replayed on how each day actually unfolded.
+
+    Batches by DAY — one paginated request per mover-day fetches that day's
+    ~top-N symbols at once. Each request starts `baseline_days` before the
+    mover-day so the prior trading session's close is present: the backtester
+    derives the day-gain from the previous day's close within the series, so
+    without that baseline the first mover-day couldn't qualify. `since_day`
+    limits the sweep to recent days (the forward job). Resilient: a day that
+    errors is logged and skipped."""
+    from qt.services.barcache import DailyMover
+
+    q = sess.query(DailyMover.day, DailyMover.symbol)
+    if since_day is not None:
+        q = q.filter(DailyMover.day >= since_day)
+    by_day: dict[str, list[str]] = {}
+    for day, symbol in q.order_by(DailyMover.day).all():
+        by_day.setdefault(day, []).append(symbol)
+
+    days = sorted(by_day)
+    bars_saved = 0
+    symbols_saved = 0
+    errors = 0
+    for idx, day in enumerate(days, start=1):
+        symbols = sorted(set(by_day[day]))
+        start = (date.fromisoformat(day) - timedelta(days=baseline_days)).isoformat()
+        end = (date.fromisoformat(day) + timedelta(days=1)).isoformat()
+        try:
+            data = await client.historical_bars(symbols, "stock", timeframe, start, end)
+        except AlpacaError as exc:
+            errors += 1
+            log.warning("intraday sweep %s (%s/%s) failed (%s): %s", day, idx, len(days), exc.status_code, exc)
+            if progress:
+                progress(idx, len(days), symbols_saved)
+            continue
+        for symbol, bars in data.items():
+            if not bars:
+                continue
+            bars_saved += barcache.save_intraday_bars(sess, symbol, bars)
+            symbols_saved += 1
+        sess.commit()
+        if progress:
+            progress(idx, len(days), symbols_saved)
+
+    return {
+        "days": len(days),
+        "symbols_saved": symbols_saved,
+        "bars_saved": bars_saved,
+        "errors": errors,
+        "timeframe": timeframe,
+    }
 
 
 async def daily_movers_update(
@@ -189,4 +254,9 @@ async def daily_movers_update(
         min_dollar_volume=min_dollar_volume,
         since_day=since,
     )
-    return {**swept, "days_reconstructed": days, "since_day": since}
+    out = {**swept, "days_reconstructed": days, "since_day": since}
+    # Keep intraday current too, but only if the user already built an intraday
+    # cache — same "maintain, never bootstrap" rule as the daily forward job.
+    if barcache.has_intraday(sess):
+        out["intraday"] = await sweep_intraday_movers(client, sess, since_day=since)
+    return out

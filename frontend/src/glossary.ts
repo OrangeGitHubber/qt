@@ -34,7 +34,7 @@ export const GLOSSARY: Record<string, GlossaryEntry> = {
   scanner_replay: {
     term: "Scanner replay",
     explain:
-      "Backtests against the market's actual top-10 risers on each past day — the names the live scanner would have surfaced — instead of a fixed symbol list. It's reconstructed from a cached year of daily bars (run a sweep in Settings first), so it runs on daily bars. Each day only that day's top-10 are eligible to enter; your strategy's entry rules then decide. This is the closest a backtest gets to what the live 'today's risers' engine actually does.",
+      "Backtests against the market's actual top risers on each past day — the names the live scanner would have surfaced — instead of a fixed symbol list. Risers are reconstructed from a cached year of daily bars, ranked by each day's intraday PEAK gain (so pump-and-fade names aren't missed). Run a daily sweep in Settings first; add an intraday sweep to replay on 15-minute bars, which lets intraday exits (flatten-before-close, VWAP, entry window) behave for real. Each day only that day's top-N are eligible; your entry rules then decide. The closest a backtest gets to the live 'today's risers' engine.",
     url: "https://www.investopedia.com/terms/b/backtesting.asp",
   },
   replay_top_n: {

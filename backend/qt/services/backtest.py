@@ -61,7 +61,7 @@ def _prepare(bars: list[dict]) -> list[dict]:
     cur_day: str | None = None
     last_close: float | None = None
     cum_pv = cum_v = 0.0
-    for bar in bars:
+    for i, bar in enumerate(bars):
         ts = _parse_ts(bar["t"])
         day = _et_day(ts)
         if day != cur_day:
@@ -72,6 +72,9 @@ def _prepare(bars: list[dict]) -> list[dict]:
         cum_pv += float(bar.get("vw") or bar["c"]) * volume
         cum_v += volume
         change_pct = ((bar["c"] / prev_day_close - 1) * 100) if prev_day_close else None
+        # Last bar of its ET day: the "before the close" moment a flatten-before-
+        # close exit needs. On daily bars every bar is the last of its day.
+        next_day = _et_day(_parse_ts(bars[i + 1]["t"])) if i + 1 < len(bars) else None
         out.append(
             {
                 "ts": ts,
@@ -79,6 +82,7 @@ def _prepare(bars: list[dict]) -> list[dict]:
                 "close": float(bar["c"]),
                 "change_pct": change_pct,
                 "vwap": (cum_pv / cum_v) if cum_v else None,
+                "last_of_day": next_day != day,
             }
         )
         last_close = float(bar["c"])
@@ -186,7 +190,7 @@ def run_backtest(
             trade.high_water = max(trade.high_water, price)
             should_exit, reason = evaluate_exit(
                 params, swing, trade.entry_price, trade.entry_at,
-                trade.high_water, price, bar["vwap"], ts, False,
+                trade.high_water, price, bar["vwap"], ts, bar.get("last_of_day", False),
             )
             if not should_exit:
                 continue
@@ -208,6 +212,10 @@ def run_backtest(
             if eligible is not None and symbol not in eligible:
                 continue  # scanner replay: not a top-N riser on this day
             if bar["change_pct"] is None:
+                continue
+            # Never open a position on the very bar we'd flatten it for the close —
+            # a scalp with no time to work, then instantly liquidated.
+            if bar.get("last_of_day") and params.get("exit", {}).get("flatten_before_close"):
                 continue
             diag["bars_evaluated"] += 1
             if diag["max_day_gain_pct"] is None or bar["change_pct"] > diag["max_day_gain_pct"]:

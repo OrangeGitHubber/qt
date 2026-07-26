@@ -59,6 +59,24 @@ class DailyMover(CacheBase):
     dollar_volume: Mapped[float] = mapped_column(Float)
 
 
+class IntradayBar(CacheBase):
+    """One intraday bar (e.g. 15-min) for a mover, so the scanner-replay
+    backtest can judge an intraday strategy on how the day actually unfolded —
+    entries after the open, VWAP, and flatten-before-close all behave for real.
+    Pulled only for the reconstructed movers, so this table stays bounded."""
+
+    __tablename__ = "intraday_bars"
+
+    symbol: Mapped[str] = mapped_column(String(32), primary_key=True)
+    ts: Mapped[str] = mapped_column(String(20), primary_key=True)  # ISO 'YYYY-MM-DDTHH:MM:SSZ'
+    o: Mapped[float] = mapped_column(Float, default=0.0)
+    h: Mapped[float] = mapped_column(Float, default=0.0)
+    l: Mapped[float] = mapped_column(Float, default=0.0)
+    c: Mapped[float] = mapped_column(Float, default=0.0)
+    v: Mapped[float] = mapped_column(Float, default=0.0)
+    vw: Mapped[float | None] = mapped_column(Float, nullable=True)
+
+
 def make_engine(url: str | None = None) -> Engine:
     url = url or bar_cache_url()
     kwargs: dict = {}
@@ -107,6 +125,7 @@ class DayQuote:
     prev_close: float
     volume: float
     vwap: float | None = None
+    high: float | None = None  # intraday peak; when set, ranking uses the peak gain
 
 
 def rank_movers(
@@ -127,7 +146,12 @@ def rank_movers(
     for q in quotes:
         if not q.prev_close or not q.close:
             continue
-        change = (q.close / q.prev_close - 1) * 100
+        # Rank on the intraday PEAK (daily high) when we have it: an intraday
+        # scanner flags a stock that spiked +40% at 10am even if it closed flat,
+        # and those pump-and-fade names are exactly what an intraday strategy
+        # trades. Ranking on the close would silently drop them.
+        ref = q.high if q.high is not None else q.close
+        change = (ref / q.prev_close - 1) * 100
         dollar_volume = q.volume * (q.vwap or q.close)
         if change < min_change_pct:
             continue
@@ -239,3 +263,54 @@ def cached_daily_bars(sess: OrmSession, symbols: list[str], start_day: str) -> d
                 {"t": f"{b.day}T14:00:00Z", "o": b.o, "h": b.h, "l": b.l, "c": b.c, "v": b.v, "vw": b.vw}
             )
     return out
+
+
+def save_intraday_bars(sess: OrmSession, symbol: str, bars: list[dict]) -> int:
+    """Persist Alpaca intraday bars (dicts with t,o,h,l,c,v,vw) for one symbol.
+    Idempotent — closed intraday bars are immutable, so re-sweeps don't duplicate."""
+    rows: list[dict] = []
+    for b in bars:
+        ts = b.get("t")
+        if not ts:
+            continue
+        rows.append(
+            {
+                "symbol": symbol, "ts": ts,
+                "o": float(b.get("o") or 0), "h": float(b.get("h") or 0),
+                "l": float(b.get("l") or 0), "c": float(b.get("c") or 0),
+                "v": float(b.get("v") or 0),
+                "vw": float(b["vw"]) if b.get("vw") is not None else None,
+            }
+        )
+    _insert_ignore(sess, IntradayBar, rows)
+    return len(rows)
+
+
+def cached_intraday_bars(
+    sess: OrmSession, symbols: list[str], start_day: str
+) -> dict[str, list[dict]]:
+    """Cached intraday bars for `symbols` with a timestamp on/after start_day,
+    shaped like Alpaca bar dicts (t/o/h/l/c/v/vw) so the backtester consumes
+    them unchanged. ISO timestamps sort/compare lexically, so a plain string
+    filter on the 'YYYY-MM-DD' prefix is correct."""
+    if not symbols:
+        return {}
+    out: dict[str, list[dict]] = {}
+    for i in range(0, len(symbols), 500):
+        chunk = symbols[i : i + 500]
+        rows = (
+            sess.query(IntradayBar)
+            .filter(IntradayBar.symbol.in_(chunk), IntradayBar.ts >= start_day)
+            .order_by(IntradayBar.symbol, IntradayBar.ts)
+            .all()
+        )
+        for b in rows:
+            out.setdefault(b.symbol, []).append(
+                {"t": b.ts, "o": b.o, "h": b.h, "l": b.l, "c": b.c, "v": b.v, "vw": b.vw}
+            )
+    return out
+
+
+def has_intraday(sess: OrmSession) -> bool:
+    """Whether any intraday bars are cached (stage-2 replay is possible)."""
+    return sess.query(IntradayBar).first() is not None

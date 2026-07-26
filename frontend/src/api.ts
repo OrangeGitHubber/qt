@@ -198,6 +198,7 @@ export const getScoreboard = () => fetch("/api/engine/scoreboard").then((r) => h
 
 export interface BarCacheStatus {
   running: boolean;
+  kind: string; // daily | reconstruct | intraday
   started_at: string | null;
   last_run_at: string | null;
   batches_total: number;
@@ -205,6 +206,8 @@ export interface BarCacheStatus {
   symbols_total: number;
   symbols_saved: number;
   days_reconstructed: number;
+  intraday_bars: number;
+  has_intraday: boolean;
   errors: number;
   last_error: string | null;
   backend: { kind: string; scheme: string; host: string | null };
@@ -216,6 +219,9 @@ export const runBarSweep = (days?: number) =>
 // Re-rank movers from bars already cached — no re-download.
 export const runBarReconstruct = () =>
   fetch("/api/barcache/reconstruct", { method: "POST" }).then((r) => handle(r));
+// Pull intraday bars for the movers — enables intraday scanner replay.
+export const runIntradaySweep = () =>
+  fetch("/api/barcache/sweep-intraday", { method: "POST" }).then((r) => handle(r));
 
 export interface AssetRow {
   symbol: string;
@@ -260,6 +266,7 @@ export interface BacktestResult {
   strategy_name: string;
   symbols: string[];
   scanner_replay?: boolean;
+  replay_intraday?: boolean;
   replay_top_n?: number;
   universe_size?: number;
   days_replayed?: number;

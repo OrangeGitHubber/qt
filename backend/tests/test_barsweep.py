@@ -40,6 +40,24 @@ class FakeClient:
         return {s: self._bars.get(s, []) for s in symbols}
 
 
+class FakeIntradayClient:
+    """Serves intraday bars and records each request's window, so tests can
+    assert the sweep batches by day and includes a prior-session baseline."""
+
+    def __init__(self, intraday_by_symbol):
+        self._bars = intraday_by_symbol
+        self.calls = []  # (symbols, timeframe, start, end)
+
+    async def historical_bars(self, symbols, asset_class, timeframe, start_iso, end_iso=None):
+        assert asset_class == "stock"
+        self.calls.append((tuple(symbols), timeframe, start_iso, end_iso))
+        # Return only bars that fall within [start, end) — like the real API.
+        out = {}
+        for s in symbols:
+            out[s] = [b for b in self._bars.get(s, []) if start_iso <= b["t"] < (end_iso or "9999")]
+        return out
+
+
 ASSETS = [
     {"symbol": "AAA", "exchange": "NASDAQ", "tradable": True},
     {"symbol": "BBB", "exchange": "NYSE", "tradable": True},
@@ -155,6 +173,35 @@ def test_reconstruct_since_day_reranks_only_recent_days_with_a_real_prior_close(
     assert barcache.top_movers(s, "2026-06-02") == []       # pre-window day untouched
     m03 = barcache.top_movers(s, "2026-06-03")
     assert m03[0].symbol == "AAA" and round(m03[0].change_pct) == 20  # 10.0 → 12.0 vs prior close
+
+
+def _ibar(ts, c):
+    return {"t": ts, "o": c, "h": c, "l": c, "c": c, "v": 10000, "vw": c}
+
+
+def test_sweep_intraday_movers_batches_by_day_with_prior_session_baseline():
+    s = _mem_session()
+    # AAA is a mover on 2026-06-02; BBB on 2026-06-03.
+    barcache.store_movers(s, "2026-06-02", [("AAA", 40.0, 5.0, 1e7)])
+    barcache.store_movers(s, "2026-06-03", [("BBB", 30.0, 8.0, 1e7)])
+    s.commit()
+    intraday = {
+        "AAA": [_ibar("2026-06-01T14:00:00Z", 4.9), _ibar("2026-06-02T14:00:00Z", 6.9)],
+        "BBB": [_ibar("2026-06-02T14:00:00Z", 7.9), _ibar("2026-06-03T14:00:00Z", 9.9)],
+    }
+    client = FakeIntradayClient(intraday)
+    summary = asyncio.run(barsweep.sweep_intraday_movers(client, s, timeframe="15Min", baseline_days=4))
+
+    assert summary["days"] == 2 and summary["errors"] == 0
+    # One request per mover-day, each starting baseline_days before it (so the
+    # prior session's bar is fetched → the day-gain baseline exists).
+    assert len(client.calls) == 2
+    (syms0, tf0, start0, end0) = client.calls[0]
+    assert syms0 == ("AAA",) and tf0 == "15Min"
+    assert start0 == "2026-05-29" and end0 == "2026-06-03"  # 06-02 minus 4 days .. 06-02 plus 1
+    # Bars persisted and readable, prior-session bar included.
+    got = barcache.cached_intraday_bars(s, ["AAA"], "2026-06-01")
+    assert [b["t"] for b in got["AAA"]] == ["2026-06-01T14:00:00Z", "2026-06-02T14:00:00Z"]
 
 
 def test_daily_movers_update_pulls_recent_and_reranks():

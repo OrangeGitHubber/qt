@@ -177,6 +177,47 @@ def test_scanner_replay_top_n_narrows_the_eligible_movers(client, configured, mo
     assert {t["symbol"] for t in three["trade_list"]} == {"TOP", "MID", "LOW"}
 
 
+def test_scanner_replay_prefers_intraday_bars_when_cached(client, configured, monkeypatch):
+    """When intraday bars exist for the movers, replay runs on them (15Min) so
+    an intraday flatten-before-close strategy actually flattens same day."""
+    eng = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    barcache.CacheBase.metadata.create_all(eng)
+    Sess = sessionmaker(bind=eng, expire_on_commit=False)
+    monkeypatch.setattr(barcache, "_engine", eng)
+    monkeypatch.setattr(barcache, "_Session", Sess)
+    d0 = (datetime.now(timezone.utc) - timedelta(days=6)).strftime("%Y-%m-%d")
+    d1 = (datetime.now(timezone.utc) - timedelta(days=5)).strftime("%Y-%m-%d")
+
+    def ib(ts, c):
+        return {"t": ts, "o": c, "h": c, "l": c, "c": c, "v": 1e5, "vw": c}
+
+    with Sess() as s:
+        # Prior session flat at 100 (baseline), entry day rises 104→106 intraday.
+        barcache.save_intraday_bars(s, "MOVER", [
+            ib(f"{d0}T14:00:00Z", 100), ib(f"{d0}T20:00:00Z", 100),
+            ib(f"{d1}T14:00:00Z", 104), ib(f"{d1}T15:00:00Z", 105), ib(f"{d1}T20:00:00Z", 106),
+        ])
+        barcache.store_movers(s, d1, [("MOVER", 6.0, 106.0, 1e8)])
+        s.commit()
+
+    sid = _make(client, "stock")
+    # Enable flatten-before-close on the strategy so intraday exit is observable.
+    strat = _strategy("stock")
+    strat["params"]["exit"]["flatten_before_close"] = True
+    client.put(f"/api/strategies/{sid}", json=strat)
+
+    fetch = AsyncMock(side_effect=Exception("no benchmark"))
+    with patch.object(AlpacaClient, "historical_bars", new=fetch):
+        body = client.post("/api/backtest", json={
+            "strategy_id": sid, "scanner_replay": True, "days": 30,
+            "starting_cash": 5000, "spread_pct": 0}).json()
+
+    assert body["replay_intraday"] is True
+    assert body["timeframe"] == "15Min"
+    assert body["trades"] == 1
+    assert body["trade_list"][0]["exit_reason"] == "flatten before market close"
+
+
 def test_scanner_replay_needs_a_sweep_first(client, configured, monkeypatch):
     """With an empty cache, replay explains itself instead of silently doing nothing."""
     eng = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)

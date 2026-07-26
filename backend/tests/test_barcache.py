@@ -29,6 +29,40 @@ def test_rank_movers_ranks_by_gain_and_caps_top_n():
     assert ranked[0][1] == 50.0
 
 
+def test_rank_movers_uses_intraday_peak_when_high_is_given():
+    # SPIKE closed almost flat (+5%) but peaked +100% intraday; FADE closed
+    # +50% with a +55% peak. An intraday scanner would rank SPIKE first — and
+    # ranking on the close alone (the old behaviour) would wrongly drop it.
+    quotes = [
+        DayQuote(symbol="SPIKE", close=10.5, prev_close=10.0, volume=1_000_000, high=20.0),
+        DayQuote(symbol="FADE", close=15.0, prev_close=10.0, volume=1_000_000, high=15.5),
+    ]
+    ranked = barcache.rank_movers(quotes, top_n=10, min_change_pct=1)
+    assert [r[0] for r in ranked] == ["SPIKE", "FADE"]
+    assert ranked[0][1] == 100.0  # change_pct is the PEAK gain
+    assert ranked[0][2] == 10.5   # price is still the close
+
+
+def test_intraday_bars_roundtrip_and_filter_by_start_day():
+    s = _mem_session()
+    barcache.save_intraday_bars(s, "AAA", [
+        {"t": "2026-05-30T14:00:00Z", "o": 9, "h": 9.2, "l": 8.9, "c": 9.1, "v": 1e5, "vw": 9.0},  # before start
+        {"t": "2026-06-01T14:00:00Z", "o": 10, "h": 10.5, "l": 9.9, "c": 10.4, "v": 2e5, "vw": 10.2},
+        {"t": "2026-06-01T14:15:00Z", "o": 10.4, "h": 11, "l": 10.3, "c": 10.9, "v": 3e5, "vw": 10.7},
+    ])
+    assert not barcache.has_intraday(_mem_session())  # a fresh DB has none
+    s.commit()
+    assert barcache.has_intraday(s)
+    got = barcache.cached_intraday_bars(s, ["AAA", "MISSING"], "2026-06-01")
+    assert set(got) == {"AAA"}  # MISSING absent
+    assert [b["t"] for b in got["AAA"]] == ["2026-06-01T14:00:00Z", "2026-06-01T14:15:00Z"]  # pre-start dropped, ordered
+    barcache.save_intraday_bars(s, "AAA", [
+        {"t": "2026-06-01T14:00:00Z", "o": 10, "h": 10.5, "l": 9.9, "c": 10.4, "v": 2e5, "vw": 10.2},
+    ])
+    s.commit()
+    assert s.query(barcache.IntradayBar).count() == 3  # idempotent — no dupes
+
+
 def test_rank_movers_applies_price_and_volume_and_max_gain():
     quotes = [
         _q("CHEAP", 6.0, 5.0, 2_000_000),     # +20%, $12M vol, price $6

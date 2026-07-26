@@ -30,6 +30,7 @@ router = APIRouter(prefix="/api/barcache", tags=["barcache"])
 @dataclass
 class SweepProgress:
     running: bool = False
+    kind: str = "daily"  # daily | reconstruct | intraday — what the current/last run was
     started_at: str | None = None
     last_run_at: str | None = None
     batches_total: int = 0
@@ -37,6 +38,7 @@ class SweepProgress:
     symbols_total: int = 0
     symbols_saved: int = 0
     days_reconstructed: int = 0
+    intraday_bars: int = 0
     errors: int = 0
     last_error: str | None = None
 
@@ -115,6 +117,31 @@ async def _run_reconstruct() -> None:
         _progress.last_run_at = datetime.now(timezone.utc).isoformat()
 
 
+async def _run_intraday_sweep(client: AlpacaClient) -> None:
+    """Background worker: pull intraday (15-min) bars for the reconstructed
+    movers so intraday strategies can be replayed on how each day unfolded."""
+    sess = barcache.session()
+    try:
+        def on_progress(done: int, total: int, saved: int) -> None:
+            _progress.batches_done = done
+            _progress.batches_total = total
+            _progress.symbols_saved = saved
+
+        summary = await barsweep.sweep_intraday_movers(client, sess, progress=on_progress)
+        _progress.batches_total = summary["days"]
+        _progress.batches_done = summary["days"]
+        _progress.symbols_saved = summary["symbols_saved"]
+        _progress.intraday_bars = summary["bars_saved"]
+        _progress.errors = summary["errors"]
+    except Exception as exc:  # noqa: BLE001
+        log.exception("intraday sweep failed")
+        _progress.last_error = str(exc)
+    finally:
+        sess.close()
+        _progress.running = False
+        _progress.last_run_at = datetime.now(timezone.utc).isoformat()
+
+
 @router.post("/sweep")
 async def trigger_sweep(
     days: int = Query(default=365, ge=7, le=1825),
@@ -134,6 +161,7 @@ async def trigger_sweep(
         raise HTTPException(status_code=502, detail=f"Could not open the bar cache DB: {exc}")
 
     _progress.running = True
+    _progress.kind = "daily"
     _progress.started_at = datetime.now(timezone.utc).isoformat()
     _progress.batches_done = 0
     _progress.batches_total = 0
@@ -159,6 +187,7 @@ async def trigger_reconstruct() -> dict:
         raise HTTPException(status_code=502, detail=f"Could not open the bar cache DB: {exc}")
 
     _progress.running = True
+    _progress.kind = "reconstruct"
     _progress.started_at = datetime.now(timezone.utc).isoformat()
     _progress.days_reconstructed = 0
     _progress.last_error = None
@@ -166,6 +195,42 @@ async def trigger_reconstruct() -> dict:
     return {"ok": True, "started": True, "reconstruct_only": True, "backend": _backend_info()}
 
 
+@router.post("/sweep-intraday")
+async def trigger_intraday_sweep(
+    client: AlpacaClient = Depends(require_client),
+) -> dict:
+    """Pull intraday (15-min) bars for the reconstructed movers, so scanner
+    replay can judge an intraday strategy on how each day actually traded
+    (flatten-before-close, VWAP, the entry window). Run a daily sweep first so
+    there are movers to fetch. Returns immediately; poll /status."""
+    global _task
+    if _progress.running:
+        raise HTTPException(status_code=409, detail="A sweep or reconstruct is already running.")
+    try:
+        barcache.init_cache()
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=f"Could not open the bar cache DB: {exc}")
+
+    _progress.running = True
+    _progress.kind = "intraday"
+    _progress.started_at = datetime.now(timezone.utc).isoformat()
+    _progress.batches_done = 0
+    _progress.batches_total = 0
+    _progress.intraday_bars = 0
+    _progress.last_error = None
+    _task = asyncio.create_task(_run_intraday_sweep(client))
+    return {"ok": True, "started": True, "intraday": True, "backend": _backend_info()}
+
+
 @router.get("/status")
 def sweep_status() -> dict:
-    return {**asdict(_progress), "backend": _backend_info()}
+    has_intraday = False
+    try:
+        sess = barcache.session()
+        try:
+            has_intraday = barcache.has_intraday(sess)
+        finally:
+            sess.close()
+    except Exception:  # noqa: BLE001 — a bad/unbuilt cache just means "no intraday yet"
+        has_intraday = False
+    return {**asdict(_progress), "has_intraday": has_intraday, "backend": _backend_info()}

@@ -87,6 +87,25 @@ def test_eligible_by_day_gates_entries_to_the_days_movers():
     assert ungated["trades"] == 2
 
 
+def test_flatten_before_close_fires_on_last_intraday_bar():
+    # An intraday strategy that flattens before the close: entered at +4%, no
+    # stop/trailing triggers as it rises, so it must exit on the LAST bar of the
+    # entry day with the flatten reason — not ride overnight.
+    strat = {
+        **STRATEGY,
+        "params": {
+            "entry": STRATEGY["params"]["entry"],
+            "exit": {**STRATEGY["params"]["exit"], "flatten_before_close": True},
+        },
+    }
+    series = _spread_day([100, 100, 100], [104, 105, 106])  # day 2 rises, no stop hit
+    result = run_backtest(strat, {"TEST": series}, RISK, starting_cash=5000, spread_pct=0)
+    assert result["trades"] == 1
+    trade = result["trade_list"][0]
+    assert trade["exit_reason"] == "flatten before market close"
+    assert trade["entry_price"] == 104 and trade["exit_price"] == 106  # exits on the day's last bar
+
+
 def test_stop_loss_and_costs():
     # Entry at 104, collapse to 99 → stop-loss. Spread cost should worsen P&L.
     series = _spread_day([100, 100, 100], [104, 99, 99])

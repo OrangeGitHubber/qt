@@ -116,8 +116,9 @@ async def _scanner_replay(
 ) -> dict:
     """Replay the historical 'today's risers' the scanner would have surfaced:
     for each past day, only that day's cached top-N movers are eligible to
-    enter. Runs on cached DAILY bars — fully offline, no Alpaca fetch (run a
-    sweep first in Settings). Stocks only for now."""
+    enter. Prefers cached INTRADAY bars (so intraday exits — flatten-before-
+    close, VWAP, the entry window — behave for real); falls back to daily bars
+    when no intraday sweep has been run. Fully offline. Stocks only for now."""
     if strategy.asset_class != "stock":
         raise HTTPException(status_code=422, detail="Scanner replay is stocks-only for now.")
 
@@ -134,7 +135,15 @@ async def _scanner_replay(
             )
         eligible_by_day = {day: set(syms) for day, syms in movers.items()}
         union = sorted({s for syms in movers.values() for s in syms})
-        bars = barcache.cached_daily_bars(cache, union, start_day)
+        # Stage 2: intraday bars for the movers if we have them, else daily.
+        intraday_bars = barcache.cached_intraday_bars(cache, union, start_day)
+        used_intraday = any(intraday_bars.values())
+        if used_intraday:
+            bars = intraday_bars
+            timeframe = "15Min"
+        else:
+            bars = barcache.cached_daily_bars(cache, union, start_day)
+            timeframe = "1Day"
     finally:
         cache.close()
 
@@ -160,10 +169,11 @@ async def _scanner_replay(
 
     result["strategy_name"] = strategy.name
     result["scanner_replay"] = True
+    result["replay_intraday"] = used_intraday
     result["replay_top_n"] = body.replay_top_n
     result["universe_size"] = len(union)
     result["days_replayed"] = len(movers)
     result["symbols"] = []  # too many to list; summarized by universe_size
-    result["timeframe"] = "1Day"
+    result["timeframe"] = timeframe
     result["days"] = body.days
     return result

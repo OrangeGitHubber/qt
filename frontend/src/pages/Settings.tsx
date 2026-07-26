@@ -12,6 +12,7 @@ import {
   RiskConfig,
   runBarSweep,
   runBarReconstruct,
+  runIntradaySweep,
   setRegimeEnabled,
   setRisk,
   setSlack,
@@ -68,6 +69,16 @@ export default function Settings() {
     try {
       await runBarReconstruct();
       setBars(await getBarCacheStatus());
+    } catch (e) {
+      setNote((e as Error).message);
+    }
+  }
+
+  async function runIntraday() {
+    setNote(null);
+    try {
+      await runIntradaySweep();
+      setBars(await getBarCacheStatus()); // flips running=true, starts the poll
     } catch (e) {
       setNote((e as Error).message);
     }
@@ -257,6 +268,12 @@ export default function Settings() {
           sweep, QT keeps the cache current automatically each trading evening. <strong>Re-rank</strong> re-computes the
           risers from bars already cached (seconds, no download) — use it after changing the scanner's filters.
         </p>
+        <p className="hint">
+          <strong>Sweep intraday</strong> then pulls 15-minute bars for those movers, so a scanner-replay backtest can
+          judge an <em>intraday</em> strategy on how each day actually traded — VWAP, the entry window, and
+          flatten-before-close all behave for real. Without it, replay falls back to daily bars, which can't simulate any
+          intraday exit. Do a daily sweep first so there are movers to fetch.
+        </p>
         {bars && (
           <dl>
             <dt>Status</dt>
@@ -272,6 +289,12 @@ export default function Settings() {
             </dd>
             <dt>Days reconstructed</dt>
             <dd>{bars.days_reconstructed.toLocaleString()}</dd>
+            <dt>Intraday bars</dt>
+            <dd>
+              {bars.has_intraday
+                ? `${bars.intraday_bars.toLocaleString()} pulled${bars.kind === "intraday" && bars.running ? " (in progress)" : ""} — intraday replay ready`
+                : "none yet — replay uses daily bars"}
+            </dd>
             <dt>Last run</dt>
             <dd>{bars.last_run_at ? new Date(bars.last_run_at).toLocaleString() : "never"}</dd>
           </dl>
@@ -281,6 +304,9 @@ export default function Settings() {
         </button>{" "}
         <button className="small" disabled={bars?.running} onClick={runReconstruct}>
           Re-rank
+        </button>{" "}
+        <button className="small" disabled={bars?.running} onClick={runIntraday}>
+          Sweep intraday
         </button>
       </div>
 

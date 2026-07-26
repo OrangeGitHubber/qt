@@ -3,6 +3,31 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Scanner replay, stage 2: intraday bars — actually test an intraday strategy (2026-07-26)
+
+Daily-bar replay couldn't test an intraday strategy: with one price per day there's
+no "before the close" to flatten at, so a scalper got simulated as a multi-day
+holder (positions rode overnight, and "flatten before close" silently did nothing).
+Two fixes land together:
+
+- **Rank risers by the intraday *peak*, not the close.** A stock that spiked +40%
+  at 10:30am and closed flat is exactly what an intraday scanner flags — the daily
+  bar's *high* captures that, so reconstruction now ranks on it. Ranking on the
+  close silently dropped the pump-and-fade names these strategies live on.
+- **New intraday sweep** (Settings → *Sweep intraday*) pulls 15-minute bars for the
+  reconstructed movers — only those names, only their mover-days (plus a prior
+  session so the day-gain baseline is real). Scanner replay then runs on the
+  15-minute bars automatically, so VWAP, the entry window, trailing stops, and
+  **flatten-before-close** all behave for real. Without an intraday sweep, replay
+  still falls back to daily bars (and now says which it used).
+- **The backtester now simulates flatten-before-close** on the last bar of each
+  day (previously live-only — it never fired in any backtest), and won't open a
+  position on that final bar (a scalp with no time to work).
+- After your first intraday sweep, the nightly upkeep job keeps it current too.
+
+Note: this doesn't prove your scalper is good or bad — it means it can finally be
+tested on its real, intraday behavior instead of a daily-bar stand-in.
+
 ## Scanner replay: pick the riser count instantly, and keep the cache current (2026-07-26)
 
 Built on the "store wide, narrow at read" idea, so the expensive part (downloading
