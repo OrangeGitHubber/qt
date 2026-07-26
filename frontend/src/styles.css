@@ -408,6 +408,10 @@ tr:last-child td {
   margin-top: 0.4rem;
 }
 
+.nowrap {
+  white-space: nowrap;
+}
+
 /* Segmented single-choice control (e.g. watchlist All / Stocks / Crypto). */
 .seg {
   display: inline-flex;

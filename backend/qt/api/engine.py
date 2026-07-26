@@ -176,12 +176,19 @@ async def test_slack(session: Session = Depends(get_session)) -> dict:
 @router.get("/journal")
 def journal(
     mode: str | None = None,
+    status: str | None = None,
     limit: int = 100,
     session: Session = Depends(get_session),
 ) -> list[dict]:
     q = session.query(Trade, Strategy.name).join(Strategy, Trade.strategy_id == Strategy.id)
     if mode:
         q = q.filter(Trade.mode == mode)
+    # Filter server-side so hiding the (often numerous) rejected rows doesn't
+    # get eaten by the row limit — "trades" = actually-executed (open+closed).
+    if status == "trades":
+        q = q.filter(Trade.status.in_(("open", "closed")))
+    elif status in ("open", "closed", "rejected"):
+        q = q.filter(Trade.status == status)
     rows = q.order_by(Trade.id.desc()).limit(min(limit, 500)).all()
     return [
         {
@@ -191,6 +198,7 @@ def journal(
             "symbol": t.symbol,
             "asset_class": t.asset_class,
             "status": t.status,
+            "logged_at": t.created_at.isoformat() if t.created_at else None,
             "qty": t.qty,
             "notional": t.notional,
             "entry_price": t.entry_price,

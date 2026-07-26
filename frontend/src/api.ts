@@ -106,6 +106,7 @@ export interface JournalRow {
   symbol: string;
   asset_class: string;
   status: string;
+  logged_at: string | null;
   qty: number;
   notional: number;
   entry_price: number | null;
@@ -182,8 +183,13 @@ export const setRegimeEnabled = (enabled: boolean) =>
 export const setSlack = (url: string) =>
   fetch("/api/engine/slack", { ...json({ url }), method: "PUT" }).then((r) => handle(r));
 export const testSlack = () => fetch("/api/engine/slack/test", { method: "POST" }).then((r) => handle(r));
-export const getJournal = (mode?: string) =>
-  fetch(`/api/engine/journal${mode ? `?mode=${mode}` : ""}`).then((r) => handle<JournalRow[]>(r));
+export const getJournal = (mode?: string, status?: string) => {
+  const qs = new URLSearchParams();
+  if (mode) qs.set("mode", mode);
+  if (status) qs.set("status", status);
+  const q = qs.toString();
+  return fetch(`/api/engine/journal${q ? `?${q}` : ""}`).then((r) => handle<JournalRow[]>(r));
+};
 export const getScoreboard = () => fetch("/api/engine/scoreboard").then((r) => handle<Scoreboard>(r));
 
 export interface AssetRow {

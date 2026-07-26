@@ -3,6 +3,16 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Journal: timestamp column + filter out rejected noise (2026-07-18)
+
+- **Time column, leftmost, in your local time.** Every journal entry now shows
+  when it was logged — including rejected ones — as the first column, formatted
+  in your system's timezone (not UTC).
+- **Filter by outcome.** An All / Trades / Rejected toggle. "Trades" shows only
+  the actual buys and sells (open + closed); "Rejected" shows only the blocked
+  decisions. The filter runs server-side, so hiding the (often numerous)
+  rejected rows can't crowd real trades out of the row limit.
+
 ## Watchlist: sort by any column + filter by asset class (2026-07-18)
 
 - **Click any column to sort** — Symbol, Type, Price, Today, 30-day, Daily move,

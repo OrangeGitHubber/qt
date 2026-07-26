@@ -13,11 +13,12 @@ function when(iso: string | null) {
 export default function Journal() {
   const [rows, setRows] = useState<JournalRow[] | null>(null);
   const [mode, setMode] = useState<string>("");
+  const [status, setStatus] = useState<"" | "trades" | "rejected">("");
   const [expanded, setExpanded] = useState<number | null>(null);
 
   const refresh = useCallback(() => {
-    getJournal(mode || undefined).then(setRows);
-  }, [mode]);
+    getJournal(mode || undefined, status || undefined).then(setRows);
+  }, [mode, status]);
 
   useEffect(() => {
     refresh();
@@ -29,6 +30,13 @@ export default function Journal() {
     <>
       <div className="toolbar">
         <h2>Trade journal</h2>
+        <div className="seg" role="group" aria-label="Filter by outcome">
+          {(["", "trades", "rejected"] as const).map((s) => (
+            <button key={s || "all"} className={status === s ? "active" : ""} onClick={() => setStatus(s)}>
+              {s === "" ? "All" : s === "trades" ? "Trades" : "Rejected"}
+            </button>
+          ))}
+        </div>
         <select value={mode} onChange={(e) => setMode(e.target.value)}>
           <option value="">All modes</option>
           <option value="shadow">Shadow</option>
@@ -50,6 +58,7 @@ export default function Journal() {
           <table>
             <thead>
               <tr>
+                <th>Time</th>
                 <th></th>
                 <th>Mode</th>
                 <th>Strategy</th>
@@ -64,6 +73,7 @@ export default function Journal() {
               {rows.map((r) => (
                 <>
                   <tr key={r.id} className="clickable" onClick={() => setExpanded(expanded === r.id ? null : r.id)}>
+                    <td className="hint nowrap">{when(r.logged_at)}</td>
                     <td>{expanded === r.id ? "▾" : "▸"}</td>
                     <td>
                       <span className={`pill ${r.mode === "shadow" ? "muted" : "ok"}`}>{r.mode}</span>
@@ -87,7 +97,7 @@ export default function Journal() {
                   </tr>
                   {expanded === r.id && (
                     <tr key={`${r.id}-detail`}>
-                      <td colSpan={8} className="detail">
+                      <td colSpan={9} className="detail">
                         <p>
                           <strong>Why it {r.status === "rejected" ? "was rejected" : "bought"}:</strong>{" "}
                           {r.entry_reason || "—"}
