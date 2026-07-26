@@ -86,19 +86,27 @@ def _nonzero(qty: float) -> bool:
     return abs(qty) > 1e-12
 
 
+def _norm(symbol: str) -> str:
+    """Canonical symbol key for matching. We store crypto as 'AVAX/USD', but
+    Alpaca's /v2/positions returns it slash-less ('AVAXUSD'). Without this,
+    every crypto position looks 'no longer held' on the next reconcile cycle
+    and the trade is wrongly closed at entry price (P&L $0)."""
+    return symbol.replace("/", "").upper()
+
+
 def reconcile(
     trades: list[OpenTradeView],
     positions: list[PositionView],
     orders: list[OrderView],
 ) -> list[Action]:
     """Pure reconciliation. Returns the actions the shell should apply."""
-    pos_by_symbol = {p.symbol: p for p in positions if _nonzero(p.qty)}
+    pos_by_symbol = {_norm(p.symbol): p for p in positions if _nonzero(p.qty)}
     orders_by_id = {o.id: o for o in orders}
-    db_symbols = {t.symbol for t in trades}
+    db_symbols = {_norm(t.symbol) for t in trades}
     actions: list[Action] = []
 
     for t in trades:
-        pos = pos_by_symbol.get(t.symbol)
+        pos = pos_by_symbol.get(_norm(t.symbol))
         entry_order = orders_by_id.get(t.entry_order_id) if t.entry_order_id else None
 
         if not t.entry_confirmed:
@@ -154,11 +162,11 @@ def reconcile(
         )
 
     # Case (b): positions Alpaca holds that no DB trade accounts for.
-    for symbol, pos in pos_by_symbol.items():
-        if symbol not in db_symbols:
+    for norm_symbol, pos in pos_by_symbol.items():
+        if norm_symbol not in db_symbols:
             actions.append(
                 Action(
-                    "alert_orphan_position", symbol=symbol, qty=pos.qty,
+                    "alert_orphan_position", symbol=pos.symbol, qty=pos.qty,
                     reason="Alpaca holds a position QT has no open trade for — not auto-adopting",
                 )
             )

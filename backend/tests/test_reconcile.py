@@ -47,6 +47,18 @@ def test_confirmed_trade_missing_position_is_closed():
     assert actions[0].trade_id == 1
 
 
+def test_crypto_slash_symbol_matches_broker_slashless():
+    # We store 'AVAX/USD'; Alpaca /v2/positions returns 'AVAXUSD'. These must
+    # reconcile as the SAME position — otherwise every crypto trade is wrongly
+    # closed on the next cycle.
+    actions = reconcile(
+        [_trade(symbol="AVAX/USD", qty=147.8)],
+        [PositionView("AVAXUSD", qty=147.8, current_price=6.8)],
+        [],
+    )
+    assert actions == []  # in sync, no wrongful close
+
+
 def test_orphan_position_alerts_never_adopts():
     # Case (b): broker holds ZZZ, DB knows nothing about it.
     actions = reconcile([], [PositionView("ZZZ", qty=3, current_price=50.0)], [])

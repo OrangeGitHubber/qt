@@ -3,6 +3,15 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Fix: crypto trades were wrongly auto-closed by reconciliation (2026-07-26)
+
+A real bug: crypto positions were being closed within minutes of opening, with
+"reconciled: position no longer held at broker" and $0 P&L. Cause — QT stores
+crypto as `AVAX/USD` but Alpaca's positions endpoint returns it slash-less
+(`AVAXUSD`), so the reconciler couldn't match them and assumed the position had
+vanished. Symbol matching is now slash-insensitive, so a held crypto position
+stays open. (Stocks were never affected.)
+
 ## Strategies: "max gain today" entry ceiling (2026-07-26)
 
 A new optional entry rule: **Max gain today (%)**. Momentum buys strength, but a
