@@ -408,6 +408,50 @@ tr:last-child td {
   margin-top: 0.4rem;
 }
 
+/* Segmented single-choice control (e.g. watchlist All / Stocks / Crypto). */
+.seg {
+  display: inline-flex;
+  gap: 0.4rem;
+}
+.seg button {
+  margin: 0;
+  padding: 0.35rem 0.8rem;
+  font-size: 0.85rem;
+  font-weight: 500;
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--muted);
+}
+.seg button:hover {
+  border-color: var(--accent);
+  color: var(--text);
+}
+.seg button.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+  cursor: default;
+}
+
+/* Click-to-sort table header: looks like the header text, acts like a button. */
+.th-sort {
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  border: none;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  cursor: pointer;
+}
+.th-sort:hover {
+  color: var(--text);
+}
+.th-sort.active {
+  color: var(--text);
+}
+
 /* Short teaching intro at the top of a page. */
 .page-intro {
   max-width: 70ch;

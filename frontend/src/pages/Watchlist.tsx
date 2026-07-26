@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { addWatchlist, getWatchlist, removeWatchlist, WatchlistRow } from "../api";
 import InfoTip from "../components/InfoTip";
 import Sparkline from "../components/Sparkline";
@@ -7,6 +7,9 @@ import SymbolPicker from "../components/SymbolPicker";
 
 const pct = (v: number | null) => (v == null ? "—" : `${v >= 0 ? "+" : ""}${v}%`);
 
+type SortKey = "symbol" | "asset_class" | "price" | "change_pct" | "change_30d_pct" | "atr_pct" | "vs_sma200_pct";
+const STRING_KEYS: SortKey[] = ["symbol", "asset_class"];
+
 export default function Watchlist() {
   const [rows, setRows] = useState<WatchlistRow[] | null>(null);
   const [errors, setErrors] = useState<string[]>([]);
@@ -14,6 +17,46 @@ export default function Watchlist() {
   const [note, setNote] = useState<string | null>(null);
   const [extra, setExtra] = useState(true);
   const [detail, setDetail] = useState<WatchlistRow | null>(null);
+  const [filter, setFilter] = useState<"all" | "stock" | "crypto">("all");
+  const [sortKey, setSortKey] = useState<SortKey>("symbol");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+
+  function toggleSort(k: SortKey) {
+    if (k === sortKey) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    else {
+      setSortKey(k);
+      setSortDir(STRING_KEYS.includes(k) ? "asc" : "desc"); // numbers default high→low
+    }
+  }
+
+  const view = useMemo(() => {
+    const filtered = (rows ?? []).filter((r) => filter === "all" || r.asset_class === filter);
+    return [...filtered].sort((a, b) => {
+      if (STRING_KEYS.includes(sortKey)) {
+        const cmp = String(a[sortKey]).localeCompare(String(b[sortKey]));
+        return sortDir === "asc" ? cmp : -cmp;
+      }
+      const an = a[sortKey] as number | null;
+      const bn = b[sortKey] as number | null;
+      if (an == null && bn == null) return 0;
+      if (an == null) return 1; // nulls ("—") always sink to the bottom
+      if (bn == null) return -1;
+      return sortDir === "asc" ? an - bn : bn - an;
+    });
+  }, [rows, filter, sortKey, sortDir]);
+
+  function SortHead({ k, label, tip }: { k: SortKey; label: string; tip?: string }) {
+    const arrow = sortKey === k ? (sortDir === "asc" ? " ▲" : " ▼") : "";
+    return (
+      <th>
+        <button type="button" className={`th-sort${sortKey === k ? " active" : ""}`} onClick={() => toggleSort(k)}>
+          {label}
+          {arrow}
+        </button>
+        {tip && <InfoTip k={tip} />}
+      </th>
+    );
+  }
 
   const refresh = useCallback(() => {
     getWatchlist()
@@ -51,6 +94,17 @@ export default function Watchlist() {
     <>
       <div className="toolbar">
         <h2>Watchlist</h2>
+        <div className="seg" role="group" aria-label="Filter by asset class">
+          {(["all", "stock", "crypto"] as const).map((f) => (
+            <button
+              key={f}
+              className={filter === f ? "active" : ""}
+              onClick={() => setFilter(f)}
+            >
+              {f === "all" ? "All" : f === "stock" ? "Stocks" : "Crypto"}
+            </button>
+          ))}
+        </div>
         <button className="small" onClick={() => setExtra((x) => !x)}>
           {extra ? "Hide extra columns" : "Show 30d / volatility / trend"}
         </button>
@@ -80,25 +134,21 @@ export default function Watchlist() {
             Nothing pinned yet. Add symbols here, or hit "+ Watch" on the Scanner tab. Pinned symbols will always be
             considered by the trading engine (Phase 2), even when they don't show up in the scanner.
           </p>
+        ) : view.length === 0 ? (
+          <p className="hint">No {filter === "stock" ? "stocks" : "crypto"} in your watchlist.</p>
         ) : (
           <table>
             <thead>
               <tr>
-                <th>Symbol</th>
-                <th>Type</th>
-                <th>Price</th>
-                <th>Today</th>
+                <SortHead k="symbol" label="Symbol" />
+                <SortHead k="asset_class" label="Type" />
+                <SortHead k="price" label="Price" />
+                <SortHead k="change_pct" label="Today" />
                 {extra && (
                   <>
-                    <th>
-                      30 day <InfoTip k="change_30d" />
-                    </th>
-                    <th>
-                      Daily move <InfoTip k="atr" />
-                    </th>
-                    <th>
-                      vs 200d avg <InfoTip k="sma200" />
-                    </th>
+                    <SortHead k="change_30d_pct" label="30 day" tip="change_30d" />
+                    <SortHead k="atr_pct" label="Daily move" tip="atr" />
+                    <SortHead k="vs_sma200_pct" label="vs 200d avg" tip="sma200" />
                   </>
                 )}
                 <th>Trend (15m bars)</th>
@@ -106,7 +156,7 @@ export default function Watchlist() {
               </tr>
             </thead>
             <tbody>
-              {rows.map((r) => (
+              {view.map((r) => (
                 <tr key={`${r.asset_class}:${r.symbol}`}>
                   <td>
                     <button className="linklike sym" onClick={() => setDetail(r)} title={`Price history for ${r.symbol}`}>

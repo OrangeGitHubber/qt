@@ -3,6 +3,15 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Watchlist: sort by any column + filter by asset class (2026-07-18)
+
+- **Click any column to sort** — Symbol, Type, Price, Today, 30-day, Daily move,
+  or vs-200d-avg. Click again to flip the direction (an ▲/▼ shows which column
+  and way). Numeric columns default to high→low; empty ("—") values always sink
+  to the bottom.
+- **Filter by asset class** — an All / Stocks / Crypto toggle to see just one
+  market at a time. The sort you picked carries across the filter.
+
 ## Scanner: stock volume floor uses a full session, not a partial day (2026-07-18)
 
 The stock "$ volume" (and the min-volume floor it feeds) now uses the **last
