@@ -23,11 +23,13 @@ def test_journal_status_filter_and_timestamp(client):
         for st in ("open", "closed", "rejected"):
             s.add(Trade(strategy_id=sid, mode="shadow", symbol="AAA",
                         asset_class="stock", qty=1, notional=100, status=st))
+        s.add(Trade(strategy_id=sid, mode="shadow", symbol="BTC/USD",
+                    asset_class="crypto", qty=1, notional=100, status="open"))
 
     mine = lambda rows: [r for r in rows if r["strategy"] == "Journal filter test"]
 
     all_rows = mine(client.get("/api/engine/journal").json())
-    assert len(all_rows) == 3
+    assert len(all_rows) == 4  # 3 stock + 1 crypto
     # Every row carries a timestamp — including the rejected one (no entry_at) —
     # and it MUST carry a UTC offset, or the browser parses the offset-less
     # string as local time and shows the UTC wall-clock mislabeled as local.
@@ -39,6 +41,14 @@ def test_journal_status_filter_and_timestamp(client):
 
     rejected = mine(client.get("/api/engine/journal?status=rejected").json())
     assert rejected and all(r["status"] == "rejected" for r in rejected)
+
+    crypto = mine(client.get("/api/engine/journal?asset_class=crypto").json())
+    assert {r["symbol"] for r in crypto} == {"BTC/USD"}
+    stocks = mine(client.get("/api/engine/journal?asset_class=stock").json())
+    assert len(stocks) == 3 and all(r["asset_class"] == "stock" for r in stocks)
+    # filters compose: crypto + executed-only
+    combo = mine(client.get("/api/engine/journal?asset_class=crypto&status=trades").json())
+    assert [r["symbol"] for r in combo] == ["BTC/USD"]
 
     with session_scope() as s:
         s.query(Trade).delete()

@@ -12,6 +12,8 @@ Newest first. Each phase links to the technical details in
   the actual buys and sells (open + closed); "Rejected" shows only the blocked
   decisions. The filter runs server-side, so hiding the (often numerous)
   rejected rows can't crowd real trades out of the row limit.
+- **Filter by asset class.** An All / Stocks / Crypto toggle too. It composes
+  with the outcome and mode filters (e.g. crypto + trades only).
 
 ## Watchlist: sort by any column + filter by asset class (2026-07-18)
 

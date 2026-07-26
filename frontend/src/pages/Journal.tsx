@@ -14,11 +14,12 @@ export default function Journal() {
   const [rows, setRows] = useState<JournalRow[] | null>(null);
   const [mode, setMode] = useState<string>("");
   const [status, setStatus] = useState<"" | "trades" | "rejected">("");
+  const [assetClass, setAssetClass] = useState<"" | "stock" | "crypto">("");
   const [expanded, setExpanded] = useState<number | null>(null);
 
   const refresh = useCallback(() => {
-    getJournal(mode || undefined, status || undefined).then(setRows);
-  }, [mode, status]);
+    getJournal(mode || undefined, status || undefined, assetClass || undefined).then(setRows);
+  }, [mode, status, assetClass]);
 
   useEffect(() => {
     refresh();
@@ -34,6 +35,13 @@ export default function Journal() {
           {(["", "trades", "rejected"] as const).map((s) => (
             <button key={s || "all"} className={status === s ? "active" : ""} onClick={() => setStatus(s)}>
               {s === "" ? "All" : s === "trades" ? "Trades" : "Rejected"}
+            </button>
+          ))}
+        </div>
+        <div className="seg" role="group" aria-label="Filter by asset class">
+          {(["", "stock", "crypto"] as const).map((a) => (
+            <button key={a || "all"} className={assetClass === a ? "active" : ""} onClick={() => setAssetClass(a)}>
+              {a === "" ? "All" : a === "stock" ? "Stocks" : "Crypto"}
             </button>
           ))}
         </div>

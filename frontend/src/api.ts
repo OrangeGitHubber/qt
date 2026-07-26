@@ -183,10 +183,11 @@ export const setRegimeEnabled = (enabled: boolean) =>
 export const setSlack = (url: string) =>
   fetch("/api/engine/slack", { ...json({ url }), method: "PUT" }).then((r) => handle(r));
 export const testSlack = () => fetch("/api/engine/slack/test", { method: "POST" }).then((r) => handle(r));
-export const getJournal = (mode?: string, status?: string) => {
+export const getJournal = (mode?: string, status?: string, assetClass?: string) => {
   const qs = new URLSearchParams();
   if (mode) qs.set("mode", mode);
   if (status) qs.set("status", status);
+  if (assetClass) qs.set("asset_class", assetClass);
   const q = qs.toString();
   return fetch(`/api/engine/journal${q ? `?${q}` : ""}`).then((r) => handle<JournalRow[]>(r));
 };

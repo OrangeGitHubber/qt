@@ -191,12 +191,15 @@ def _iso_utc(dt: datetime | None) -> str | None:
 def journal(
     mode: str | None = None,
     status: str | None = None,
+    asset_class: str | None = None,
     limit: int = 100,
     session: Session = Depends(get_session),
 ) -> list[dict]:
     q = session.query(Trade, Strategy.name).join(Strategy, Trade.strategy_id == Strategy.id)
     if mode:
         q = q.filter(Trade.mode == mode)
+    if asset_class in ("stock", "crypto"):
+        q = q.filter(Trade.asset_class == asset_class)
     # Filter server-side so hiding the (often numerous) rejected rows doesn't
     # get eaten by the row limit — "trades" = actually-executed (open+closed).
     if status == "trades":
