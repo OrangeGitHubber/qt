@@ -169,5 +169,10 @@ the project's honesty meter and the gate for ever trading real money.
 - Storage: a single [SQLite](https://en.wikipedia.org/wiki/SQLite) database
   in `/data`, evolved safely between versions with
   [Alembic migrations](https://alembic.sqlalchemy.org/).
+- Bar cache: bulk, rebuildable historical market data (daily bars and computed
+  movers) is kept in a **separate** cache, so it never mixes with your keys,
+  config, and journal. Its backend is configurable — a local SQLite file by
+  default, or an optional shared Postgres — via `QT_BAR_CACHE_URL`. See
+  [docs/bar-cache.md](bar-cache.md).
 - Notifications: [Slack incoming webhooks](https://api.slack.com/messaging/webhooks)
   for trade alerts, errors, and daily summaries.

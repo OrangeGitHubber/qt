@@ -50,6 +50,15 @@ in the UI, no config files.
 The `/data` volume holds the database, encrypted API keys, and trade history.
 Back it up.
 
+### Optional: shared bar cache (Postgres)
+
+QT caches historical market data (daily bars and computed movers) in a **bar
+cache** kept separate from your keys and journal. By default this is a local
+SQLite file in `/data` — zero setup, fully functional. Optionally, set the
+`QT_BAR_CACHE_URL` environment variable to a Postgres DSN for a durable cache
+that survives container recreation and can be shared across instances (it holds
+only public market data). See [docs/bar-cache.md](docs/bar-cache.md) for setup.
+
 ### ⚠ Get the volume direction right — `host path : /data`
 
 In the `-v host:container` flag (and the unraid "Data" field), the **left**

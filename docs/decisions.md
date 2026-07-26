@@ -2,6 +2,20 @@
 
 Why QT is the way it is. Newest first.
 
+## 2026-07-26 — Bar cache backend is configurable (SQLite default, optional Postgres)
+The historical **bar cache** (bulk daily bars + computed movers, the foundation
+for replaying the scanner over past days) is kept in a store **separate** from
+the main `qt.db` — it is public market data, rebuildable and shareable, whereas
+`qt.db` holds encrypted keys, config and the journal. Its backend is chosen by
+`QT_BAR_CACHE_URL` (a SQLAlchemy URL): **unset** → a local `bars.db` SQLite file
+in `/data` (per-instance, zero setup, the default and fully functional); **set**
+→ a Postgres DSN for a durable cache that survives container recreation and can
+be shared across instances. Keeping it out of `qt.db` is what makes sharing safe
+(no secrets travel) and optional (a lone instance never needs Postgres). Setup
+gotchas documented in `docs/bar-cache.md`: the container's `localhost` is not the
+Postgres host, use a scoped DB user rather than the superuser, and URL-encode
+special characters in the password.
+
 ## 2026-07-18 — Crypto scanner uses a rolling 24h window, not the UTC calendar day
 The crypto scanner originally read Alpaca's `dailyBar`/`prevDailyBar` snapshot,
 which defines "today" as the **00:00-UTC calendar day**. That has a real
