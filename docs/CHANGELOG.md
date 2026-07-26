@@ -3,6 +3,18 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Fix: daily risk counters now reset on the US trading day, not midnight UTC (2026-07-26)
+
+The **trade-rate limiter** ("max trades per day") and the **daily-loss kill
+switch** measured "today" from midnight **UTC** — which is 7-8pm ET the evening
+before. For 24/7 crypto that meant the bot's trade budget and its loss headroom
+quietly reset in the middle of the evening's trading, right when a bad run might
+be underway. Both counters now reset at **00:00 US Eastern** — the same trading
+-day boundary the rest of the engine already uses — so "today" means one real
+market day. Harmless for stocks (the market is shut by then either way);
+important for crypto. Covered by boundary tests across daylight-saving and the
+exact ET-evening rollover where the UTC date has already ticked over.
+
 ## Backtest: "Scanner replay" mode — test against each day's real risers (2026-07-26)
 
 The backtest can now replay against **the market's actual top-10 risers on each

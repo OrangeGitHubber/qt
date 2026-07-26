@@ -206,16 +206,32 @@ def evaluate_exit(
 # --------------------------------------------------------------------------
 
 
-def _today_utc() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+def _trading_day_start(now: datetime | None = None) -> datetime:
+    """The UTC instant at which today's US trading day began — 00:00 in
+    America/New_York, the same ET calendar boundary `_et_day` uses everywhere
+    else. The daily risk counters (trade-rate limiter and daily-loss kill
+    switch) reset here.
+
+    NOT midnight UTC: that lands at 7-8pm ET the *previous* evening, so a
+    UTC-day reset would zero the counters mid-session — harmless for stocks
+    (market shut by then) but wrong for 24/7 crypto, where it would hand back
+    a fresh trade budget and loss headroom in the middle of a trading day.
+
+    Returned tz-aware in UTC; SQLite ignores the tzinfo and compares the (now
+    UTC) wall-clock components against the journal's naive-UTC timestamps.
+    `now` is injectable so the boundary can be tested across DST and the
+    ET-evening rollover without patching the clock."""
+    now = now or datetime.now(timezone.utc)
+    et_midnight = now.astimezone(ET).replace(hour=0, minute=0, second=0, microsecond=0)
+    return et_midnight.astimezone(timezone.utc)
 
 
-def _daily_loss(session: Session, mode: str, equity: float) -> float:
-    """Realized loss today (positive number = loss) from closed trades."""
-    today = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+def _daily_loss(session: Session, mode: str, day_start: datetime) -> float:
+    """Realized loss so far this trading day (positive number = loss) from
+    closed trades, measured from the ET day boundary."""
     realized = (
         session.query(func.coalesce(func.sum(Trade.pnl), 0.0))
-        .filter(Trade.mode == mode, Trade.status == "closed", Trade.exit_at >= today)
+        .filter(Trade.mode == mode, Trade.status == "closed", Trade.exit_at >= day_start)
         .scalar()
     )
     return max(0.0, -float(realized))
@@ -343,9 +359,9 @@ async def _consider_entries(
         return
 
     risk = get_risk(session)
-    daily_loss = _daily_loss(session, mode, equity)
     now_et = datetime.now(ET)
-    today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    today_start = _trading_day_start()  # 00:00 ET — shared by both daily counters
+    daily_loss = _daily_loss(session, mode, today_start)
 
     regime_state: dict | None = None
     scan_result: dict | None = None
