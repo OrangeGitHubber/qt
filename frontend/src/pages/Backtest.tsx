@@ -100,7 +100,49 @@ export default function Backtest() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const assetClass = strategies.find((s) => s.id === strategyId)?.asset_class;
+  const strategy = strategies.find((s) => s.id === strategyId);
+  const assetClass = strategy?.asset_class;
+
+  // Default the backtest to the SELECTED strategy's own universe — scanner →
+  // replay, basket → its symbols, custom → its list, watchlist → the watchlist.
+  // The manual controls below still override. Re-runs only when you switch
+  // strategies (or once baskets finish loading, for a basket strategy).
+  useEffect(() => {
+    const strat = strategies.find((s) => s.id === strategyId);
+    if (!strat) return;
+    setBasketNote(null);
+    if (strat.universe === "scanner") {
+      // Scanner replay is stocks-only; a crypto "risers" strategy can't replay
+      // yet, so it falls back to the watchlist.
+      setScannerReplay(strat.asset_class === "stock");
+      setSymbols([]);
+      setReplayTopN(strat.top_n || 10);
+    } else if (strat.universe === "basket") {
+      setScannerReplay(false);
+      if (strat.basket_id != null && baskets.length) loadBasket(strat.basket_id);
+      else setSymbols([]);
+    } else if (strat.universe === "custom") {
+      setScannerReplay(false);
+      setSymbols((strat.symbols ?? []).slice(0, 25));
+    } else {
+      setScannerReplay(false); // watchlist | both — empty picker = the watchlist
+      setSymbols([]);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [strategyId, strategies, baskets]);
+
+  const universeLabel = strategy
+    ? {
+        scanner:
+          strategy.asset_class === "stock"
+            ? "today's risers (scanner replay)"
+            : "today's risers — crypto can't replay yet, using your watchlist",
+        basket: "its basket",
+        custom: "its own symbol list",
+        watchlist: "your watchlist",
+        both: "your watchlist",
+      }[strategy.universe]
+    : null;
 
   function loadBasket(id: number) {
     setBasketNote(null);
@@ -152,11 +194,11 @@ export default function Backtest() {
       </div>
       <div className="card">
         <p className="hint">
-          Replays a strategy's exact rules over past prices — the same code the live engine runs. Honest limits: it
-          tests a <strong>fixed symbol list</strong> (not what the scanner would have picked each day), fills are
-          modeled as price ± the spread cost, and the free IEX feed sees a slice of the market.{" "}
-          <strong>Past results predict nothing</strong> — a backtest can only kill bad ideas cheaply, not promise good
-          ones.
+          Replays a strategy's exact rules over past prices — the same code the live engine runs. It defaults to the
+          strategy's <strong>own universe</strong> (a "today's risers" strategy replays the historical risers; a basket
+          tests its symbols) — override below to test something else. Honest limits: fills are modeled as price ± the
+          spread cost, and the free IEX feed sees a slice of the market. <strong>Past results predict nothing</strong> —
+          a backtest can only kill bad ideas cheaply, not promise good ones.
         </p>
         <form className="backtest-form" onSubmit={run}>
           {/* WHAT to test: strategy + symbols. Kept apart from the params row
@@ -177,7 +219,7 @@ export default function Backtest() {
             {/* a composite widget, not a single control — <label> would
                 re-dispatch clicks into it */}
             <div className="field">
-              <span className="field-cap">Symbols (none picked = your watchlist)</span>
+              <span className="field-cap">Symbols — override (none picked = your watchlist)</span>
               <SymbolPicker assetClass={assetClass} value={symbols} onChange={setSymbols} multi disabled={scannerReplay} />
               {baskets.length > 0 && (
                 <select
@@ -196,6 +238,12 @@ export default function Backtest() {
               )}
             </div>
           </div>
+          {universeLabel && (
+            <p className="hint">
+              Testing this strategy as configured — universe: <strong>{universeLabel}</strong>. Change the controls here
+              to override.
+            </p>
+          )}
           <label className="check">
             <input
               type="checkbox"

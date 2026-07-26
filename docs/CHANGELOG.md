@@ -3,6 +3,22 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Backtest defaults to the strategy's own universe (2026-07-26)
+
+The Backtest screen used to ignore the universe you set on the strategy — you had
+to re-declare it by hand (tick "Scanner replay" or pick symbols), and if you
+forgot, a "today's risers" strategy was silently tested against your *watchlist*
+instead. Now picking a strategy preselects the right universe automatically:
+
+- **Scanner (today's risers)** → scanner replay, with the riser count seeded from
+  the strategy's own top-N (crypto risers fall back to the watchlist, since
+  replay is stocks-only for now).
+- **Basket** → loads that basket's symbols. **Custom** → the strategy's own list.
+  **Watchlist** → the watchlist.
+
+A banner spells out what's being tested ("universe: today's risers"), and the
+manual controls remain as an explicit override for "what-if" runs.
+
 ## Scanner replay, stage 2: intraday bars — actually test an intraday strategy (2026-07-26)
 
 Daily-bar replay couldn't test an intraday strategy: with one price per day there's
