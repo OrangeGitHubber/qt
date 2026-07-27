@@ -105,7 +105,7 @@ export default function Watchlist() {
             </button>
           ))}
         </div>
-        <button className="small" onClick={() => setExtra((x) => !x)}>
+        <button className="small btn-ghost" onClick={() => setExtra((x) => !x)}>
           {extra ? "Hide extra columns" : "Show 30d / volatility / trend"}
         </button>
       </div>

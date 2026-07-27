@@ -86,7 +86,7 @@ function BasketCard({ basket, onChange }: { basket: Basket; onChange: () => void
             >
               Save name
             </button>
-            <button className="small" onClick={() => {
+            <button className="small btn-ghost" onClick={() => {
               setName(basket.name);
               setRenaming(false);
             }}>
@@ -94,7 +94,7 @@ function BasketCard({ basket, onChange }: { basket: Basket; onChange: () => void
             </button>
           </>
         ) : (
-          <button className="small" onClick={() => setRenaming(true)}>
+          <button className="small btn-ghost" onClick={() => setRenaming(true)}>
             Rename
           </button>
         )}

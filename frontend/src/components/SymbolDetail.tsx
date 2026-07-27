@@ -60,7 +60,7 @@ export default function SymbolDetail({
           <h2>
             {symbol} <span className="subtitle">{assetClass}</span>
           </h2>
-          <button className="small" onClick={onClose}>
+          <button className="small btn-ghost" onClick={onClose}>
             Close
           </button>
         </div>

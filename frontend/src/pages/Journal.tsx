@@ -72,7 +72,7 @@ export default function Journal() {
           <option value="shadow">Shadow</option>
           <option value="paper">Paper</option>
         </select>
-        <button className="small" onClick={refresh}>
+        <button className="small btn-ghost" onClick={refresh}>
           Refresh
         </button>
       </div>

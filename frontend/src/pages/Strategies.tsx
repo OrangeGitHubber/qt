@@ -471,7 +471,7 @@ function Editor({
       {error && <div className="error">{error}</div>}
       <div className="toolbar">
         <button>{s.id ? "Save (creates new config version)" : "Create strategy"}</button>
-        <button type="button" className="small" onClick={onCancel}>
+        <button type="button" className="small btn-ghost" onClick={onCancel}>
           Cancel
         </button>
       </div>

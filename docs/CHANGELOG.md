@@ -3,6 +3,16 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## App-wide button hierarchy (2026-07-27)
+
+Swept the whole app so button rows read by role instead of a wall of identical
+blue. Each panel/form keeps ONE filled primary (its main Save/Create/Run); every
+secondary or utility action — Cancel, Refresh, Edit filters, Rename, Send test,
+Sync now, Close, "show extra columns" — is now a quiet neutral outline;
+destructive actions (Delete/Remove) stay red; and the existing toggle families
+(mode switch, segmented filters, sort headers, range picker) were already
+consistent. Nothing changed behaviourally.
+
 ## Settings: distinct bar-cache action buttons (2026-07-27)
 
 The Run sweep / Sweep intraday / Re-rank / ⓘ buttons on the Historical bar cache

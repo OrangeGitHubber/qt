@@ -233,7 +233,7 @@ export default function Settings() {
           </dl>
         )}
         <button
-          className="small"
+          className="small btn-ghost"
           disabled={syncing}
           onClick={() => {
             setSyncing(true);
@@ -418,7 +418,7 @@ export default function Settings() {
             Save
           </button>
           <button
-            className="small"
+            className="small btn-ghost"
             onClick={() => testSlack().then(() => setNote("Test message sent — check Slack.")).catch((e: Error) => setNote(e.message))}
           >
             Send test

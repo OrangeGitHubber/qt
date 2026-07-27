@@ -219,10 +219,10 @@ export default function Scanner() {
     <>
       <div className="toolbar">
         <h2>Today's risers</h2>
-        <button className="small" onClick={() => setShowFilters((s) => !s)}>
+        <button className="small btn-ghost" onClick={() => setShowFilters((s) => !s)}>
           {showFilters ? "Hide filters" : "Edit filters"}
         </button>
-        <button className="small" onClick={refresh}>
+        <button className="small btn-ghost" onClick={refresh}>
           Refresh
         </button>
       </div>
