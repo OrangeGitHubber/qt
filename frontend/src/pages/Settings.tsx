@@ -142,15 +142,15 @@ export default function Settings() {
             <NumberField min={10} step="any" {...num("max_daily_loss_usd")} />
           </label>
           <label>
-            Max daily loss (% of account)
+            Max daily loss (% of account) <InfoTip k="daily_loss_limit" />
             <NumberField min={0.5} step={0.5} {...num("max_daily_loss_pct")} />
           </label>
           <label>
-            Max open positions (total)
+            Max open positions (total) <InfoTip k="max_positions" />
             <NumberField min={1} step={1} {...num("max_total_positions")} />
           </label>
           <label>
-            Max total exposure ($)
+            Max total exposure ($) <InfoTip k="max_exposure" />
             <NumberField min={10} step="any" {...num("max_total_exposure_usd")} />
           </label>
           <label>
@@ -158,7 +158,7 @@ export default function Settings() {
             <NumberField min={1} step={1} {...num("max_trades_per_day")} />
           </label>
           <label>
-            Cooldown after a loss (hours)
+            Cooldown after a loss (hours) <InfoTip k="cooldown" />
             <NumberField min={0} step="any" {...num("cooldown_hours_after_loss")} />
           </label>
           <label>

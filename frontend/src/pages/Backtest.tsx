@@ -275,7 +275,9 @@ export default function Backtest() {
           {/* HOW to test: numeric/timeframe params, all uniform height. */}
           <div className="filter-grid">
             <label>
-              <span className="field-cap">History (days)</span>
+              <span className="field-cap">
+                History (days) <InfoTip k="history_days" />
+              </span>
               <NumberField min={7} max={730} step={1} value={days} onChange={setDays} />
             </label>
             <label>
@@ -289,11 +291,15 @@ export default function Backtest() {
               </select>
             </label>
             <label>
-              <span className="field-cap">Starting cash ($)</span>
+              <span className="field-cap">
+                Starting cash ($) <InfoTip k="starting_cash" />
+              </span>
               <NumberField min={100} step="any" value={cash} onChange={setCash} />
             </label>
             <label>
-              <span className="field-cap">Spread cost per side (%)</span>
+              <span className="field-cap">
+                Spread cost per side (%) <InfoTip k="spread_cost" />
+              </span>
               <NumberField min={0} max={2} step={0.05} value={spread} onChange={setSpread} />
             </label>
           </div>
@@ -318,6 +324,14 @@ export default function Backtest() {
                 : result.symbols.join(", ")}{" "}
               · last {result.days} days ({result.timeframe})
             </h3>
+            <p className="hint">
+              <strong>Simulation, not real trading.</strong> QT trades paper-first (fake money, real prices), and even
+              paper — let alone live — will differ from this. Here fills are assumed at price ± the spread cost, but a
+              real marketable-limit order can miss on a fast or thin move, gap overnight, or halt; the free IEX feed
+              sees only a slice of volume; scanner replay uses today's tradable list (survivorship bias); and your own
+              orders, market impact, and slippage beyond the spread aren't modeled. Treat a good result as{" "}
+              <em>not yet disproven</em>, never proven.
+            </p>
             {result.scanner_replay &&
               result.replay_intraday === false &&
               strategy &&

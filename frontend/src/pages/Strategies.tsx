@@ -185,7 +185,7 @@ function Editor({
           </select>
         </label>
         <label>
-          Universe
+          Universe <InfoTip k="universe" />
           <select value={s.universe} onChange={(e) => setS({ ...s, universe: e.target.value as StrategyRow["universe"] })}>
             <option value="scanner">Scanner (today's risers)</option>
             <option value="watchlist">Watchlist only</option>
@@ -272,7 +272,7 @@ function Editor({
       <h4>Entry rules</h4>
       <div className="filter-grid">
         <label>
-          Min gain today (%)
+          Min gain today (%) <InfoTip k="min_day_gain" />
           <NumberField step="0.1" min="0" value={p.entry.min_day_gain_pct}
             onChange={(n) => setEntry("min_day_gain_pct", n)} />
         </label>
@@ -310,7 +310,7 @@ function Editor({
               }
             }}
           />
-          Limit entries to a time window (ET)
+          Limit entries to a time window (ET) <InfoTip k="entry_window" />
         </label>
         {p.entry.entry_window_start && p.entry.entry_window_end && (
           <>
@@ -353,7 +353,7 @@ function Editor({
             onChange={(n) => setExit("take_profit_pct", n)} />
         </label>
         <label>
-          Max holding time (hours, 0 = off)
+          Max holding time (hours, 0 = off) <InfoTip k="max_holding" />
           <NumberField step="1" min="0" value={p.exit.max_holding_hours}
             onChange={(n) => setExit("max_holding_hours", n)} />
         </label>
@@ -367,7 +367,7 @@ function Editor({
       <h4>Sizing & safety</h4>
       <div className="filter-grid">
         <label>
-          $ per trade
+          $ per trade <InfoTip k="sizing" />
           <NumberField step="any" min="10" value={s.sizing_usd!}
             onChange={(n) => setS({ ...s, sizing_usd: n })} />
         </label>
@@ -377,7 +377,7 @@ function Editor({
             onChange={(n) => setS({ ...s, sleeve_usd: n })} />
         </label>
         <label>
-          Max positions (this strategy)
+          Max positions (this strategy) <InfoTip k="max_positions" />
           <NumberField step="1" min="1" max="25" value={s.max_positions!}
             onChange={(n) => setS({ ...s, max_positions: n })} />
         </label>

@@ -175,4 +175,88 @@ export const GLOSSARY: Record<string, GlossaryEntry> = {
       "A self-imposed cap on how many new positions the bot may open per day, across all strategies. Overtrading — trading too often, paying the spread each time — is one of the most reliable ways retail traders lose.",
     url: "https://www.investopedia.com/terms/o/overtrading.asp",
   },
+  min_day_gain: {
+    term: "Min gain today (%)",
+    explain:
+      "How far a stock must be up versus yesterday's close to qualify — on the scanner, to appear on the list; on a strategy, to be eligible to enter. It's the core momentum trigger. Higher = only strong movers (fewer, more extended); lower = more candidates, including weak ones.",
+    url: "https://www.investopedia.com/terms/m/momentum.asp",
+  },
+  entry_window: {
+    term: "Entry window (ET)",
+    explain:
+      "Only OPEN new positions between these US-Eastern times; outside the window entries are skipped (exits and stops always still work). Use it to avoid the chaotic first minutes after the 09:30 open, or to stop opening trades late in the day. Turn it off to allow entries any time the market is open.",
+    url: "https://www.investopedia.com/terms/t/tradinghours.asp",
+  },
+  max_holding: {
+    term: "Max holding time (hours)",
+    explain:
+      "Force an exit once a position has been held this many hours, whatever the price — a time stop. Caps how long capital sits in one trade and bounds overnight/weekend exposure. 0 = off (hold until another exit rule fires).",
+    url: "https://www.investopedia.com/terms/h/holdingperiod.asp",
+  },
+  sizing: {
+    term: "$ per trade",
+    explain:
+      "Dollars committed to each new position. For stocks it's rounded down to whole shares, so the real amount is a little less. Bigger = fewer positions fit the sleeve and each trade moves the account more; smaller = more diversification but small wins barely register. Must be ≤ the sleeve budget.",
+    url: "https://www.investopedia.com/terms/p/positionsizing.asp",
+  },
+  max_positions: {
+    term: "Max positions",
+    explain:
+      "The most positions open at once. On a strategy this caps that strategy; the account-wide rail in Settings caps everything across strategies — the binding limit is whichever is smaller, and sleeve ÷ $-per-trade can cap it lower still. More = more diversification but more simultaneous risk.",
+    url: "https://www.investopedia.com/terms/d/diversification.asp",
+  },
+  max_exposure: {
+    term: "Max total exposure ($)",
+    explain:
+      "A hard ceiling on the total dollars invested across all open positions at once. QT also never lets total exposure exceed your account's cash (the no-leverage rail), so this only tightens things further. Lower = more cash held in reserve, smaller drawdowns.",
+    url: "https://www.investopedia.com/terms/m/marketexposure.asp",
+  },
+  cooldown: {
+    term: "Cooldown after a loss (hours)",
+    explain:
+      "After a losing exit in a symbol, don't re-buy that same symbol for this many hours. Stops the bot from immediately piling back into a name that just stopped it out and churning spread on a falling knife. 0 = no cooldown.",
+    url: "https://www.investopedia.com/terms/t/trading-psychology.asp",
+  },
+  universe: {
+    term: "Universe",
+    explain:
+      "Where a strategy's buy candidates come from: Scanner (today's risers), a Basket (your curated list, ranked top-N), Watchlist (your pinned symbols), or a Custom fixed list. The strategy's entry rules and the safety rails then decide what actually trades from that pool.",
+    url: "https://www.investopedia.com/terms/s/stockscreener.asp",
+  },
+  starting_cash: {
+    term: "Starting cash ($)",
+    explain:
+      "The simulated account the backtest begins with. Set it to SEVERAL times your $-per-trade, or the account can't hold multiple positions and one early loss can lock it out of further trades — making the result about the account size, not the strategy. When unsure, read 'return on money used', not account %.",
+    url: "https://www.investopedia.com/terms/b/backtesting.asp",
+  },
+  spread_cost: {
+    term: "Spread cost per side (%)",
+    explain:
+      "Models the bid-ask spread you pay on entry AND exit — subtracted from every fill, each side. Thin small-caps have wide spreads, so set this honestly (0.2–0.5%+); too low flatters the result. It does NOT model missed fills, gaps, or slippage beyond the spread — real fills can be worse.",
+    url: "https://www.investopedia.com/terms/b/bid-askspread.asp",
+  },
+  history_days: {
+    term: "History (days)",
+    explain:
+      "How far back the backtest replays. Longer covers more trades and market conditions (more reliable) but needs more cached data. A backtest is path-dependent, so the same strategy can show different trades over 50 vs 100 days — judge by per-trade stats across windows, not a single window's total return.",
+    url: "https://www.investopedia.com/terms/b/backtesting.asp",
+  },
+  scanner_price: {
+    term: "Price floor / cap",
+    explain:
+      "Only scan symbols in this per-share price range. The $ floor keeps illiquid penny/OTC pumps (hard to exit) off the list; a cap (0 = none) lets you focus on cheaper movers. Applied before ranking, so it shapes the whole shortlist.",
+    url: "https://www.investopedia.com/terms/p/pennystock.asp",
+  },
+  scanner_rows: {
+    term: "Rows per list",
+    explain:
+      "How many top movers to show per market (stocks and crypto each). It's also the count the live engine considers as candidates when a strategy's universe is the scanner. More = a longer shortlist that reaches weaker movers.",
+    url: "https://www.investopedia.com/terms/r/relativestrength.asp",
+  },
+  scanner_exclude: {
+    term: "Never trade these",
+    explain:
+      "Symbols the scanner always drops and the engine never buys, in both markets. Use it to permanently avoid names you don't want the bot touching — e.g. a stock you already hold elsewhere, or one that keeps whipsawing you.",
+    url: "https://www.investopedia.com/terms/e/exclusion.asp",
+  },
 };

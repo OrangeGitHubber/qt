@@ -194,19 +194,19 @@ export default function Scanner() {
         </legend>
         <div className="filter-grid">
           <label>
-            Min price ($)
+            Min price ($) <InfoTip k="scanner_price" />
             <NumberField min={0} step="any" value={f.min_price} onChange={(n) => setF("min_price", n)} />
           </label>
           <label>
-            Max price ($, 0 = none)
+            Max price ($, 0 = none) <InfoTip k="scanner_price" />
             <NumberField min={0} step="any" value={f.max_price} onChange={(n) => setF("max_price", n)} />
           </label>
           <label>
-            Min gain today (%)
+            Min gain today (%) <InfoTip k="min_day_gain" />
             <NumberField min={0} step="0.1" value={f.min_change_pct} onChange={(n) => setF("min_change_pct", n)} />
           </label>
           <label>
-            Min daily $ volume
+            Min daily $ volume <InfoTip k="dollar_volume" />
             <NumberField min={0} step="any" value={f.min_dollar_volume} onChange={(n) => setF("min_dollar_volume", n)} />
           </label>
         </div>
@@ -242,7 +242,7 @@ export default function Scanner() {
         <form className="card filters" onSubmit={submitFilters}>
           <div className="filter-grid">
             <label>
-              Rows per list
+              Rows per list <InfoTip k="scanner_rows" />
               <NumberField
                 min={1}
                 max={50}
@@ -252,7 +252,7 @@ export default function Scanner() {
               />
             </label>
             <div className="field">
-              Never trade these (both markets)
+              Never trade these (both markets) <InfoTip k="scanner_exclude" />
               <SymbolPicker
                 value={cfg.exclude_symbols}
                 onChange={(symbols) => setCfg({ ...cfg, exclude_symbols: symbols })}
