@@ -3,6 +3,20 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Fix: crypto scanner's volume floor was set ~40× too high (2026-07-27)
+
+Crypto scanner replay was only finding ~16 "riser" days across a whole year of
+cached data, and the live crypto scanner was surfacing far fewer movers than it
+should. The cause: the crypto scanner's minimum dollar-volume filter defaulted to
+**$1,000,000/day**, but Alpaca's crypto feed is thin — even the busiest pairs
+trade only ~$70k–$400k a day. So the floor rejected almost every day/pair
+regardless of how much they moved. Lowered the crypto default to **$25,000**,
+which matches the feed while still excluding essentially-untraded pairs. This
+fixes both scanner *replay* (backtests now see a full year of crypto movers
+instead of 16 days) and the *live* crypto scanner. Stocks are unchanged. If
+you'd set a custom crypto volume filter in Settings, check it's not still up at
+the old level.
+
 ## App logs now actually appear in the container logs (2026-07-27)
 
 The app never configured logging, so the container only showed uvicorn's access

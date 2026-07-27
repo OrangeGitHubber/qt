@@ -218,23 +218,10 @@ def reconstruct_movers(
     # Diagnostic: separates "how many days of bars are cached" from "how many days
     # produced a mover" — pinpoints whether a low mover-day count is a save gap or
     # a filter/ranking effect.
-    tname = getattr(mover_model, "__tablename__", mover_model)
     log.info(
         "reconstruct %s: %d distinct daily-bar days cached, %d rankable, %d stored with >=1 mover",
-        tname, len(all_days), len(days), stored_days,
+        getattr(mover_model, "__tablename__", mover_model), len(all_days), len(days), stored_days,
     )
-    # Diagnostic: on the oldest and newest rankable days, what do the actual
-    # change% and $-volume look like? Reveals whether the filter floor (esp. the
-    # $ volume floor on thin/older crypto data) is what's rejecting most days.
-    for label, sday in (("oldest", days[0]), ("newest", days[-1])) if days else ():
-        sq = quotes_by_day[sday]
-        dvols = sorted(round(q.volume * (q.vwap or q.close)) for q in sq if q.prev_close and q.close)
-        chgs = sorted(
-            round(((q.high if q.high is not None else q.close) / q.prev_close - 1) * 100, 2)
-            for q in sq if q.prev_close and q.close
-        )
-        log.info("reconstruct %s %s day %s: %d pairs; top $vols %s; top changes %s",
-                 tname, label, sday, len(sq), dvols[-3:], chgs[-3:])
     return len(days)
 
 

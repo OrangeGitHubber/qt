@@ -128,4 +128,4 @@ def test_crypto_sweep_maintains_a_populated_crypto_cache_every_calendar_day(monk
     assert called.get("ran") is True
     # Uses the crypto scanner's floors (1% change, $1M volume, no $1 price floor).
     assert called["min_change_pct"] == 1.0 and called["min_price"] == 0.0
-    assert called["min_dollar_volume"] == 1_000_000
+    assert called["min_dollar_volume"] == 25_000

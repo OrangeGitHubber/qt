@@ -29,7 +29,11 @@ CRYPTO_DEFAULTS: dict[str, Any] = {
     "min_price": 0.0,                 # coins can be sub-$1 (DOGE, etc.)
     "max_price": 0.0,
     "min_change_pct": 1.0,
-    "min_dollar_volume": 1_000_000,   # realistic for the free crypto feed
+    # Alpaca's crypto daily $-volumes are thin — even the busiest pairs run
+    # ~$70k–$400k/day, not millions. A $1M floor (the old default) rejected
+    # almost every day and left scanner replay with a handful of mover-days.
+    # $25k keeps a real liquidity guard while matching this feed's reality.
+    "min_dollar_volume": 25_000,
 }
 DEFAULT_CONFIG: dict[str, Any] = {
     "top_n": 10,                      # rows shown per asset class

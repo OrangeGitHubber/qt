@@ -180,7 +180,7 @@ def test_normalize_defaults_split_by_class():
     """A fresh config gives stocks and crypto their own (different) defaults."""
     cfg = scanner._normalize({})
     assert cfg["stocks"]["min_dollar_volume"] == 5_000_000
-    assert cfg["crypto"]["min_dollar_volume"] == 1_000_000
+    assert cfg["crypto"]["min_dollar_volume"] == 25_000
     assert cfg["stocks"]["min_price"] == 1.0
     assert cfg["crypto"]["min_price"] == 0.0
 
