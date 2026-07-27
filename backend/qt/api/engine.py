@@ -131,7 +131,7 @@ async def set_risk(body: RiskBody, session: Session = Depends(get_session)) -> d
         session.add(AuditLog(category="risk", message=f"⚠ LEVERAGE {state}"))
         from qt.services import notify
 
-        await notify.slack(session, f":warning: Leverage {state} in QT risk settings.")
+        await notify.slack_cat(session, "risk_changes", f":warning: Leverage {state} in QT risk settings.")
 
     set_setting(session, "risk_config", payload)
     session.add(AuditLog(category="risk", message="Risk configuration updated", detail=str(payload)))
@@ -173,6 +173,36 @@ async def test_slack(session: Session = Depends(get_session)) -> dict:
     if not ok:
         raise HTTPException(status_code=502, detail="Slack rejected the message (or no webhook is set).")
     return {"ok": True}
+
+
+@router.get("/slack/prefs")
+def get_slack_prefs(session: Session = Depends(get_session)) -> dict:
+    """The catalog of opt-in Slack message categories with each one's current
+    on/off state. The UI renders directly from this, so labels/descriptions live
+    in one place (the backend catalog)."""
+    from qt.services import notify
+
+    prefs = notify.notify_prefs(session)
+    return {
+        "configured": bool(get_setting(session, "slack_webhook_url")),
+        "categories": [
+            {"key": c["key"], "label": c["label"], "description": c["description"],
+             "enabled": prefs[c["key"]]}
+            for c in notify.NOTIFY_CATEGORIES
+        ],
+    }
+
+
+class SlackPrefsBody(BaseModel):
+    prefs: dict[str, bool]
+
+
+@router.put("/slack/prefs")
+def put_slack_prefs(body: SlackPrefsBody, session: Session = Depends(get_session)) -> dict:
+    """Persist a (partial) set of category toggles; unknown keys are ignored."""
+    from qt.services import notify
+
+    return {"prefs": notify.set_notify_prefs(session, body.prefs)}
 
 
 def _iso_utc(dt: datetime | None) -> str | None:

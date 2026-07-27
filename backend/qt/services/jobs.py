@@ -1,17 +1,37 @@
 """Scheduled background jobs (besides the engine tick itself)."""
 
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import func
 
 from qt.broker.factory import get_client
 from qt.db import session_scope
-from qt.models import Trade
+from qt.models import Strategy, Trade
 from qt.services import assets, notify, scoreboard
 from qt.services.engine import get_mode
 
 log = logging.getLogger("qt.jobs")
+
+
+def _strategy_breakdown_lines(session, mode: str, since: datetime) -> str:
+    """Per-strategy realized-P&L lines for a summary, newest strategies aside —
+    ranked best first. Returns '' when there are no closed trades in the window
+    (so the caller can append unconditionally)."""
+    rows = (
+        session.query(Trade.strategy_id, func.count(Trade.id), func.coalesce(func.sum(Trade.pnl), 0.0))
+        .filter(Trade.mode == mode, Trade.status == "closed", Trade.exit_at >= since)
+        .group_by(Trade.strategy_id)
+        .all()
+    )
+    if not rows:
+        return ""
+    names = dict(session.query(Strategy.id, Strategy.name).all())
+    rows = sorted(rows, key=lambda r: r[2], reverse=True)
+    return "".join(
+        f"\n• {names.get(sid, f'#{sid} (deleted)')}: ${pnl:,.2f} ({n} trade{'' if n == 1 else 's'})"
+        for sid, n, pnl in rows
+    )
 
 
 async def sync_assets(force: bool = False) -> None:
@@ -159,6 +179,8 @@ async def daily_summary() -> None:
             mode = get_mode(session)
             if mode == "off":
                 return
+            if not notify.category_enabled(session, "daily_summary"):
+                return  # user opted out of daily summaries
             client = get_client(session)
             # Skip the summary on days the market didn't trade (holidays). The
             # fixed 16:10 ET cron would otherwise post a meaningless "0 opened,
@@ -190,10 +212,47 @@ async def daily_summary() -> None:
                 .filter(Trade.mode == mode, Trade.status == "open")
                 .scalar()
             )
-            await notify.slack(
-                session,
+            text = (
                 f":newspaper: *QT daily summary* ({mode}): opened {opened}, closed {closed[0]} "
-                f"for *${closed[1]:,.2f}* realized P&L; {open_now} position(s) still open.",
+                f"for *${closed[1]:,.2f}* realized P&L; {open_now} position(s) still open."
             )
+            if notify.category_enabled(session, "strategy_breakdown"):
+                text += _strategy_breakdown_lines(session, mode, today)
+            await notify.slack(session, text)
     except Exception:
         log.exception("daily summary failed")
+
+
+async def weekly_summary() -> None:
+    """A once-a-week recap of the last 7 days: trades closed, realized P&L, and
+    win rate (plus a per-strategy breakdown if that's enabled). Opt-in — off by
+    default. Not gated on the trading calendar: it's a rolling 7-day window and
+    crypto trades every day, so it's meaningful whenever it's scheduled."""
+    try:
+        with session_scope() as session:
+            mode = get_mode(session)
+            if mode == "off":
+                return
+            if not notify.category_enabled(session, "weekly_summary"):
+                return
+            since = datetime.now(timezone.utc) - timedelta(days=7)
+            n, pnl = (
+                session.query(func.count(Trade.id), func.coalesce(func.sum(Trade.pnl), 0.0))
+                .filter(Trade.mode == mode, Trade.status == "closed", Trade.exit_at >= since)
+                .one()
+            )
+            wins = (
+                session.query(func.count(Trade.id))
+                .filter(Trade.mode == mode, Trade.status == "closed", Trade.exit_at >= since, Trade.pnl > 0)
+                .scalar()
+            )
+            win_rate = f"{round(wins / n * 100)}%" if n else "—"
+            text = (
+                f":calendar: *QT weekly summary* ({mode}): {n} trade(s) closed in the last 7 days "
+                f"for *${pnl:,.2f}* realized P&L · win rate {win_rate}."
+            )
+            if notify.category_enabled(session, "strategy_breakdown"):
+                text += _strategy_breakdown_lines(session, mode, since)
+            await notify.slack(session, text)
+    except Exception:
+        log.exception("weekly summary failed")

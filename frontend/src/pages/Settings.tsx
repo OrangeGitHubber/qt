@@ -9,6 +9,7 @@ import {
   getAssetStatus,
   getBarCacheStatus,
   getEngine,
+  getSlackPrefs,
   removeAllowlist,
   RiskConfig,
   runBarSweep,
@@ -19,6 +20,8 @@ import {
   setRegimeEnabled,
   setRisk,
   setSlack,
+  setSlackPrefs,
+  SlackPrefs,
   syncAssets,
   testSlack,
 } from "../api";
@@ -55,6 +58,7 @@ export default function Settings() {
   const [allow, setAllow] = useState<{ emails: string[]; owner: string } | null>(null);
   const [newEmail, setNewEmail] = useState("");
   const [slackUrl, setSlackUrl] = useState("");
+  const [slackPrefs, setSlackPrefsState] = useState<SlackPrefs | null>(null);
   const [leverageConfirm, setLeverageConfirm] = useState("");
   const [assetStatus, setAssetStatus] = useState<AssetStatus | null>(null);
   const [syncing, setSyncing] = useState(false);
@@ -78,6 +82,7 @@ export default function Settings() {
     getAllowlist().then(setAllow).catch(() => setAllow(null));
     getAssetStatus().then(setAssetStatus).catch(() => setAssetStatus(null));
     getBarCacheStatus().then(setBars).catch(() => setBars(null));
+    getSlackPrefs().then(setSlackPrefsState).catch(() => setSlackPrefsState(null));
   }, []);
 
   useEffect(refresh, [refresh]);
@@ -158,6 +163,22 @@ export default function Settings() {
       await setRegimeEnabled(enabled);
     } catch (err) {
       setEngine((prev) => (prev ? { ...prev, regime_filter_enabled: !enabled } : prev));
+      setNote((err as Error).message);
+    }
+  }
+
+  // Slack message-category toggles: persist instantly, optimistic with revert.
+  async function toggleSlackCat(key: string, enabled: boolean) {
+    const flip = (want: boolean) =>
+      setSlackPrefsState((p) =>
+        p ? { ...p, categories: p.categories.map((c) => (c.key === key ? { ...c, enabled: want } : c)) } : p,
+      );
+    flip(enabled);
+    setNote(null);
+    try {
+      await setSlackPrefs({ [key]: enabled });
+    } catch (err) {
+      flip(!enabled);
       setNote((err as Error).message);
     }
   }
@@ -502,6 +523,25 @@ export default function Settings() {
             Send test
           </button>
         </div>
+
+        {slackPrefs && (
+          <div className="notify-prefs">
+            <h4>What to send</h4>
+            <p className="hint">
+              Pick which messages QT posts. Changes save immediately.
+              {!slackPrefs.configured && " Add a webhook above for these to actually send."}
+            </p>
+            {slackPrefs.categories.map((c) => (
+              <label key={c.key} className="notify-pref">
+                <input type="checkbox" checked={c.enabled} onChange={(e) => toggleSlackCat(c.key, e.target.checked)} />
+                <span className="notify-pref-text">
+                  <span className="notify-pref-label">{c.label}</span>
+                  <span className="hint">{c.description}</span>
+                </span>
+              </label>
+            ))}
+          </div>
+        )}
       </div>
 
       <div className="card">

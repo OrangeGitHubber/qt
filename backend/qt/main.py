@@ -43,6 +43,7 @@ def _start_scheduler():
         reconcile_open_trades,
         snapshot_benchmarks,
         sync_assets,
+        weekly_summary,
     )
 
     scheduler = AsyncIOScheduler(timezone="UTC")
@@ -58,6 +59,12 @@ def _start_scheduler():
     scheduler.add_job(
         daily_summary,
         CronTrigger(day_of_week="mon-fri", hour=16, minute=10, timezone="America/New_York"),
+    )
+    # Weekly recap: Sunday 17:00 ET. Opt-in (off by default); the job itself
+    # checks the user's Slack preference, so scheduling it always is harmless.
+    scheduler.add_job(
+        weekly_summary,
+        CronTrigger(day_of_week="sun", hour=17, minute=0, timezone="America/New_York"),
     )
     # Symbol directory: shortly after boot, then hourly. Each run is a no-op
     # unless the directory is empty or >24h old, so this is really "refresh
@@ -128,8 +135,9 @@ async def _startup_checks() -> None:
                 "volume mapping (host path -> /data). See docs/data-persistence.md.",
                 state["data_persistent_reason"],
             )
-            await notify.slack(
+            await notify.slack_cat(
                 session,
+                "system_alerts",
                 ":rotating_light: *QT data directory is NOT persistent* — "
                 f"{state['data_persistent_reason']}. Configuration, API keys and "
                 "trade history will be lost the next time the container updates. "
@@ -146,8 +154,9 @@ async def _startup_checks() -> None:
                 "Alpaca keys.",
                 data_dir() / "instance.key",
             )
-            await notify.slack(
+            await notify.slack_cat(
                 session,
+                "system_alerts",
                 ":rotating_light: *QT cannot decrypt its secrets* — the database "
                 "has encrypted API keys but `instance.key` is missing. Restore "
                 "the key file or re-run setup.",

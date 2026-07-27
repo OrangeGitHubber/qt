@@ -189,6 +189,20 @@ export const setRegimeEnabled = (enabled: boolean) =>
 export const setSlack = (url: string) =>
   fetch("/api/engine/slack", { ...json({ url }), method: "PUT" }).then((r) => handle(r));
 export const testSlack = () => fetch("/api/engine/slack/test", { method: "POST" }).then((r) => handle(r));
+
+export interface SlackPrefCategory {
+  key: string;
+  label: string;
+  description: string;
+  enabled: boolean;
+}
+export interface SlackPrefs {
+  configured: boolean;
+  categories: SlackPrefCategory[];
+}
+export const getSlackPrefs = () => fetch("/api/engine/slack/prefs").then((r) => handle<SlackPrefs>(r));
+export const setSlackPrefs = (prefs: Record<string, boolean>) =>
+  fetch("/api/engine/slack/prefs", { ...json({ prefs }), method: "PUT" }).then((r) => handle<{ prefs: Record<string, boolean> }>(r));
 export const getJournal = (mode?: string, status?: string, assetClass?: string) => {
   const qs = new URLSearchParams();
   if (mode) qs.set("mode", mode);

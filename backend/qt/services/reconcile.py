@@ -257,8 +257,9 @@ async def apply_reconciliation(session, client, mode: str) -> list[Action]:
                 message=f"[{mode}] reconciled CLOSE {trade.qty:g} {trade.symbol} @ ~${price:,.4f}",
                 detail=action.reason,
             ))
-            await notify.slack(
+            await notify.slack_cat(
                 session,
+                "reconciliation",
                 f":arrows_counterclockwise: *{mode.upper()}* reconciled {trade.symbol}: "
                 f"{action.reason} (booked exit ~${price:,.4f}).",
             )
@@ -295,8 +296,9 @@ async def apply_reconciliation(session, client, mode: str) -> list[Action]:
                 message=f"[{mode}] ORPHAN position at broker: {action.qty:g} {action.symbol}",
                 detail=action.reason,
             ))
-            await notify.slack(
+            await notify.slack_cat(
                 session,
+                "reconciliation",
                 f":warning: *{mode.upper()}* Alpaca holds {action.qty:g} {action.symbol} that QT "
                 "has no open trade for. Not auto-adopting — check manually.",
             )

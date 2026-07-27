@@ -3,6 +3,27 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Choose which Slack messages QT sends (2026-07-27)
+
+Slack was all-or-nothing: set a webhook and you got everything. The Slack
+settings card now has a **"What to send"** list where you opt each message type
+in or out, saved instantly. The categories:
+
+- **Trade confirmations** — every buy/sell as it happens (on by default)
+- **Daily summary** — end-of-day trades + realized P&L (on)
+- **Weekly summary** — a Sunday recap of the week's trades, P&L and win rate (off — new)
+- **Per-strategy P&L breakdown** — adds a per-strategy split to the daily/weekly summaries (off — new)
+- **Reconciliation alerts** — broker-sync mismatches, e.g. an untracked position (on)
+- **Engine health warnings** — watchdog alert if the engine stalls (on)
+- **Risk & leverage changes** — when leverage is toggled (on)
+- **Critical system alerts** — data-persistence / secret-decryption problems (on)
+
+Every existing message is now gated by its category, and two brand-new opt-in
+reports were added: a **weekly summary** (Sunday 17:00 ET) and a **per-strategy
+breakdown** that enriches the daily and weekly recaps so you can see which
+strategy drove the result. The manual "Send test" button always sends,
+regardless of these toggles.
+
 ## Slack trade alerts: ticker now unmistakable (2026-07-27)
 
 A buy alert like "bought 27 DAMD @ $1.85 — up 17.19% today, above VWAP…" could

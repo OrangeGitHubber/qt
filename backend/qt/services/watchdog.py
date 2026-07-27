@@ -109,8 +109,9 @@ async def check(threshold_minutes: int = DEFAULT_STALE_MINUTES) -> None:
             ):
                 ago = "never" if last is None else f"{(now - last).total_seconds() / 60:.0f} min ago"
                 log.error("watchdog: engine heartbeat stale (last tick %s)", ago)
-                await notify.slack(
+                await notify.slack_cat(
                     session,
+                    "engine_health",
                     f":rotating_light: *QT engine may be stalled* — last successful tick {ago}, "
                     f"but the market is open and the engine is in {mode.upper()} mode. Check the container.",
                 )

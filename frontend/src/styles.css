@@ -1515,3 +1515,44 @@ button.linklike {
     grid-template-columns: 1fr;
   }
 }
+
+/* Slack message-category opt-in list. */
+.notify-prefs {
+  margin-top: 1.1rem;
+  padding-top: 0.9rem;
+  border-top: 1px solid var(--border);
+}
+.notify-prefs h4 {
+  margin: 0 0 0.25rem;
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+.notify-pref {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6rem;
+  padding: 0.55rem 0;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+}
+.notify-pref:last-child {
+  border-bottom: none;
+}
+.notify-pref input[type="checkbox"] {
+  margin-top: 0.2rem;
+  flex: none;
+  width: auto; /* override the global full-width input rule so it stays a box */
+}
+.notify-pref-text {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+.notify-pref-label {
+  font-weight: 600;
+}
+.notify-pref-text .hint {
+  margin: 0;
+}
