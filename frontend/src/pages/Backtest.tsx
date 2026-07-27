@@ -111,10 +111,15 @@ export default function Backtest() {
     const strat = strategies.find((s) => s.id === strategyId);
     if (!strat) return;
     setBasketNote(null);
+    // Default the starting cash to the strategy's own sleeve: a single-strategy
+    // backtest can never deploy more than its sleeve, so a fixed $5000 against a
+    // $1000 sleeve would leave most of the account idle and dilute the account-%
+    // return. Clamp to the field's ≥$100 minimum. Still editable below.
+    setCash(Math.max(strat.sleeve_usd || 5000, 100));
     if (strat.universe === "scanner") {
-      // Scanner replay is stocks-only; a crypto "risers" strategy can't replay
-      // yet, so it falls back to the watchlist.
-      setScannerReplay(strat.asset_class === "stock");
+      // Scanner replay works for both stocks (ET days) and crypto (UTC days) —
+      // each reads its own cache, so a "today's risers" strategy replays either.
+      setScannerReplay(true);
       setSymbols([]);
       setReplayTopN(strat.top_n || 10);
     } else if (strat.universe === "basket") {
@@ -133,10 +138,7 @@ export default function Backtest() {
 
   const universeLabel = strategy
     ? {
-        scanner:
-          strategy.asset_class === "stock"
-            ? "today's risers (scanner replay)"
-            : "today's risers — crypto can't replay yet, using your watchlist",
+        scanner: "today's risers (scanner replay)",
         basket: "its basket",
         custom: "its own symbol list",
         watchlist: "your watchlist",
@@ -248,7 +250,6 @@ export default function Backtest() {
             <input
               type="checkbox"
               checked={scannerReplay}
-              disabled={assetClass === "crypto"}
               onChange={(e) => setScannerReplay(e.target.checked)}
             />
             Scanner replay — test against the historical <strong>top risers each day</strong> (not a fixed list){" "}
@@ -268,7 +269,7 @@ export default function Backtest() {
                 instantly — no re-sweep. Needs a completed sweep first (Settings → Historical bar cache). If you've also
                 run an <strong>intraday sweep</strong>, replay uses 15-minute bars so intraday exits
                 (flatten-before-close, VWAP, the entry window) behave for real; otherwise it falls back to daily bars,
-                which can't simulate those. Stocks only.
+                which can't simulate those. Works for stock and crypto strategies — each replays off its own cache.
               </p>
             </>
           )}
@@ -339,9 +340,9 @@ export default function Backtest() {
                 <p className="hint warn">
                   ⚠ <strong>This ran on daily bars, not intraday.</strong> Your strategy trades intraday
                   (flatten-before-close / no overnight hold), which a daily-bar replay can't simulate — positions look
-                  like they exit the next day and stops can gap overnight instead of firing intraday. Run an{" "}
-                  <strong>intraday sweep</strong> (Settings → Historical bar cache) so replay uses 15-minute bars, then
-                  re-run for a true test.
+                  like they exit the next day and stops can gap overnight instead of firing intraday. Run a{" "}
+                  <strong>{strategy.asset_class === "crypto" ? "crypto intraday sweep" : "intraday sweep"}</strong>{" "}
+                  (Settings → Historical bar cache) so replay uses 15-minute bars, then re-run for a true test.
                 </p>
               )}
             {result.trades === 0 && result.diagnosis?.summary && (

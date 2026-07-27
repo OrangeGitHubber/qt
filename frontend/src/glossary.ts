@@ -226,7 +226,7 @@ export const GLOSSARY: Record<string, GlossaryEntry> = {
   starting_cash: {
     term: "Starting cash ($)",
     explain:
-      "The simulated account the backtest begins with. Set it to SEVERAL times your $-per-trade, or the account can't hold multiple positions and one early loss can lock it out of further trades — making the result about the account size, not the strategy. When unsure, read 'return on money used', not account %.",
+      "The simulated account the backtest begins with. It defaults to the selected strategy's SLEEVE (the most that one strategy is ever allowed to deploy) — a single-strategy backtest can never put more than its sleeve to work, so a bigger account would just sit idle and dilute the account-% return. Give it room: several times your $-per-trade, or the account can't hold multiple positions and one early loss can lock it out of further trades. When unsure, read 'return on money used', not account %.",
     url: "https://www.investopedia.com/terms/b/backtesting.asp",
   },
   spread_cost: {

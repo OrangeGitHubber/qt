@@ -13,6 +13,8 @@ import {
   runBarSweep,
   runBarReconstruct,
   runIntradaySweep,
+  runCryptoSweep,
+  runCryptoIntradaySweep,
   setRegimeEnabled,
   setRisk,
   setSlack,
@@ -80,6 +82,26 @@ export default function Settings() {
     try {
       await runIntradaySweep();
       setBars(await getBarCacheStatus()); // flips running=true, starts the poll
+    } catch (e) {
+      setNote((e as Error).message);
+    }
+  }
+
+  async function runCrypto() {
+    setNote(null);
+    try {
+      await runCryptoSweep();
+      setBars(await getBarCacheStatus()); // flips running=true, starts the poll
+    } catch (e) {
+      setNote((e as Error).message);
+    }
+  }
+
+  async function runCryptoIntraday() {
+    setNote(null);
+    try {
+      await runCryptoIntradaySweep();
+      setBars(await getBarCacheStatus());
     } catch (e) {
       setNote((e as Error).message);
     }
@@ -295,7 +317,9 @@ export default function Settings() {
             <dt>Status</dt>
             <dd>
               {bars.running
-                ? { intraday: "intraday sweep…", reconstruct: "re-ranking…" }[bars.kind] ?? "daily sweep…"
+                ? `${bars.market === "crypto" ? "crypto " : ""}${
+                    { intraday: "intraday sweep…", reconstruct: "re-ranking…" }[bars.kind] ?? "daily sweep…"
+                  }`
                 : "idle"}
               {bars.last_error && <span className="error"> — {bars.last_error}</span>}
             </dd>
@@ -331,6 +355,25 @@ export default function Settings() {
                 </dd>
                 <dt>Data through</dt>
                 <dd>{bars.cache?.latest_day ?? "—"}</dd>
+                {/* Crypto cache — a separate, independently-swept cache. Only
+                    surfaced once it holds something, so a stocks-only user isn't
+                    shown empty crypto rows. */}
+                {(bars.crypto_cache?.daily_symbols ?? 0) > 0 && (
+                  <>
+                    <dt>Crypto pairs cached</dt>
+                    <dd>{(bars.crypto_cache?.daily_symbols ?? 0).toLocaleString()}</dd>
+                    <dt>Crypto days of movers</dt>
+                    <dd>{(bars.crypto_cache?.movers_days ?? 0).toLocaleString()}</dd>
+                    <dt>Crypto intraday bars</dt>
+                    <dd>
+                      {bars.crypto_has_intraday
+                        ? `${(bars.crypto_cache?.intraday_bars ?? 0).toLocaleString()} cached — intraday replay ready`
+                        : "none yet — replay uses daily bars"}
+                    </dd>
+                    <dt>Crypto data through</dt>
+                    <dd>{bars.crypto_cache?.latest_day ?? "—"}</dd>
+                  </>
+                )}
               </>
             )}
           </dl>
@@ -367,6 +410,29 @@ export default function Settings() {
             onClick={() => setShowFresh((v) => !v)}
           >
             ⓘ
+          </button>
+        </div>
+        <p className="hint">
+          <strong>Crypto</strong> replays off its own separate cache. The crypto universe is tiny (~20–40 USD pairs), so
+          one button sweeps <em>every</em> pair's daily bars and ranks each day's risers in one step; then sweep crypto
+          intraday for 15-minute bars. Crypto is 24/7, so its "day" is the UTC calendar day.
+        </p>
+        <div className="card-actions">
+          <button
+            className="small"
+            disabled={bars?.running}
+            onClick={runCrypto}
+            title="Download daily bars for every crypto USD pair, then rank each day's risers"
+          >
+            {bars?.running ? "Sweeping…" : "⭳ Run crypto sweep"}
+          </button>
+          <button
+            className="small btn-accent-ghost"
+            disabled={bars?.running}
+            onClick={runCryptoIntraday}
+            title="Pull 15-minute bars for the ranked crypto movers (enables intraday crypto replay)"
+          >
+            ⭳ Sweep crypto intraday
           </button>
         </div>
         {showFresh &&

@@ -199,9 +199,18 @@ export const getJournal = (mode?: string, status?: string, assetClass?: string) 
 };
 export const getScoreboard = () => fetch("/api/engine/scoreboard").then((r) => handle<Scoreboard>(r));
 
+export interface BarCacheStats {
+  daily_symbols: number;
+  movers_days: number;
+  intraday_bars: number;
+  latest_day: string | null;
+  freshest_mover: { symbol: string; day: string; change_pct: number; has_intraday: boolean } | null;
+}
+
 export interface BarCacheStatus {
   running: boolean;
   kind: string; // daily | reconstruct | intraday
+  market: string; // stock | crypto — which cache the current/last run touched
   phase: string; // reconstruct sub-phase: "loading bars" | "ranking days"
   started_at: string | null;
   last_run_at: string | null;
@@ -212,16 +221,12 @@ export interface BarCacheStatus {
   days_reconstructed: number;
   intraday_bars: number;
   has_intraday: boolean;
+  crypto_has_intraday: boolean;
   errors: number;
   last_error: string | null;
   // Persisted cache totals (from the DB) — survive redeploys; null while a sweep runs.
-  cache: {
-    daily_symbols: number;
-    movers_days: number;
-    intraday_bars: number;
-    latest_day: string | null;
-    freshest_mover: { symbol: string; day: string; change_pct: number; has_intraday: boolean } | null;
-  } | null;
+  cache: BarCacheStats | null;
+  crypto_cache: BarCacheStats | null;
   backend: { kind: string; scheme: string; host: string | null };
 }
 
@@ -234,6 +239,11 @@ export const runBarReconstruct = () =>
 // Pull intraday bars for the movers — enables intraday scanner replay.
 export const runIntradaySweep = () =>
   fetch("/api/barcache/sweep-intraday", { method: "POST" }).then((r) => handle(r));
+// Crypto: sweep every USD pair's daily bars + rank movers, then its 15-min bars.
+export const runCryptoSweep = (days?: number) =>
+  fetch(`/api/barcache/sweep-crypto${days ? `?days=${days}` : ""}`, { method: "POST" }).then((r) => handle(r));
+export const runCryptoIntradaySweep = () =>
+  fetch("/api/barcache/sweep-crypto-intraday", { method: "POST" }).then((r) => handle(r));
 
 export interface AssetRow {
   symbol: string;

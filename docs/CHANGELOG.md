@@ -3,6 +3,39 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Crypto scanner-replay backtesting (2026-07-27)
+
+A crypto "today's risers" strategy can now be backtested with scanner replay,
+just like stocks — previously the historical bar cache and scanner replay were
+stocks-only, so a crypto risers strategy worked live but couldn't be replayed.
+
+The crypto cache lives in its OWN separate tables next to the stock cache, so
+adding it never touches (or risks re-downloading) the large stock cache. The
+crypto universe is tiny — the ~20–40 tradable USD pairs — so Settings gets one
+"Run crypto sweep" button that pulls every pair's daily bars AND ranks each
+day's risers in a single step, plus "Sweep crypto intraday" for 15-minute bars.
+The crypto cache stats show up on the same panel once you've swept something.
+
+The important subtlety: crypto trades 24/7 and its bars are aligned to the UTC
+calendar day, not the US market session. So the crypto replay buckets every day
+— movers, eligibility, and the equity curve — by the UTC day, while stocks stay
+on the ET session day exactly as before. The nightly upkeep job also keeps a
+crypto cache current if you've built one (it never bootstraps one on its own,
+the same rule as stocks).
+
+On the Backtest page, a crypto scanner strategy now defaults to scanner replay
+(no more "crypto can't replay yet, using your watchlist" fallback), and the
+daily-vs-intraday warning and paper-trading caveats apply to crypto too.
+
+## Backtest defaults starting cash to the strategy's sleeve (2026-07-27)
+
+The backtest's "Starting cash" now defaults to the selected strategy's sleeve
+(the most that one strategy is ever allowed to deploy) instead of a fixed
+$5,000. A single-strategy backtest can never put more than its sleeve to work,
+so a fixed $5,000 against a $1,000 sleeve left most of the account idle and made
+the account-% return look worse than the strategy actually was. It's still fully
+editable — just a smarter starting point.
+
 ## Hide the regime-filter toggle on crypto strategies (2026-07-27)
 
 The "Ignore regime filter" checkbox only affects stock strategies — the regime
