@@ -28,6 +28,27 @@ from qt.db import init_db
 log = logging.getLogger("qt")
 
 
+def _configure_logging() -> None:
+    """Send the app's own ``qt.*`` logs to stdout so they show up in the
+    container logs. Without this, only uvicorn's access lines appear and every
+    sweep/reconcile/persistence log — including errors — is silently dropped.
+    Level is overridable via QT_LOG_LEVEL (default INFO)."""
+    level = os.environ.get("QT_LOG_LEVEL", "INFO").upper()
+    qt_log = logging.getLogger("qt")
+    qt_log.setLevel(level)
+    if not any(getattr(h, "_qt_stdout", False) for h in qt_log.handlers):
+        handler = logging.StreamHandler()
+        handler._qt_stdout = True  # type: ignore[attr-defined]  # marker so we don't double-add
+        handler.setFormatter(
+            logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s", "%Y-%m-%d %H:%M:%S")
+        )
+        qt_log.addHandler(handler)
+    qt_log.propagate = False  # our own handler emits it; don't also bubble to root
+
+
+_configure_logging()
+
+
 def _start_scheduler():
     from apscheduler.schedulers.asyncio import AsyncIOScheduler
     from apscheduler.triggers.cron import CronTrigger

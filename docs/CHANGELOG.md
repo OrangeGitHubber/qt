@@ -3,6 +3,17 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## App logs now actually appear in the container logs (2026-07-27)
+
+The app never configured logging, so the container only showed uvicorn's access
+lines (`GET/POST … 200`) — every one of QT's own log messages (sweep progress,
+reconciliation, persistence warnings, and crucially *errors*) was silently
+dropped. QT now sends its `qt.*` logs to stdout at INFO by default (override with
+the `QT_LOG_LEVEL` env var), so you can actually see what it's doing and diagnose
+issues from the logs. Also added a diagnostic line to the crypto daily sweep that
+reports how many bars Alpaca returned and over what date range — to track down
+why crypto history was only caching ~16 days.
+
 ## Persistence is now enforced: no trading on an ephemeral journal (2026-07-27)
 
 The app already *detected* a non-persistent `/data` and warned loudly (red

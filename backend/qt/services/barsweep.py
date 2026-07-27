@@ -392,6 +392,17 @@ async def sweep_crypto_daily_bars(
             if progress:
                 progress(idx, len(batches), symbols_saved)
             continue
+        # Diagnostic: how much history did Alpaca actually return? If this shows
+        # far fewer bars than the requested window, the cap is at the fetch, not
+        # our downstream save/reconstruct.
+        sample = next(((s, b) for s, b in data.items() if b), None)
+        if sample:
+            _s, _b = sample
+            log.info(
+                "crypto daily fetch batch %s/%s: %s returned %d bars, %s … %s (requested start %s)",
+                idx, len(batches), _s, len(_b), (_b[0].get("t") or "?")[:10],
+                (_b[-1].get("t") or "?")[:10], start_iso[:10],
+            )
         for symbol, bars in data.items():
             bars = [b for b in bars if (b.get("t") or "")[:10] != today_utc]
             if not bars:
