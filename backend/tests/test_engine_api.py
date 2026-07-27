@@ -102,3 +102,48 @@ def test_slack_url_validation(client):
     assert client.put("/api/engine/slack", json={"url": "https://evil.example.com/x"}).status_code == 422
     assert client.put("/api/engine/slack", json={"url": "https://hooks.slack.com/services/T00/B00/xyz"}).status_code == 200
     assert client.put("/api/engine/slack", json={"url": ""}).status_code == 200
+
+
+def test_strategy_pnl_breaks_down_realized_by_strategy(client):
+    from datetime import datetime, timezone
+
+    from qt.models import Strategy, Trade
+
+    with session_scope() as s:
+        set_setting(s, "engine_mode", "paper")
+        s.query(Trade).delete()
+        s.query(Strategy).delete()
+        a = Strategy(name="Alpha", asset_class="stock", params="{}")
+        b = Strategy(name="Beta", asset_class="stock", params="{}")
+        s.add_all([a, b])
+        s.flush()
+        now = datetime.now(timezone.utc)
+
+        def closed(sid, sym, pnl):
+            return Trade(strategy_id=sid, mode="paper", symbol=sym, asset_class="stock",
+                         status="closed", qty=1, notional=100, pnl=pnl, exit_at=now)
+
+        s.add_all([
+            closed(a.id, "X", 30), closed(a.id, "Y", 20), closed(a.id, "Z", -10),  # Alpha: +40, 2/3 win
+            closed(b.id, "W", -25),                                                  # Beta: -25
+            Trade(strategy_id=b.id, mode="paper", symbol="V", asset_class="stock", status="open", qty=1, notional=100),
+            closed(a.id, "S", 999),  # will be overwritten to shadow below
+        ])
+        s.flush()
+        # A shadow-mode trade must be ignored (different mode than active "paper").
+        s.query(Trade).filter(Trade.symbol == "S").update({"mode": "shadow"})
+        s.commit()
+
+    body = client.get("/api/engine/strategy-pnl").json()
+    by = {r["name"]: r for r in body["strategies"]}
+    assert body["mode"] == "paper"
+    assert by["Alpha"]["realized_pnl"] == 40.0 and by["Alpha"]["trades"] == 3 and by["Alpha"]["wins"] == 2
+    assert by["Alpha"]["win_rate"] == round(2 / 3, 4)
+    assert by["Beta"]["realized_pnl"] == -25.0 and by["Beta"]["open_positions"] == 1
+    assert body["realized_total"] == 15.0            # 40 + (-25); the shadow +999 is excluded
+    assert body["strategies"][0]["name"] == "Alpha"  # sorted best-first
+
+    with session_scope() as s:
+        s.query(Trade).delete()
+        s.query(Strategy).delete()
+        set_setting(s, "engine_mode", "off")

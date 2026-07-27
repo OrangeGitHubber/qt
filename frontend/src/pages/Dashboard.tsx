@@ -21,6 +21,25 @@ function heartbeat(iso: string | null): { label: string; stale: boolean } {
   return { label, stale: ageMs > 5 * 60_000 };
 }
 
+// Signed dollars: "+$12.30" / "−$4.50" with a real minus sign.
+function signed(n: number): string {
+  return `${n >= 0 ? "+" : "−"}$${Math.abs(n).toFixed(2)}`;
+}
+
+type StrategyPnl = {
+  mode: string;
+  realized_total: number;
+  strategies: {
+    strategy_id: number;
+    name: string;
+    realized_pnl: number;
+    trades: number;
+    wins: number;
+    win_rate: number | null;
+    open_positions: number;
+  }[];
+};
+
 export default function Dashboard({ status }: { status: StatusResponse; onRefresh?: () => void }) {
   const { broker, market, error } = status;
   const hb = heartbeat(status.last_tick_at);
@@ -73,7 +92,72 @@ export default function Dashboard({ status }: { status: StatusResponse; onRefres
         <EngineCard />
       </div>
       <ScoreboardCard />
+      <StrategyContributionsCard />
     </>
+  );
+}
+
+function StrategyContributionsCard() {
+  const [data, setData] = useState<StrategyPnl | null>(null);
+
+  useEffect(() => {
+    fetch("/api/engine/strategy-pnl")
+      .then((r) => (r.ok ? r.json() : Promise.reject()))
+      .then(setData)
+      .catch(() => setData(null));
+  }, []);
+
+  if (!data) return null;
+  return (
+    <div className="card">
+      <h3>
+        Strategy contributions <span className="hint">(realized · {data.mode} mode)</span>
+      </h3>
+      <p className="hint">
+        Each strategy's realized (locked-in) profit or loss — the exact split behind the single scoreboard line, and it
+        sums to the account's realized total. Open positions are shown as a count, not yet marked to market.
+      </p>
+      {data.strategies.length === 0 ? (
+        <p className="hint">
+          No {data.mode}-mode trades yet — each strategy's contribution appears here once it closes a trade.
+        </p>
+      ) : (
+        <table>
+          <thead>
+            <tr>
+              <th>Strategy</th>
+              <th>Realized P&amp;L</th>
+              <th>Trades</th>
+              <th>Win rate</th>
+              <th>Open</th>
+            </tr>
+          </thead>
+          <tbody>
+            {data.strategies.map((s) => (
+              <tr key={s.strategy_id}>
+                <td className="sym">{s.name}</td>
+                <td className={s.realized_pnl >= 0 ? "up" : "down"}>{signed(s.realized_pnl)}</td>
+                <td>{s.trades}</td>
+                <td>{s.win_rate == null ? "—" : `${Math.round(s.win_rate * 100)}%`}</td>
+                <td>{s.open_positions || "—"}</td>
+              </tr>
+            ))}
+            <tr>
+              <td className="sym" style={{ borderTop: "2px solid var(--border)" }}>
+                Total
+              </td>
+              <td
+                className={data.realized_total >= 0 ? "up" : "down"}
+                style={{ borderTop: "2px solid var(--border)", fontWeight: 700 }}
+              >
+                {signed(data.realized_total)}
+              </td>
+              <td colSpan={3} style={{ borderTop: "2px solid var(--border)" }}></td>
+            </tr>
+          </tbody>
+        </table>
+      )}
+    </div>
   );
 }
 

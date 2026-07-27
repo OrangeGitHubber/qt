@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
-from sqlalchemy import func
+from sqlalchemy import case, func
 from sqlalchemy.orm import Session
 
 from qt.api.deps import leverage_unlockable
@@ -234,3 +234,45 @@ def journal(
 @router.get("/scoreboard")
 def get_scoreboard(session: Session = Depends(get_session)) -> dict:
     return scoreboard.series(session)
+
+
+@router.get("/strategy-pnl")
+def strategy_pnl(session: Session = Depends(get_session)) -> dict:
+    """Per-strategy REALIZED P&L in the active mode — the exact, additive
+    breakdown the aggregate scoreboard hides. Realized only (locked-in, sums to
+    the account's realized P&L); open positions are shown as a count. Unrealized
+    marks would need live quotes and aren't included here."""
+    mode = get_mode(session)
+    win = func.sum(case((Trade.pnl > 0, 1), else_=0))
+    rows = (
+        session.query(Trade.strategy_id, func.coalesce(func.sum(Trade.pnl), 0.0),
+                      func.count(Trade.id), func.coalesce(win, 0))
+        .filter(Trade.mode == mode, Trade.status == "closed")
+        .group_by(Trade.strategy_id)
+        .all()
+    )
+    open_by = dict(
+        session.query(Trade.strategy_id, func.count(Trade.id))
+        .filter(Trade.mode == mode, Trade.status == "open")
+        .group_by(Trade.strategy_id)
+        .all()
+    )
+    names = dict(session.query(Strategy.id, Strategy.name).all())
+
+    def row(sid, realized, trades, wins):
+        return {
+            "strategy_id": sid,
+            "name": names.get(sid, f"#{sid} (deleted)"),
+            "realized_pnl": round(float(realized or 0), 2),
+            "trades": int(trades or 0),
+            "wins": int(wins or 0),
+            "win_rate": round(wins / trades, 4) if trades else None,
+            "open_positions": int(open_by.pop(sid, 0)),
+        }
+
+    strategies = [row(sid, r, t, w) for sid, r, t, w in rows]
+    # Strategies holding open positions but with no closed trades yet.
+    strategies += [row(sid, 0.0, 0, 0) for sid in list(open_by)]
+    strategies.sort(key=lambda s: s["realized_pnl"], reverse=True)
+    realized_total = round(sum(s["realized_pnl"] for s in strategies), 2)
+    return {"mode": mode, "realized_total": realized_total, "strategies": strategies}
