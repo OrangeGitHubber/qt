@@ -3,6 +3,17 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Fix: Re-rank (and the sweep's ranking step) no longer freeze the app (2026-07-26)
+
+Re-rank ran the heavy reconstruct — loading every cached daily bar and ranking
+each day in pure Python — inline in the async task, which **blocked the whole
+event loop** until it finished. On a large (Postgres) cache that looked like a
+freeze: no status update, and the sweep buttons stopped responding too (their
+requests couldn't be served). The reconstruct now runs in a worker thread, so
+the server stays responsive — status shows "re-ranking…" and updates normally,
+and other actions still work. The daily sweep's final ranking step was offloaded
+the same way.
+
 ## Trading style is one choice; backtest warns when replay falls back to daily (2026-07-26)
 
 - **Swing vs Intraday is now a single "Trading style" choice**, not two independent

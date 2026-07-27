@@ -74,6 +74,19 @@ def _reconstruct(sess) -> int:
     )
 
 
+def _reconstruct_blocking() -> int:
+    """Reconstruct in a WORKER THREAD with its own session. reconstruct_movers is
+    CPU-and-DB heavy (it loads every cached daily bar and ranks each day in pure
+    Python); running it inline in the async task would block the event loop and
+    freeze the whole app — no status updates, no other endpoints — until it
+    finished. Offloading keeps the server responsive."""
+    sess = barcache.session()
+    try:
+        return _reconstruct(sess)
+    finally:
+        sess.close()
+
+
 async def _run_sweep(client: AlpacaClient, days: int) -> None:
     """Background worker: sweep the universe, then reconstruct movers using the
     same defaults the live stock scanner applies."""
@@ -91,7 +104,7 @@ async def _run_sweep(client: AlpacaClient, days: int) -> None:
         _progress.batches_done = summary["batches"]
         _progress.errors = summary["errors"]
 
-        _progress.days_reconstructed = _reconstruct(sess)
+        _progress.days_reconstructed = await asyncio.to_thread(_reconstruct_blocking)
     except Exception as exc:  # noqa: BLE001 — record any failure for the status view
         log.exception("bar sweep failed")
         _progress.last_error = str(exc)
@@ -105,14 +118,12 @@ async def _run_reconstruct() -> None:
     """Background worker: re-rank movers from the bars ALREADY cached — no
     download. Cheap way to apply new scanner filters, or to widen the stored
     riser set, across the whole history."""
-    sess = barcache.session()
     try:
-        _progress.days_reconstructed = _reconstruct(sess)
+        _progress.days_reconstructed = await asyncio.to_thread(_reconstruct_blocking)
     except Exception as exc:  # noqa: BLE001
         log.exception("movers reconstruct failed")
         _progress.last_error = str(exc)
     finally:
-        sess.close()
         _progress.running = False
         _progress.last_run_at = datetime.now(timezone.utc).isoformat()
 
