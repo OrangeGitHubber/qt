@@ -390,11 +390,15 @@ function Editor({
             </option>
           </select>
         </label>
-        <label className="check">
-          <input type="checkbox" checked={s.ignore_regime}
-            onChange={(e) => setS({ ...s, ignore_regime: e.target.checked })} />
-          Ignore regime filter (not recommended) <InfoTip k="regime_filter" />
-        </label>
+        {/* The regime filter is a stocks-only gate (S&P 500 vs its 200-day MA),
+            so this toggle does nothing for a crypto strategy — hide it there. */}
+        {s.asset_class === "stock" && (
+          <label className="check">
+            <input type="checkbox" checked={s.ignore_regime}
+              onChange={(e) => setS({ ...s, ignore_regime: e.target.checked })} />
+            Ignore regime filter (not recommended) <InfoTip k="regime_filter" />
+          </label>
+        )}
       </div>
 
       <h4>Advanced — order fills</h4>

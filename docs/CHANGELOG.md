@@ -3,6 +3,13 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Hide the regime-filter toggle on crypto strategies (2026-07-27)
+
+The "Ignore regime filter" checkbox only affects stock strategies — the regime
+filter is a stocks-only gate (S&P 500 vs its 200-day average) and the engine
+never applies it to crypto. It's now hidden on crypto strategies, where it did
+nothing, the same way "Flatten before close" is stock-only.
+
 ## App-wide button hierarchy (2026-07-27)
 
 Swept the whole app so button rows read by role instead of a wall of identical
