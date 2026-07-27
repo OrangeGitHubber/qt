@@ -3,6 +3,20 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Sweeps are now resilient and resumable (2026-07-26)
+
+A long intraday sweep could stop partway (e.g. at "day 183/249") and go idle: a
+request timeout or dropped connection isn't an Alpaca API error, so it escaped
+the per-day handler and aborted the whole run. (A plain rate-limit was already
+caught and the day skipped — so a hard stop meant something else.) Now:
+
+- **Retries with backoff** on any fetch failure (rate-limit, timeout, network),
+  so a transient hiccup no longer loses a day — or the whole sweep.
+- **A day that still fails after retries is skipped, not fatal** — the sweep
+  finishes the remaining days.
+- **Resumable:** a re-run skips days already cached and continues where it
+  stopped, instead of re-downloading everything and re-hitting the wall.
+
 ## Clearer bar-cache button descriptions (2026-07-26)
 
 The "Historical bar cache" panel on Settings now spells out its three-step

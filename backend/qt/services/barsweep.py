@@ -15,17 +15,37 @@ in-memory SQLite.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Callable
 from datetime import date, datetime, timedelta, timezone
 
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from qt.broker.alpaca import AlpacaError
 from qt.services import barcache
-from qt.services.barcache import DailyBar, DayQuote
+from qt.services.barcache import DailyBar, DayQuote, IntradayBar
 
 log = logging.getLogger("qt.barsweep")
+
+
+async def _bars_with_retry(
+    client, symbols, timeframe, start_iso, end_iso=None, *, attempts: int = 3, retry_delay: float = 2.0
+):
+    """Fetch bars, retrying on ANY error (a 429 rate-limit, a request timeout, a
+    dropped connection) with exponential backoff. A long sweep makes thousands of
+    calls, so transient failures are expected — retrying keeps one hiccup from
+    losing a day's data. Raises the last error only if every attempt fails."""
+    delay = retry_delay
+    for attempt in range(1, attempts + 1):
+        try:
+            return await client.historical_bars(symbols, "stock", timeframe, start_iso, end_iso)
+        except Exception as exc:  # noqa: BLE001 — rate limits/timeouts/network are all retryable
+            if attempt == attempts:
+                raise
+            log.warning("bars fetch failed (attempt %s/%s): %s — retrying in %.0fs", attempt, attempts, exc, delay)
+            await asyncio.sleep(delay)
+            delay *= 2
 
 # Store a GENEROUS set of risers per day, not the live scanner's display count.
 # The backtest narrows to its chosen top-N at read time (barcache.movers_between),
@@ -68,6 +88,7 @@ async def sweep_daily_bars(
     batch_size: int = 100,
     *,
     progress: ProgressFn | None = None,
+    retry_delay: float = 2.0,
 ) -> dict:
     """Download ~`days` of daily bars for the whole stock universe and store
     them in the bar cache. Batches the symbols, commits per batch, and is
@@ -82,10 +103,11 @@ async def sweep_daily_bars(
     errors = 0
     for idx, chunk in enumerate(batches, start=1):
         try:
-            data = await client.historical_bars(chunk, "stock", "1Day", start_iso)
-        except AlpacaError as exc:
+            data = await _bars_with_retry(client, chunk, "1Day", start_iso, retry_delay=retry_delay)
+        except Exception as exc:  # noqa: BLE001 — after retries, skip this batch, never abort the sweep
             errors += 1
-            log.warning("sweep batch %s/%s failed (%s): %s", idx, len(batches), exc.status_code, exc)
+            status = getattr(exc, "status_code", "—")
+            log.warning("sweep batch %s/%s failed (%s): %s", idx, len(batches), status, exc)
             if progress:
                 progress(idx, len(batches), symbols_saved)
             continue
@@ -175,6 +197,7 @@ async def sweep_intraday_movers(
     baseline_days: int = 4,
     since_day: str | None = None,
     progress: IntradayProgressFn | None = None,
+    retry_delay: float = 2.0,
 ) -> dict:
     """Stage 2: pull intraday bars for the reconstructed movers so an intraday
     strategy can be replayed on how each day actually unfolded.
@@ -196,18 +219,30 @@ async def sweep_intraday_movers(
         by_day.setdefault(day, []).append(symbol)
 
     days = sorted(by_day)
+    # Resumable: skip mover-days already pulled. Bars are committed per day, so a
+    # day is either fully cached or not started — a re-run after an interruption
+    # (or a rate-limit-heavy stretch) continues where it stopped instead of
+    # re-fetching everything and re-hitting the wall.
+    done = {row[0] for row in sess.query(func.substr(IntradayBar.ts, 1, 10)).distinct().all()}
     bars_saved = 0
     symbols_saved = 0
     errors = 0
+    skipped = 0
     for idx, day in enumerate(days, start=1):
+        if day in done:
+            skipped += 1
+            if progress:
+                progress(idx, len(days), symbols_saved, bars_saved)
+            continue
         symbols = sorted(set(by_day[day]))
         start = (date.fromisoformat(day) - timedelta(days=baseline_days)).isoformat()
         end = (date.fromisoformat(day) + timedelta(days=1)).isoformat()
         try:
-            data = await client.historical_bars(symbols, "stock", timeframe, start, end)
-        except AlpacaError as exc:
+            data = await _bars_with_retry(client, symbols, timeframe, start, end, retry_delay=retry_delay)
+        except Exception as exc:  # noqa: BLE001 — persistent failure after retries: skip the day, don't abort
             errors += 1
-            log.warning("intraday sweep %s (%s/%s) failed (%s): %s", day, idx, len(days), exc.status_code, exc)
+            status = getattr(exc, "status_code", "—")
+            log.warning("intraday sweep %s (%s/%s) skipped after retries (%s): %s", day, idx, len(days), status, exc)
             if progress:
                 progress(idx, len(days), symbols_saved, bars_saved)
             continue
@@ -225,6 +260,7 @@ async def sweep_intraday_movers(
         "symbols_saved": symbols_saved,
         "bars_saved": bars_saved,
         "errors": errors,
+        "skipped": skipped,
         "timeframe": timeframe,
     }
 

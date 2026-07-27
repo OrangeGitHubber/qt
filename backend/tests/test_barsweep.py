@@ -20,12 +20,14 @@ def _bar(day, c, v=1_000_000, vw=None):
 
 
 class FakeClient:
-    """Stands in for AlpacaClient: canned assets + per-symbol daily bars."""
+    """Stands in for AlpacaClient: canned assets + per-symbol daily bars.
+    `fail_symbols` fails EVERY request touching one of them (persistent, so it
+    survives retries), modelling a batch that never comes back."""
 
-    def __init__(self, assets, bars_by_symbol, fail_batches=None):
+    def __init__(self, assets, bars_by_symbol, fail_symbols=None):
         self._assets = assets
         self._bars = bars_by_symbol
-        self._fail_batches = fail_batches or set()
+        self._fail = set(fail_symbols or ())
         self.batch_calls = 0
 
     async def list_assets(self, alpaca_asset_class):
@@ -35,22 +37,27 @@ class FakeClient:
     async def historical_bars(self, symbols, asset_class, timeframe, start_iso, end_iso=None):
         assert asset_class == "stock" and timeframe == "1Day"
         self.batch_calls += 1
-        if self.batch_calls in self._fail_batches:
+        if self._fail.intersection(symbols):
             raise AlpacaError(429, "rate limited")
         return {s: self._bars.get(s, []) for s in symbols}
 
 
 class FakeIntradayClient:
     """Serves intraday bars and records each request's window, so tests can
-    assert the sweep batches by day and includes a prior-session baseline."""
+    assert the sweep batches by day and includes a prior-session baseline.
+    `fail_times` raises on the first N calls (transient failures) to exercise
+    the retry path."""
 
-    def __init__(self, intraday_by_symbol):
+    def __init__(self, intraday_by_symbol, fail_times=0):
         self._bars = intraday_by_symbol
-        self.calls = []  # (symbols, timeframe, start, end)
+        self._fail_times = fail_times
+        self.calls = []  # (symbols, timeframe, start, end) — includes failed attempts
 
     async def historical_bars(self, symbols, asset_class, timeframe, start_iso, end_iso=None):
         assert asset_class == "stock"
         self.calls.append((tuple(symbols), timeframe, start_iso, end_iso))
+        if len(self.calls) <= self._fail_times:
+            raise AlpacaError(429, "rate limited")
         # Return only bars that fall within [start, end) — like the real API.
         out = {}
         for s in symbols:
@@ -96,11 +103,11 @@ def test_sweep_saves_bars_excludes_otc_and_is_idempotent():
     assert s.query(barcache.DailyBar).count() == 9
 
 
-def test_sweep_skips_failing_batch_without_aborting():
+def test_sweep_skips_persistently_failing_batch_without_aborting():
     s = _mem_session()
-    # batch_size 1 => 3 batches; fail the 2nd (BBB).
-    client = FakeClient(ASSETS, BARS, fail_batches={2})
-    summary = asyncio.run(barsweep.sweep_daily_bars(client, s, days=30, batch_size=1))
+    # batch_size 1 => 3 batches; BBB's batch fails every attempt (even retries).
+    client = FakeClient(ASSETS, BARS, fail_symbols={"BBB"})
+    summary = asyncio.run(barsweep.sweep_daily_bars(client, s, days=30, batch_size=1, retry_delay=0))
 
     assert summary["errors"] == 1
     assert summary["symbols_saved"] == 2           # AAA + CCC saved, BBB skipped
@@ -202,6 +209,37 @@ def test_sweep_intraday_movers_batches_by_day_with_prior_session_baseline():
     # Bars persisted and readable, prior-session bar included.
     got = barcache.cached_intraday_bars(s, ["AAA"], "2026-06-01")
     assert [b["t"] for b in got["AAA"]] == ["2026-06-01T14:00:00Z", "2026-06-02T14:00:00Z"]
+
+
+def test_sweep_intraday_recovers_from_a_transient_failure():
+    # First request fails (rate limit / timeout), retry succeeds — the day is
+    # NOT lost and the sweep records no error.
+    s = _mem_session()
+    barcache.store_movers(s, "2026-06-02", [("AAA", 40.0, 5.0, 1e7)])
+    s.commit()
+    client = FakeIntradayClient({"AAA": [_ibar("2026-06-01T14:00:00Z", 4.9),
+                                         _ibar("2026-06-02T14:00:00Z", 6.9)]}, fail_times=1)
+    summary = asyncio.run(barsweep.sweep_intraday_movers(client, s, retry_delay=0))
+    assert summary["errors"] == 0                       # retried, not skipped
+    assert len(client.calls) == 2                       # 1 failed attempt + 1 success
+    assert barcache.has_intraday(s)
+
+
+def test_sweep_intraday_skips_days_already_cached():
+    # Resumability: a day already in the cache is not re-fetched, so a re-run
+    # continues instead of starting over.
+    s = _mem_session()
+    barcache.store_movers(s, "2026-06-02", [("AAA", 40.0, 5.0, 1e7)])
+    barcache.store_movers(s, "2026-06-03", [("BBB", 30.0, 8.0, 1e7)])
+    s.commit()
+    # Pre-seed intraday for the 06-02 mover-day only.
+    barcache.save_intraday_bars(s, "AAA", [_ibar("2026-06-02T14:00:00Z", 6.9)])
+    s.commit()
+    client = FakeIntradayClient({"BBB": [_ibar("2026-06-02T14:00:00Z", 7.9),
+                                         _ibar("2026-06-03T14:00:00Z", 9.9)]})
+    summary = asyncio.run(barsweep.sweep_intraday_movers(client, s, retry_delay=0))
+    assert summary["skipped"] == 1                      # 06-02 skipped (already cached)
+    assert [c[2] for c in client.calls] == ["2026-05-30"]  # only 06-03's window fetched (06-03 minus 4d)
 
 
 def test_intraday_progress_reports_running_bar_count():
