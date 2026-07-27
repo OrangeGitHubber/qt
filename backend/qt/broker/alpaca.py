@@ -170,20 +170,24 @@ class AlpacaClient:
         )
         return payload.get("snapshots", {})
 
-    async def stock_bars(self, symbols: list[str], timeframe: str = "15Min", limit: int = 64) -> dict[str, Any]:
+    async def stock_bars(
+        self, symbols: list[str], timeframe: str = "15Min", limit: int = 64, start: str | None = None
+    ) -> dict[str, Any]:
         if not symbols:
             return {}
-        payload = await self._get(
-            "/v2/stocks/bars",
-            params={
-                "symbols": ",".join(symbols),
-                "timeframe": timeframe,
-                "limit": limit,
-                "feed": STOCK_FEED,
-                "sort": "desc",
-            },
-            base=DATA_BASE_URL,
-        )
+        params: dict[str, Any] = {
+            "symbols": ",".join(symbols),
+            "timeframe": timeframe,
+            "limit": limit,
+            "feed": STOCK_FEED,
+            "sort": "desc",
+        }
+        # Without an explicit start Alpaca defaults the window to ~today, so a
+        # 1Day request comes back with a single (current-day) bar. Callers that
+        # need real history (e.g. the 200-day regime MA) must pass a start.
+        if start:
+            params["start"] = start
+        payload = await self._get("/v2/stocks/bars", params=params, base=DATA_BASE_URL)
         return payload.get("bars", {})
 
     async def crypto_bars(self, symbols: list[str], timeframe: str = "15Min", limit: int = 64) -> dict[str, Any]:

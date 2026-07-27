@@ -3,6 +3,7 @@ above its 200-day simple moving average — a blunt, well-known proxy for
 "the tide is rising". Cached because it only changes daily."""
 
 import time
+from datetime import datetime, timedelta, timezone
 
 from qt.broker.alpaca import AlpacaClient
 
@@ -15,7 +16,10 @@ async def regime_status(client: AlpacaClient) -> dict:
     if _cache["value"] is not None and now - _cache["at"] < _CACHE_TTL:
         return _cache["value"]
 
-    bars = await client.stock_bars(["SPY"], timeframe="1Day", limit=210)
+    # Look back ~400 calendar days to guarantee ≥200 trading days for the MA.
+    # Without an explicit start, Alpaca returns only the current day's bar.
+    start = (datetime.now(timezone.utc) - timedelta(days=400)).strftime("%Y-%m-%d")
+    bars = await client.stock_bars(["SPY"], timeframe="1Day", limit=210, start=start)
     closes = [b["c"] for b in bars.get("SPY", [])]  # newest first (sort=desc)
     if len(closes) < 200:
         # A safety rail fails CLOSED: unknown regime = no new stock entries.

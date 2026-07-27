@@ -3,6 +3,19 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Fix: regime filter was silently blocking ALL stock entries (2026-07-27)
+
+The regime filter (which only lets stock strategies open positions while SPY is
+above its 200-day moving average) needs ~200 days of SPY daily bars to do its
+sum. It was asking Alpaca for those bars without a start date — and Alpaca's
+bars endpoint, given no start, returns only the current day's single bar. With
+one bar it can't compute the average, so the rail failed closed and blocked
+every stock strategy, showing "CAUTION — regime unknown" on the dashboard no
+matter what SPY was actually doing. (Crypto strategies were unaffected — regime
+gating is stocks-only.) The fetch now asks for a 400-day window, so the average
+computes and stock trading is gated on the real bull/bear signal again. Exits
+were never affected.
+
 ## Crypto cache upkeep now runs every calendar day (2026-07-27)
 
 The nightly job that keeps the scanner-replay cache current used to run only on
