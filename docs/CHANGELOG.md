@@ -3,6 +3,18 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Clearer bar-cache button descriptions (2026-07-26)
+
+The "Historical bar cache" panel on Settings now spells out its three-step
+pipeline so a novice can tell the buttons apart. A tester thought **Run sweep**
+already produced the top-N risers and couldn't see why **Re-rank** existed. The
+copy now numbers the steps: Run sweep downloads one daily bar for the *entire*
+tradable US-stock universe (a raw dump, no risers yet); Re-rank recomputes each
+day's top risers from bars already cached (no download, seconds — only needed
+after changing the ranking criteria); Sweep intraday pulls 15-minute bars for
+those movers so an intraday strategy can be replayed for real. Copy only — no
+behaviour changed.
+
 ## Fix: intraday sweep progress now counts live (2026-07-26)
 
 The "Intraday bars" counter sat at 0 for the whole sweep and only jumped to the

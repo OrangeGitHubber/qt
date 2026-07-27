@@ -252,8 +252,7 @@ export default function Settings() {
       <div className="card">
         <h3>Historical bar cache</h3>
         <p className="hint">
-          Caches daily bars across the market and reconstructs each past day's top risers (a generous set of 100) — the
-          data a "scanner replay" backtest needs; the backtest then picks how many risers per day to use. Runs against{" "}
+          The historical data a <strong>"scanner replay" backtest</strong> reads, built in three steps and stored in{" "}
           {bars ? (
             <strong>
               {bars.backend.kind === "postgres"
@@ -263,16 +262,32 @@ export default function Settings() {
           ) : (
             "…"
           )}
-          . One sweep is enough — it's cached and idempotent, and takes several minutes. To go further back, run it again
-          with more history; the extra days are added without re-downloading what you already have. After the first
-          sweep, QT keeps the cache current automatically each trading evening. <strong>Re-rank</strong> re-computes the
-          risers from bars already cached (seconds, no download) — use it after changing the scanner's filters.
+          . Normal order: <strong>Run sweep → Sweep intraday → backtest</strong> — only touch Re-rank if you change the
+          ranking criteria (see below).
         </p>
         <p className="hint">
-          <strong>Sweep intraday</strong> then pulls 15-minute bars for those movers, so a scanner-replay backtest can
-          judge an <em>intraday</em> strategy on how each day actually traded — VWAP, the entry window, and
-          flatten-before-close all behave for real. Without it, replay falls back to daily bars, which can't simulate any
-          intraday exit. Do a daily sweep first so there are movers to fetch.
+          <strong>1. Run sweep</strong> downloads one daily price bar (open/high/low/close) for the <em>entire</em>{" "}
+          tradable US-stock universe — thousands of symbols, every stock on a real exchange, not just the movers. It's a
+          raw price dump: at this point nothing yet knows which stocks were the day's risers. Takes several minutes, and
+          it's cached and idempotent — run it again with more history to reach further back and only the missing older
+          days are added, never re-downloaded. QT also re-runs it automatically each trading evening. A full sweep
+          finishes by ranking the risers for you (step 2), so normally you never press Re-rank yourself.
+        </p>
+        <p className="hint">
+          <strong>2. Re-rank</strong> turns that raw dump into <em>each past day's top risers</em>: for every day it
+          measures each stock's gain at its intraday peak (daily high vs. the prior close), drops penny and low-volume
+          junk (the scanner's price and dollar-volume filters), and keeps the top 100 (the backtest then picks how many
+          of those to use per day). This is the step that <em>creates</em> the risers list — the raw sweep doesn't
+          contain it. It recomputes from bars <em>already</em> cached, so no download and it takes seconds. You only need
+          it on its own after changing the ranking criteria (the scanner's filters, the gain metric, or how many risers
+          to keep); otherwise a full sweep already did it.
+        </p>
+        <p className="hint">
+          <strong>3. Sweep intraday</strong> then pulls 15-minute bars for those ranked movers only (just those names, on
+          their mover-days, plus a short prior-session baseline), so the backtest can judge an <em>intraday</em> strategy
+          on how each day actually traded — VWAP, the entry window, and flatten-before-close all behave for real. Without
+          it, replay falls back to daily bars, which can't simulate any intraday exit. Needs a daily sweep first so there
+          are movers to fetch.
         </p>
         {bars && (
           <dl>
