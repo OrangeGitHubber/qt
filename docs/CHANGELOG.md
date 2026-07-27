@@ -3,6 +3,15 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Fix: scanner replay on an existing cache (missing intraday table) (2026-07-26)
+
+A cache built before the intraday feature (e.g. a durable Postgres cache with
+movers and daily bars already in it) didn't have the new `intraday_bars` table,
+so a scanner-replay backtest errored when it went to read intraday bars — the run
+appeared to do nothing. Replay now ensures the cache schema exists first
+(idempotently creating only what's missing), so an older cache is healed in place
+and falls back to daily bars until you run an intraday sweep.
+
 ## Backtest defaults to the strategy's own universe (2026-07-26)
 
 The Backtest screen used to ignore the universe you set on the strategy — you had

@@ -218,6 +218,38 @@ def test_scanner_replay_prefers_intraday_bars_when_cached(client, configured, mo
     assert body["trade_list"][0]["exit_reason"] == "flatten before market close"
 
 
+def test_scanner_replay_heals_a_cache_missing_the_intraday_table(client, configured, monkeypatch):
+    """Regression: a cache built before the intraday_bars table existed (has
+    movers + daily bars only) must not 500 on the now-queried intraday table —
+    the endpoint recreates the missing table and falls back to daily bars."""
+    eng = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    barcache.CacheBase.metadata.create_all(eng)
+    Sess = sessionmaker(bind=eng, expire_on_commit=False)
+    monkeypatch.setattr(barcache, "_engine", eng)
+    monkeypatch.setattr(barcache, "_Session", Sess)
+    d0 = (datetime.now(timezone.utc) - timedelta(days=6)).strftime("%Y-%m-%d")
+    d1 = (datetime.now(timezone.utc) - timedelta(days=5)).strftime("%Y-%m-%d")
+    with Sess() as s:
+        barcache.save_daily_bars(s, "MOVER", [
+            {"t": f"{d0}T14:00:00Z", "o": 100, "h": 100, "l": 100, "c": 100, "v": 1e6, "vw": 100},
+            {"t": f"{d1}T14:00:00Z", "o": 105, "h": 105, "l": 105, "c": 105, "v": 1e6, "vw": 105},
+        ])
+        barcache.store_movers(s, d1, [("MOVER", 5.0, 105.0, 1e8)])
+        s.commit()
+    # Simulate the older cache: the intraday table was never created.
+    barcache.IntradayBar.__table__.drop(eng)
+
+    sid = _make(client, "stock")
+    fetch = AsyncMock(side_effect=Exception("no benchmark"))
+    with patch.object(AlpacaClient, "historical_bars", new=fetch):
+        r = client.post("/api/backtest", json={
+            "strategy_id": sid, "scanner_replay": True, "days": 30,
+            "starting_cash": 5000, "spread_pct": 0})
+    assert r.status_code == 200, r.text  # not a 500 on the missing table
+    body = r.json()
+    assert body["replay_intraday"] is False and body["trades"] == 1  # healed → daily fallback
+
+
 def test_scanner_replay_needs_a_sweep_first(client, configured, monkeypatch):
     """With an empty cache, replay explains itself instead of silently doing nothing."""
     eng = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)

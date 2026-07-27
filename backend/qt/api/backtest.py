@@ -124,6 +124,15 @@ async def _scanner_replay(
 
     from qt.services import barcache
 
+    # Ensure the cache schema exists before reading. A cache built by an earlier
+    # version won't have the newer `intraday_bars` table; init_cache is idempotent
+    # (creates only missing tables), so this heals an older cache in place instead
+    # of erroring on a missing relation.
+    try:
+        barcache.init_cache()
+    except Exception as exc:  # noqa: BLE001 — surface a bad cache DSN clearly
+        raise HTTPException(status_code=502, detail=f"Could not open the bar cache DB: {exc}")
+
     start_day = (datetime.now(timezone.utc) - timedelta(days=body.days)).strftime("%Y-%m-%d")
     cache = barcache.session()
     try:
