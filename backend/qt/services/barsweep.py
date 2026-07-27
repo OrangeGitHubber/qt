@@ -42,6 +42,8 @@ KEEP_EXCHANGES = {"NYSE", "NASDAQ", "ARCA", "AMEX", "BATS", "NYSEARCA", "IEX"}
 
 # progress(batches_done, batches_total, symbols_saved) — optional live hook.
 ProgressFn = Callable[[int, int, int], None]
+# Intraday adds a running bar count: progress(day_done, day_total, symbols_saved, bars_saved).
+IntradayProgressFn = Callable[[int, int, int, int], None]
 
 
 def tradable_universe(assets: list[dict]) -> list[str]:
@@ -172,7 +174,7 @@ async def sweep_intraday_movers(
     timeframe: str = "15Min",
     baseline_days: int = 4,
     since_day: str | None = None,
-    progress: ProgressFn | None = None,
+    progress: IntradayProgressFn | None = None,
 ) -> dict:
     """Stage 2: pull intraday bars for the reconstructed movers so an intraday
     strategy can be replayed on how each day actually unfolded.
@@ -207,7 +209,7 @@ async def sweep_intraday_movers(
             errors += 1
             log.warning("intraday sweep %s (%s/%s) failed (%s): %s", day, idx, len(days), exc.status_code, exc)
             if progress:
-                progress(idx, len(days), symbols_saved)
+                progress(idx, len(days), symbols_saved, bars_saved)
             continue
         for symbol, bars in data.items():
             if not bars:
@@ -216,7 +218,7 @@ async def sweep_intraday_movers(
             symbols_saved += 1
         sess.commit()
         if progress:
-            progress(idx, len(days), symbols_saved)
+            progress(idx, len(days), symbols_saved, bars_saved)
 
     return {
         "days": len(days),

@@ -278,14 +278,16 @@ export default function Settings() {
           <dl>
             <dt>Status</dt>
             <dd>
-              {bars.running ? "sweeping…" : "idle"}
+              {bars.running
+                ? { intraday: "intraday sweep…", reconstruct: "re-ranking…" }[bars.kind] ?? "daily sweep…"
+                : "idle"}
               {bars.last_error && <span className="error"> — {bars.last_error}</span>}
             </dd>
-            <dt>Symbols</dt>
+            <dt>Progress</dt>
             <dd>
-              {bars.symbols_saved.toLocaleString()} saved
-              {bars.symbols_total ? ` of ${bars.symbols_total.toLocaleString()}` : ""}
-              {bars.batches_total ? ` · batch ${bars.batches_done}/${bars.batches_total}` : ""}
+              {bars.kind === "intraday"
+                ? `${bars.symbols_saved.toLocaleString()} symbol-days${bars.batches_total ? ` · day ${bars.batches_done}/${bars.batches_total}` : ""}`
+                : `${bars.symbols_saved.toLocaleString()} symbols saved${bars.symbols_total ? ` of ${bars.symbols_total.toLocaleString()}` : ""}${bars.batches_total ? ` · batch ${bars.batches_done}/${bars.batches_total}` : ""}`}
             </dd>
             <dt>Days reconstructed</dt>
             <dd>{bars.days_reconstructed.toLocaleString()}</dd>

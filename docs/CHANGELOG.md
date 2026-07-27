@@ -3,6 +3,14 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Fix: intraday sweep progress now counts live (2026-07-26)
+
+The "Intraday bars" counter sat at 0 for the whole sweep and only jumped to the
+final number at the end — the live progress callback never carried the running
+bar count. It now updates as each day is fetched. The status panel is also
+sweep-aware: an intraday sweep shows "intraday sweep… · day 111/249 · N
+symbol-days" instead of reusing the daily sweep's "of 12,971 symbols" total.
+
 ## Fix: flatten-before-close strategy gave zero trades on daily bars (2026-07-26)
 
 The new "don't open a position on the bar we'd flatten it" guard skipped any bar

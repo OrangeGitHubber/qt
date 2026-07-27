@@ -204,6 +204,25 @@ def test_sweep_intraday_movers_batches_by_day_with_prior_session_baseline():
     assert [b["t"] for b in got["AAA"]] == ["2026-06-01T14:00:00Z", "2026-06-02T14:00:00Z"]
 
 
+def test_intraday_progress_reports_running_bar_count():
+    # The status counter must climb live, not sit at 0 until the end.
+    s = _mem_session()
+    barcache.store_movers(s, "2026-06-02", [("AAA", 40.0, 5.0, 1e7)])
+    barcache.store_movers(s, "2026-06-03", [("BBB", 30.0, 8.0, 1e7)])
+    s.commit()
+    intraday = {
+        "AAA": [_ibar("2026-06-01T14:00:00Z", 4.9), _ibar("2026-06-02T14:00:00Z", 6.9)],
+        "BBB": [_ibar("2026-06-02T14:00:00Z", 7.9), _ibar("2026-06-03T14:00:00Z", 9.9)],
+    }
+    seen = []  # (day_done, day_total, symbols_saved, bars_saved)
+    asyncio.run(barsweep.sweep_intraday_movers(
+        FakeIntradayClient(intraday), s, baseline_days=4,
+        progress=lambda d, t, syms, bars: seen.append((d, t, syms, bars)),
+    ))
+    assert [c[3] for c in seen] == sorted(c[3] for c in seen)  # bar count only climbs
+    assert seen[-1][3] > 0                                     # ends with a real count, not 0
+
+
 def test_daily_movers_update_pulls_recent_and_reranks():
     s = _mem_session()
     from datetime import datetime, timedelta, timezone

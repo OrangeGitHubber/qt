@@ -122,10 +122,11 @@ async def _run_intraday_sweep(client: AlpacaClient) -> None:
     movers so intraday strategies can be replayed on how each day unfolded."""
     sess = barcache.session()
     try:
-        def on_progress(done: int, total: int, saved: int) -> None:
+        def on_progress(done: int, total: int, saved: int, bars: int) -> None:
             _progress.batches_done = done
             _progress.batches_total = total
             _progress.symbols_saved = saved
+            _progress.intraday_bars = bars  # live count, not just the final total
 
         summary = await barsweep.sweep_intraday_movers(client, sess, progress=on_progress)
         _progress.batches_total = summary["days"]
@@ -216,6 +217,8 @@ async def trigger_intraday_sweep(
     _progress.started_at = datetime.now(timezone.utc).isoformat()
     _progress.batches_done = 0
     _progress.batches_total = 0
+    _progress.symbols_saved = 0
+    _progress.symbols_total = 0  # not a symbol-total concept for intraday (batched by day)
     _progress.intraday_bars = 0
     _progress.last_error = None
     _task = asyncio.create_task(_run_intraday_sweep(client))
