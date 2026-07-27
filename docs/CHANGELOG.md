@@ -3,6 +3,15 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Strategy cards: distinct action buttons (2026-07-27)
+
+The Pause / Enable / Edit / Delete buttons on each strategy card now look
+distinct instead of a row of identical blue buttons: Enable is filled green
+(the "live" colour, matching the ENABLED pill), Pause is amber, Edit is a quiet
+neutral outline, and Delete is red — each with a small glyph. The action row is
+also separated from the strategy details by a divider so the buttons aren't
+cramped against the text.
+
 ## Advanced per-strategy order-fill settings (2026-07-27)
 
 New "Advanced — order fills" section on the strategy editor exposes how

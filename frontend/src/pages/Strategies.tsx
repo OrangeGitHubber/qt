@@ -557,15 +557,19 @@ export default function Strategies() {
             v{r.version} · {r.open_trades ?? 0} open trade(s)
           </dd>
         </dl>
-        <div className="toolbar">
-          <button className="small" onClick={() => toggle(r)}>
-            {r.enabled ? "Pause" : "Enable"}
+        <div className="card-actions">
+          <button
+            className={`small ${r.enabled ? "btn-pause" : "btn-enable"}`}
+            onClick={() => toggle(r)}
+            title={r.enabled ? "Stop this strategy from opening new trades" : "Arm this strategy (it trades once the engine is on)"}
+          >
+            {r.enabled ? "❚❚ Pause" : "▶ Enable"}
           </button>
-          <button className="small" onClick={() => setEditing(r)}>
-            Edit
+          <button className="small btn-ghost" onClick={() => setEditing(r)} title="Edit this strategy's settings">
+            ✎ Edit
           </button>
-          <button className="small danger" onClick={() => remove(r)}>
-            Delete
+          <button className="small danger" onClick={() => remove(r)} title="Delete this strategy permanently">
+            ✕ Delete
           </button>
         </div>
       </div>

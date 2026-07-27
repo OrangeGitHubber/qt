@@ -311,6 +311,51 @@ button.danger {
   border: 1px solid var(--err);
   color: var(--err);
 }
+button.danger:hover {
+  background: rgba(231, 76, 60, 0.12);
+}
+
+/* Strategy-card action row: a divider + gap separates the actions from the
+   details above, and each button gets a DISTINCT, semantic treatment so they
+   don't all read as the same blue control. */
+.card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  margin-top: 1.1rem;
+  padding-top: 0.9rem;
+  border-top: 1px solid var(--border);
+}
+/* Neutral secondary (Edit) — quiet ghost, same family as the mode/seg toggles. */
+button.btn-ghost {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-weight: 500;
+}
+button.btn-ghost:hover {
+  border-color: var(--accent);
+}
+/* Caution (Pause) — amber ghost: deactivating a live strategy. */
+button.btn-pause {
+  background: transparent;
+  border: 1px solid var(--warn);
+  color: var(--warn);
+  font-weight: 500;
+}
+button.btn-pause:hover {
+  background: rgba(243, 156, 18, 0.12);
+}
+/* Positive primary (Enable) — the one filled action: arm the strategy. Green is
+   the app's "live/up" semantic, so it matches the ENABLED pill. */
+button.btn-enable {
+  background: var(--ok);
+  border: 1px solid var(--ok);
+  color: #08130c;
+}
+button.btn-enable:hover {
+  filter: brightness(1.08);
+}
 
 /* Scanner "+ Watch" toggle. Unwatched = the base filled accent-blue CTA.
    Watched = a muted, desaturated blue tint (same hue as --accent, calmer) so
