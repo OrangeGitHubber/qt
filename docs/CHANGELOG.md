@@ -3,6 +3,15 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Settings: distinct bar-cache action buttons (2026-07-27)
+
+The Run sweep / Sweep intraday / Re-rank / ⓘ buttons on the Historical bar cache
+panel were all identical blue. They now read by role, matching the strategy-card
+restyle: Run sweep is the filled primary, Sweep intraday an accent outline (a
+second download, below the primary), Re-rank a quiet neutral outline (the light
+recompute), and ⓘ a muted info toggle pushed to the end — with a divider
+separating the row from the status above. Small ⭳/↻ glyphs reinforce each.
+
 ## Strategy cards: distinct action buttons (2026-07-27)
 
 The Pause / Enable / Edit / Delete buttons on each strategy card now look

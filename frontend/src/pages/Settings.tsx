@@ -335,23 +335,40 @@ export default function Settings() {
             )}
           </dl>
         )}
-        <button className="small" disabled={bars?.running} onClick={runSweep}>
-          {bars?.running ? "Sweeping…" : "Run sweep"}
-        </button>{" "}
-        <button className="small" disabled={bars?.running} onClick={runReconstruct}>
-          Re-rank
-        </button>{" "}
-        <button className="small" disabled={bars?.running} onClick={runIntraday}>
-          Sweep intraday
-        </button>{" "}
-        <button
-          className="small"
-          type="button"
-          title="Freshest cached riser + whether its 15-min data is in the cache"
-          onClick={() => setShowFresh((v) => !v)}
-        >
-          ⓘ
-        </button>
+        <div className="card-actions">
+          <button
+            className="small"
+            disabled={bars?.running}
+            onClick={runSweep}
+            title="Download daily bars for the whole universe, then rank each day's risers"
+          >
+            {bars?.running ? "Sweeping…" : "⭳ Run sweep"}
+          </button>
+          <button
+            className="small btn-accent-ghost"
+            disabled={bars?.running}
+            onClick={runIntraday}
+            title="Pull 15-minute bars for the ranked movers (enables intraday replay)"
+          >
+            ⭳ Sweep intraday
+          </button>
+          <button
+            className="small btn-ghost"
+            disabled={bars?.running}
+            onClick={runReconstruct}
+            title="Recompute the risers from bars already cached — no download"
+          >
+            ↻ Re-rank
+          </button>
+          <button
+            className="small btn-info"
+            type="button"
+            title="Freshest cached riser + whether its 15-min data is in the cache"
+            onClick={() => setShowFresh((v) => !v)}
+          >
+            ⓘ
+          </button>
+        </div>
         {showFresh &&
           (bars?.cache?.freshest_mover ? (
             <p className="hint">

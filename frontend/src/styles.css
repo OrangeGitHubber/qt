@@ -356,6 +356,30 @@ button.btn-enable {
 button.btn-enable:hover {
   filter: brightness(1.08);
 }
+/* Secondary action in the accent hue (e.g. a second download beside a primary
+   one): outlined, not filled, so it reads below the primary CTA. */
+button.btn-accent-ghost {
+  background: transparent;
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  font-weight: 500;
+}
+button.btn-accent-ghost:hover {
+  background: rgba(79, 140, 255, 0.12);
+}
+/* Info toggle (ⓘ): a light, muted affordance pushed to the end of an action row
+   — not an action button competing with the others. */
+button.btn-info {
+  margin-left: auto;
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  font-weight: 500;
+}
+button.btn-info:hover {
+  border-color: var(--accent);
+  color: var(--text);
+}
 
 /* Scanner "+ Watch" toggle. Unwatched = the base filled accent-blue CTA.
    Watched = a muted, desaturated blue tint (same hue as --accent, calmer) so
