@@ -32,6 +32,7 @@ export default function Settings() {
   const [assetStatus, setAssetStatus] = useState<AssetStatus | null>(null);
   const [syncing, setSyncing] = useState(false);
   const [bars, setBars] = useState<BarCacheStatus | null>(null);
+  const [showFresh, setShowFresh] = useState(false);
   const [note, setNote] = useState<string | null>(null);
 
   const refresh = useCallback(() => {
@@ -303,9 +304,14 @@ export default function Settings() {
               <>
                 <dt>Progress</dt>
                 <dd>
-                  {bars.kind === "intraday"
+                  {bars.kind === "reconstruct"
+                    ? `${bars.phase || "re-ranking"}${bars.batches_total ? ` — ${bars.batches_done.toLocaleString()} / ${bars.batches_total.toLocaleString()}` : "…"}`
+                    : bars.kind === "intraday"
                     ? `${bars.symbols_saved.toLocaleString()} symbol-days${bars.batches_total ? ` · day ${bars.batches_done}/${bars.batches_total}` : ""}`
                     : `${bars.symbols_saved.toLocaleString()} symbols saved${bars.symbols_total ? ` of ${bars.symbols_total.toLocaleString()}` : ""}${bars.batches_total ? ` · batch ${bars.batches_done}/${bars.batches_total}` : ""}`}
+                  {bars.batches_total > 0 && (
+                    <progress className="sweep-bar" value={bars.batches_done} max={bars.batches_total} />
+                  )}
                 </dd>
                 {bars.kind === "intraday" && <dt>Intraday bars</dt>}
                 {bars.kind === "intraday" && <dd>{bars.intraday_bars.toLocaleString()} pulled (in progress)</dd>}
@@ -337,7 +343,30 @@ export default function Settings() {
         </button>{" "}
         <button className="small" disabled={bars?.running} onClick={runIntraday}>
           Sweep intraday
+        </button>{" "}
+        <button
+          className="small"
+          type="button"
+          title="Freshest cached riser + whether its 15-min data is in the cache"
+          onClick={() => setShowFresh((v) => !v)}
+        >
+          ⓘ
         </button>
+        {showFresh &&
+          (bars?.cache?.freshest_mover ? (
+            <p className="hint">
+              Freshest riser: <strong>{bars.cache.freshest_mover.symbol}</strong>{" "}
+              {bars.cache.freshest_mover.change_pct >= 0 ? "+" : ""}
+              {bars.cache.freshest_mover.change_pct}% on {bars.cache.freshest_mover.day} —{" "}
+              {bars.cache.freshest_mover.has_intraday ? (
+                <span className="ok-text">✓ 15-min data cached (intraday-ready)</span>
+              ) : (
+                <span className="warn-text">✗ no 15-min data yet — run Sweep intraday</span>
+              )}
+            </p>
+          ) : (
+            <p className="hint">No movers cached yet — run a sweep first.</p>
+          ))}
       </div>
 
       <div className="card">

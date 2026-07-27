@@ -422,6 +422,33 @@ tr:last-child td {
 .warn-text {
   color: var(--warn);
 }
+.ok-text {
+  color: var(--up, #3fb950);
+}
+/* Sweep/re-rank progress bar. */
+.sweep-bar {
+  display: block;
+  width: 100%;
+  height: 6px;
+  margin-top: 4px;
+  appearance: none;
+  border: none;
+  border-radius: 3px;
+  background: var(--border);
+  overflow: hidden;
+}
+.sweep-bar::-webkit-progress-bar {
+  background: var(--border);
+  border-radius: 3px;
+}
+.sweep-bar::-webkit-progress-value {
+  background: var(--accent);
+  border-radius: 3px;
+}
+.sweep-bar::-moz-progress-bar {
+  background: var(--accent);
+  border-radius: 3px;
+}
 
 /* Segmented single-choice control (e.g. watchlist All / Stocks / Crypto). */
 .seg {

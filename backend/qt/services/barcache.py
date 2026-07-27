@@ -316,6 +316,31 @@ def has_intraday(sess: OrmSession) -> bool:
     return sess.query(IntradayBar).first() is not None
 
 
+def freshest_mover(sess: OrmSession) -> dict | None:
+    """The #1 riser on the most recent reconstructed day, and whether its 15-min
+    bars are cached — a quick 'is the intraday sweep caught up to the latest
+    movers?' spot-check for the UI. None if no movers are cached yet."""
+    row = (
+        sess.query(DailyMover)
+        .order_by(DailyMover.day.desc(), DailyMover.rank.asc())
+        .first()
+    )
+    if row is None:
+        return None
+    has_15m = (
+        sess.query(IntradayBar)
+        .filter(IntradayBar.symbol == row.symbol, IntradayBar.ts.like(f"{row.day}T%"))
+        .first()
+        is not None
+    )
+    return {
+        "symbol": row.symbol,
+        "day": row.day,
+        "change_pct": row.change_pct,
+        "has_intraday": has_15m,
+    }
+
+
 def cache_stats(sess: OrmSession) -> dict:
     """What's actually PERSISTED in the cache, independent of any in-process
     sweep counters (which reset on redeploy). Lets the UI show the real state of
@@ -325,4 +350,5 @@ def cache_stats(sess: OrmSession) -> dict:
         "movers_days": int(sess.query(func.count(func.distinct(DailyMover.day))).scalar() or 0),
         "intraday_bars": int(sess.query(func.count()).select_from(IntradayBar).scalar() or 0),
         "latest_day": sess.query(func.max(DailyBar.day)).scalar(),  # 'YYYY-MM-DD' | None
+        "freshest_mover": freshest_mover(sess),
     }

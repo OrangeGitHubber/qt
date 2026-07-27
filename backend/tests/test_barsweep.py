@@ -162,6 +162,24 @@ def test_reconstruct_movers_applies_price_and_volume_filters():
     assert [m.symbol for m in movers] == ["GOOD"]   # PENNY (price) and THIN (volume) excluded
 
 
+def test_reconstruct_reports_load_and_rank_progress():
+    s = _mem_session()
+    for sym in ("AAA", "BBB", "CCC"):
+        barcache.save_daily_bars(s, sym, BARS[sym])
+    s.commit()
+    events = []
+    barsweep.reconstruct_movers(
+        s, top_n=10, min_change_pct=0.0, min_price=0.0, max_price=0.0, min_dollar_volume=0.0,
+        progress=lambda stage, done, total: events.append((stage, done, total)),
+    )
+    stages = {e[0] for e in events}
+    assert "load" in stages and "rank" in stages
+    load = [e for e in events if e[0] == "load"]
+    assert load[-1][1] == load[-1][2] == 9   # 3 symbols x 3 days loaded, done == total
+    rank = [e for e in events if e[0] == "rank"]
+    assert rank[-1][1] == rank[-1][2] == 2   # 2 rankable days (earliest has no prior close)
+
+
 def test_reconstruct_since_day_reranks_only_recent_days_with_a_real_prior_close():
     s = _mem_session()
     # AAA has bars on 06-01..06-04. Reconstructing only since 06-03 must still

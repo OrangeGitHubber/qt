@@ -199,6 +199,7 @@ export const getScoreboard = () => fetch("/api/engine/scoreboard").then((r) => h
 export interface BarCacheStatus {
   running: boolean;
   kind: string; // daily | reconstruct | intraday
+  phase: string; // reconstruct sub-phase: "loading bars" | "ranking days"
   started_at: string | null;
   last_run_at: string | null;
   batches_total: number;
@@ -211,7 +212,13 @@ export interface BarCacheStatus {
   errors: number;
   last_error: string | null;
   // Persisted cache totals (from the DB) — survive redeploys; null while a sweep runs.
-  cache: { daily_symbols: number; movers_days: number; intraday_bars: number; latest_day: string | null } | null;
+  cache: {
+    daily_symbols: number;
+    movers_days: number;
+    intraday_bars: number;
+    latest_day: string | null;
+    freshest_mover: { symbol: string; day: string; change_pct: number; has_intraday: boolean } | null;
+  } | null;
   backend: { kind: string; scheme: string; host: string | null };
 }
 

@@ -33,6 +33,7 @@ class SweepProgress:
     kind: str = "daily"  # daily | reconstruct | intraday — what the current/last run was
     started_at: str | None = None
     last_run_at: str | None = None
+    phase: str = ""  # reconstruct sub-phase: "loading bars" | "ranking days"
     batches_total: int = 0
     batches_done: int = 0
     symbols_total: int = 0
@@ -58,6 +59,14 @@ def _backend_info() -> dict:
     }
 
 
+def _reconstruct_progress(stage: str, done: int, total: int) -> None:
+    """Mirror reconstruct's two phases into the shared status (safe to write from
+    the worker thread — simple attribute assignments the status reader picks up)."""
+    _progress.phase = "loading bars" if stage == "load" else "ranking days"
+    _progress.batches_done = done
+    _progress.batches_total = total
+
+
 def _reconstruct(sess) -> int:
     """Re-rank every cached day's movers with the live stock scanner's filters,
     storing a generous set (SWEEP_STORE_TOP_N) so the backtest can pick its own
@@ -71,6 +80,7 @@ def _reconstruct(sess) -> int:
         min_price=f["min_price"],
         max_price=f["max_price"],
         min_dollar_volume=f["min_dollar_volume"],
+        progress=_reconstruct_progress,
     )
 
 
@@ -200,7 +210,10 @@ async def trigger_reconstruct() -> dict:
 
     _progress.running = True
     _progress.kind = "reconstruct"
+    _progress.phase = "loading bars"
     _progress.started_at = datetime.now(timezone.utc).isoformat()
+    _progress.batches_done = 0
+    _progress.batches_total = 0
     _progress.days_reconstructed = 0
     _progress.last_error = None
     _task = asyncio.create_task(_run_reconstruct())

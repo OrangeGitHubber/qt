@@ -64,6 +64,8 @@ KEEP_EXCHANGES = {"NYSE", "NASDAQ", "ARCA", "AMEX", "BATS", "NYSEARCA", "IEX"}
 ProgressFn = Callable[[int, int, int], None]
 # Intraday adds a running bar count: progress(day_done, day_total, symbols_saved, bars_saved).
 IntradayProgressFn = Callable[[int, int, int, int], None]
+# Reconstruct reports two stages: progress("load"|"rank", done, total).
+ReconstructProgressFn = Callable[[str, int, int], None]
 
 
 def tradable_universe(assets: list[dict]) -> list[str]:
@@ -139,6 +141,7 @@ def reconstruct_movers(
     min_dollar_volume: float,
     since_day: str | None = None,
     lookback_days: int = 15,
+    progress: ReconstructProgressFn | None = None,
 ) -> int:
     """Recompute each past day's 'today's risers' from the cached daily bars.
 
@@ -151,17 +154,22 @@ def reconstruct_movers(
     `since_day` limits the work to recent days (the forward daily job): only
     days on/after it are re-ranked and stored, but bars from `lookback_days`
     before it are still loaded so each of those days has a real prior close.
-    None (the default) rebuilds the whole cache — the initial sweep's behaviour."""
+    None (the default) rebuilds the whole cache — the initial sweep's behaviour.
+
+    `progress("load"|"rank", done, total)` reports the two phases (loading the
+    cached bars, then ranking the days) so the UI can show real progress instead
+    of an opaque wait. Bars are streamed (`yield_per`) rather than loaded all at
+    once, which also eases memory on a big cache."""
     q = sess.query(DailyBar)
     if since_day is not None:
         load_from = (date.fromisoformat(since_day) - timedelta(days=lookback_days)).isoformat()
         q = q.filter(DailyBar.day >= load_from)
-    rows = q.order_by(DailyBar.symbol, DailyBar.day).all()
+    total_rows = q.count() if progress else 0
 
     quotes_by_day: dict[str, list[DayQuote]] = {}
     prev_symbol: str | None = None
     prev_close: float | None = None
-    for bar in rows:
+    for i, bar in enumerate(q.order_by(DailyBar.symbol, DailyBar.day).yield_per(5000), start=1):
         if bar.symbol != prev_symbol:
             prev_symbol = bar.symbol
             prev_close = None
@@ -173,9 +181,11 @@ def reconstruct_movers(
                 )
             )
         prev_close = bar.c
+        if progress and (i % 5000 == 0 or i == total_rows):
+            progress("load", i, total_rows)
 
     days = [d for d in sorted(quotes_by_day) if since_day is None or d >= since_day]
-    for day in days:
+    for j, day in enumerate(days, start=1):
         ranked = barcache.rank_movers(
             quotes_by_day[day],
             top_n,
@@ -185,6 +195,8 @@ def reconstruct_movers(
             min_dollar_volume=min_dollar_volume,
         )
         barcache.store_movers(sess, day, ranked)
+        if progress and (j % 20 == 0 or j == len(days)):
+            progress("rank", j, len(days))
     sess.commit()
     return len(days)
 

@@ -3,6 +3,17 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Re-rank progress bar + a freshest-riser cache check (2026-07-27)
+
+- **Re-rank now shows real progress**, not an opaque "re-ranking…". It reports two
+  phases — loading the cached bars (streamed, which also eases memory) then
+  ranking the days — with a live count and a progress bar. So a long re-rank on a
+  big cache looks like it's working instead of frozen.
+- **New ⓘ button on the bar-cache panel** shows the freshest reconstructed riser
+  (the #1 mover on the most recent cached day) with a ✓/✗ for whether its
+  15-minute bars are cached — a quick "is my intraday sweep caught up to the
+  latest movers?" check.
+
 ## Fix: Re-rank (and the sweep's ranking step) no longer freeze the app (2026-07-26)
 
 Re-rank ran the heavy reconstruct — loading every cached daily bar and ranking

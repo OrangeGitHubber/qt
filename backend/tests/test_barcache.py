@@ -29,10 +29,23 @@ def test_rank_movers_ranks_by_gain_and_caps_top_n():
     assert ranked[0][1] == 50.0
 
 
+def test_freshest_mover_reports_latest_rank1_and_intraday_flag():
+    s = _mem_session()
+    assert barcache.freshest_mover(s) is None
+    barcache.store_movers(s, "2026-06-10", [("OLD", 5.0, 1.0, 1e6)])
+    barcache.store_movers(s, "2026-06-12", [("TOP", 9.0, 2.0, 1e6), ("SECOND", 8.0, 2.0, 1e6)])
+    s.commit()
+    fm = barcache.freshest_mover(s)
+    assert fm == {"symbol": "TOP", "day": "2026-06-12", "change_pct": 9.0, "has_intraday": False}
+    barcache.save_intraday_bars(s, "TOP", [{"t": "2026-06-12T14:00:00Z", "o": 2, "h": 2, "l": 2, "c": 2, "v": 1, "vw": 2}])
+    s.commit()
+    assert barcache.freshest_mover(s)["has_intraday"] is True
+
+
 def test_cache_stats_reports_persisted_totals():
     s = _mem_session()
     assert barcache.cache_stats(s) == {
-        "daily_symbols": 0, "movers_days": 0, "intraday_bars": 0, "latest_day": None,
+        "daily_symbols": 0, "movers_days": 0, "intraday_bars": 0, "latest_day": None, "freshest_mover": None,
     }
     barcache.save_daily_bars(s, "AAA", [
         {"t": "2026-06-01T00:00:00Z", "o": 1, "h": 1, "l": 1, "c": 1, "v": 1, "vw": 1},
@@ -43,7 +56,10 @@ def test_cache_stats_reports_persisted_totals():
     barcache.save_intraday_bars(s, "AAA", [{"t": "2026-06-02T14:00:00Z", "o": 1, "h": 1, "l": 1, "c": 1, "v": 1, "vw": 1}])
     s.commit()
     stats = barcache.cache_stats(s)
-    assert stats == {"daily_symbols": 2, "movers_days": 1, "intraday_bars": 1, "latest_day": "2026-06-02"}
+    assert stats == {
+        "daily_symbols": 2, "movers_days": 1, "intraday_bars": 1, "latest_day": "2026-06-02",
+        "freshest_mover": {"symbol": "AAA", "day": "2026-06-02", "change_pct": 5.0, "has_intraday": True},
+    }
 
 
 def test_rank_movers_uses_intraday_peak_when_high_is_given():
