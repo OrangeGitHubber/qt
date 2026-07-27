@@ -89,6 +89,17 @@ function Editor({
   const overAllocated = equity != null && totalSleeves > equity;
   const money = (n: number) => `$${Math.round(n).toLocaleString()}`;
 
+  // Config traps that silently ruin a backtest / live run — warn, never block.
+  const sizing = s.sizing_usd || 0;
+  const sleeve = s.sleeve_usd || 0;
+  // A second position needs another full trade to fit under the sleeve; if the
+  // sleeve is under 2x the per-trade size, only ONE position can ever be open.
+  const oneShotSleeve = sizing > 0 && sleeve > 0 && sleeve < sizing * 2;
+  const maxConcurrent = sizing > 0 ? Math.floor(sleeve / sizing) : 0;
+  const stopPct = s.params?.exit.stop_loss_pct ?? 0;
+  // A tight stop held overnight is hit by normal daily noise — a swing killer.
+  const tightSwingStop = !!s.swing_mode && stopPct > 0 && stopPct < 3;
+
   function applyPreset(key: string) {
     if (key === "custom") {
       setS({ ...s, preset: "custom" });
@@ -386,6 +397,29 @@ function Editor({
           <> across all strategies. Connect Alpaca to compare against your live balance.</>
         )}
       </p>
+      {oneShotSleeve && (
+        <p className="hint warn">
+          ⚠ <strong>Only one position can be open at a time.</strong> Your sleeve budget ({money(sleeve)}) is less than
+          twice your {money(sizing)} per trade, so a second buy would exceed the sleeve and be blocked — "Max positions"
+          can't take effect. Backtests also stop trading once a losing streak leaves less cash than one full trade. Set
+          the sleeve to a few times the per-trade size (e.g. {money(sizing * 5)} for ~5 concurrent positions).
+        </p>
+      )}
+      {!oneShotSleeve && maxConcurrent > 0 && sizing > 0 && (
+        <p className="hint">
+          Room for about <strong>{maxConcurrent}</strong> position{maxConcurrent === 1 ? "" : "s"} at once
+          ({money(sleeve)} sleeve ÷ {money(sizing)} per trade).
+        </p>
+      )}
+      {tightSwingStop && (
+        <p className="hint warn">
+          ⚠ <strong>Tight stop-loss ({stopPct}%) with swing mode on.</strong> Holding overnight but bailing on a{" "}
+          {stopPct}% move means normal daily noise (most stocks swing more than that intraday) will stop you out almost
+          immediately — usually at a small loss. Swing stops should be wider than the symbol's typical daily move (ATR),
+          often 5–8%. For a stop this tight, trade intraday instead: turn <em>off</em> swing mode and turn{" "}
+          <em>on</em> "Flatten before market close".
+        </p>
+      )}
       {error && <div className="error">{error}</div>}
       <div className="toolbar">
         <button>{s.id ? "Save (creates new config version)" : "Create strategy"}</button>

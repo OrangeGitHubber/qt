@@ -3,6 +3,20 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Strategy editor warns about two silent config traps (2026-07-26)
+
+Two misconfigurations that quietly wreck a backtest now surface a warning in the
+editor (they warn, never block):
+
+- **Sleeve ≈ $ per trade** → only one position can ever open (a second exceeds
+  the sleeve, so "Max positions" can't take effect), and a backtest stops
+  trading once a losing streak leaves less cash than one full trade. The editor
+  now also shows the rough number of concurrent positions the sleeve allows.
+- **A tight stop-loss (<3%) with swing mode on** → holding overnight but bailing
+  on a sub-3% wiggle means normal daily noise stops you out almost immediately,
+  usually at a loss. Suggests widening the stop (5–8%, above ATR) or switching to
+  intraday (swing off + flatten-before-close).
+
 ## Sweeps are now resilient and resumable (2026-07-26)
 
 A long intraday sweep could stop partway (e.g. at "day 183/249") and go idle: a

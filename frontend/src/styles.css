@@ -244,6 +244,13 @@ button:disabled {
   color: var(--muted);
   font-size: 0.85rem;
 }
+/* A hint that's a config warning — stands out without being an error. */
+.hint.warn {
+  color: var(--warn);
+  border-left: 3px solid var(--warn);
+  padding-left: 0.6rem;
+  margin-top: 0.5rem;
+}
 
 a {
   color: var(--accent);
