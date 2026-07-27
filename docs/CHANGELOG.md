@@ -3,6 +3,19 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Settings: bar-cache panel reorganised as stocks | crypto columns (2026-07-27)
+
+The historical-bar-cache controls had grown into a hard-to-scan pile — stock
+and crypto stats interleaved, buttons and the info toggle scattered, and three
+long explanatory paragraphs on top. Reworked into two side-by-side columns,
+**Stocks** and **Crypto**, each showing the same four figures (symbols/pairs
+cached, days of movers, intraday bars, data through) aligned row-for-row with
+its own action buttons beneath. A live status pill (idle / sweeping) sits in the
+header, an in-progress sweep shows one shared progress strip, and the step-by-
+step explanation now lives in a collapsible "How the sweep works" section so it
+stays available without dominating the panel. Same actions and behaviour — just
+grouped so the two caches read at a glance.
+
 ## Fix: regime filter was silently blocking ALL stock entries (2026-07-27)
 
 The regime filter (which only lets stock strategies open positions while SPY is

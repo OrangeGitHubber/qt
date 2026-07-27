@@ -1,7 +1,8 @@
-import { FormEvent, useCallback, useEffect, useState } from "react";
+import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import {
   addAllowlist,
   AssetStatus,
+  BarCacheStats,
   BarCacheStatus,
   EngineState,
   getAllowlist,
@@ -24,6 +25,30 @@ import {
 import InfoTip from "../components/InfoTip";
 import NumberField from "../components/NumberField";
 
+// One asset class's cache totals, rendered identically for stocks and crypto so
+// the two columns line up row-for-row. `stats` is null until that class has been
+// swept (or transiently while a sweep runs and the API withholds totals).
+function CacheMetrics({ stats, hasIntraday, unitPairs }: { stats: BarCacheStats | null; hasIntraday: boolean; unitPairs?: boolean }) {
+  return (
+    <dl className="cache-metrics">
+      <dt>{unitPairs ? "Pairs cached" : "Symbols cached"}</dt>
+      <dd>{stats ? stats.daily_symbols.toLocaleString() : "not swept yet"}</dd>
+      <dt>Days of movers</dt>
+      <dd>{stats ? stats.movers_days.toLocaleString() : "—"}</dd>
+      <dt>Intraday bars</dt>
+      <dd>
+        {!stats
+          ? "—"
+          : hasIntraday
+          ? `${stats.intraday_bars.toLocaleString()} — replay ready`
+          : "none — daily only"}
+      </dd>
+      <dt>Data through</dt>
+      <dd>{stats?.latest_day ?? "—"}</dd>
+    </dl>
+  );
+}
+
 export default function Settings() {
   const [engine, setEngine] = useState<EngineState | null>(null);
   const [risk, setRiskLocal] = useState<RiskConfig | null>(null);
@@ -36,6 +61,14 @@ export default function Settings() {
   const [bars, setBars] = useState<BarCacheStatus | null>(null);
   const [showFresh, setShowFresh] = useState(false);
   const [note, setNote] = useState<string | null>(null);
+
+  // The status endpoint nulls the persisted cache totals while a sweep runs (to
+  // avoid counting rows on every 3s poll). Retain the last-known totals so a run
+  // on one asset class doesn't blank the other column's numbers.
+  const lastStock = useRef<BarCacheStats | null>(null);
+  const lastCrypto = useRef<BarCacheStats | null>(null);
+  if (bars?.cache) lastStock.current = bars.cache;
+  if (bars?.crypto_cache) lastCrypto.current = bars.crypto_cache;
 
   const refresh = useCallback(() => {
     getEngine().then((e) => {
@@ -273,9 +306,18 @@ export default function Settings() {
       </div>
 
       <div className="card">
-        <h3>Historical bar cache</h3>
+        <div className="cache-head">
+          <h3>Historical bar cache</h3>
+          <span className={`pill ${bars?.running ? "warn" : "muted"}`}>
+            {bars?.running
+              ? `${bars.market === "crypto" ? "crypto " : ""}${
+                  { intraday: "intraday sweep", reconstruct: "re-ranking" }[bars.kind] ?? "daily sweep"
+                }…`
+              : "idle"}
+          </span>
+        </div>
         <p className="hint">
-          The historical data a <strong>"scanner replay" backtest</strong> reads, built in three steps and stored in{" "}
+          The data a <strong>"scanner replay" backtest</strong> reads, stored in{" "}
           {bars ? (
             <strong>
               {bars.backend.kind === "postgres"
@@ -285,163 +327,99 @@ export default function Settings() {
           ) : (
             "…"
           )}
-          . Normal order: <strong>Run sweep → Sweep intraday → backtest</strong> — only touch Re-rank if you change the
-          ranking criteria (see below).
+          . Stocks and crypto keep separate caches — sweep each on its own side below. Order per class:{" "}
+          <strong>Run sweep → Sweep intraday → backtest</strong>. (See “How the sweep works” at the bottom.)
         </p>
-        <p className="hint">
-          <strong>1. Run sweep</strong> downloads one daily price bar (open/high/low/close) for the <em>entire</em>{" "}
-          tradable US-stock universe — thousands of symbols, every stock on a real exchange, not just the movers. It's a
-          raw price dump: at this point nothing yet knows which stocks were the day's risers. Takes several minutes, and
-          it's cached and idempotent — run it again with more history to reach further back and only the missing older
-          days are added, never re-downloaded. QT also re-runs it automatically each trading evening. A full sweep
-          finishes by ranking the risers for you (step 2), so normally you never press Re-rank yourself.
-        </p>
-        <p className="hint">
-          <strong>2. Re-rank</strong> turns that raw dump into <em>each past day's top risers</em>: for every day it
-          measures each stock's gain at its intraday peak (daily high vs. the prior close), drops penny and low-volume
-          junk (the scanner's price and dollar-volume filters), and keeps the top 100 (the backtest then picks how many
-          of those to use per day). This is the step that <em>creates</em> the risers list — the raw sweep doesn't
-          contain it. It recomputes from bars <em>already</em> cached, so no download and it takes seconds. You only need
-          it on its own after changing the ranking criteria (the scanner's filters, the gain metric, or how many risers
-          to keep); otherwise a full sweep already did it.
-        </p>
-        <p className="hint">
-          <strong>3. Sweep intraday</strong> then pulls 15-minute bars for those ranked movers only (just those names, on
-          their mover-days, plus a short prior-session baseline), so the backtest can judge an <em>intraday</em> strategy
-          on how each day actually traded — VWAP, the entry window, and flatten-before-close all behave for real. Without
-          it, replay falls back to daily bars, which can't simulate any intraday exit. Needs a daily sweep first so there
-          are movers to fetch.
-        </p>
-        {bars && (
-          <dl>
-            <dt>Status</dt>
-            <dd>
-              {bars.running
-                ? `${bars.market === "crypto" ? "crypto " : ""}${
-                    { intraday: "intraday sweep…", reconstruct: "re-ranking…" }[bars.kind] ?? "daily sweep…"
-                  }`
-                : "idle"}
-              {bars.last_error && <span className="error"> — {bars.last_error}</span>}
-            </dd>
-            {bars.running ? (
-              // Live progress of the in-flight sweep (resets on redeploy — that's fine, it's ephemeral).
-              <>
-                <dt>Progress</dt>
-                <dd>
-                  {bars.kind === "reconstruct"
-                    ? `${bars.phase || "re-ranking"}${bars.batches_total ? ` — ${bars.batches_done.toLocaleString()} / ${bars.batches_total.toLocaleString()}` : "…"}`
-                    : bars.kind === "intraday"
-                    ? `${bars.symbols_saved.toLocaleString()} symbol-days${bars.batches_total ? ` · day ${bars.batches_done}/${bars.batches_total}` : ""}`
-                    : `${bars.symbols_saved.toLocaleString()} symbols saved${bars.symbols_total ? ` of ${bars.symbols_total.toLocaleString()}` : ""}${bars.batches_total ? ` · batch ${bars.batches_done}/${bars.batches_total}` : ""}`}
-                  {bars.batches_total > 0 && (
-                    <progress className="sweep-bar" value={bars.batches_done} max={bars.batches_total} />
-                  )}
-                </dd>
-                {bars.kind === "intraday" && <dt>Intraday bars</dt>}
-                {bars.kind === "intraday" && <dd>{bars.intraday_bars.toLocaleString()} pulled (in progress)</dd>}
-              </>
-            ) : (
-              // Persisted cache contents — read from the DB, so they survive redeploys.
-              <>
-                <dt>Symbols cached</dt>
-                <dd>{(bars.cache?.daily_symbols ?? 0).toLocaleString()}</dd>
-                <dt>Days of movers</dt>
-                <dd>{(bars.cache?.movers_days ?? 0).toLocaleString()}</dd>
-                <dt>Intraday bars</dt>
-                <dd>
-                  {bars.has_intraday
-                    ? `${(bars.cache?.intraday_bars ?? 0).toLocaleString()} cached — intraday replay ready`
-                    : "none yet — replay uses daily bars"}
-                </dd>
-                <dt>Data through</dt>
-                <dd>{bars.cache?.latest_day ?? "—"}</dd>
-                {/* Crypto cache — a separate, independently-swept cache. Only
-                    surfaced once it holds something, so a stocks-only user isn't
-                    shown empty crypto rows. */}
-                {(bars.crypto_cache?.daily_symbols ?? 0) > 0 && (
-                  <>
-                    <dt>Crypto pairs cached</dt>
-                    <dd>{(bars.crypto_cache?.daily_symbols ?? 0).toLocaleString()}</dd>
-                    <dt>Crypto days of movers</dt>
-                    <dd>{(bars.crypto_cache?.movers_days ?? 0).toLocaleString()}</dd>
-                    <dt>Crypto intraday bars</dt>
-                    <dd>
-                      {bars.crypto_has_intraday
-                        ? `${(bars.crypto_cache?.intraday_bars ?? 0).toLocaleString()} cached — intraday replay ready`
-                        : "none yet — replay uses daily bars"}
-                    </dd>
-                    <dt>Crypto data through</dt>
-                    <dd>{bars.crypto_cache?.latest_day ?? "—"}</dd>
-                  </>
-                )}
-              </>
+
+        {bars?.running && (
+          <div className="cache-progress">
+            <span>
+              {bars.kind === "reconstruct"
+                ? `${bars.phase || "re-ranking"}${bars.batches_total ? ` — ${bars.batches_done.toLocaleString()} / ${bars.batches_total.toLocaleString()}` : "…"}`
+                : bars.kind === "intraday"
+                ? `${bars.symbols_saved.toLocaleString()} symbol-days${bars.batches_total ? ` · day ${bars.batches_done}/${bars.batches_total}` : ""} · ${bars.intraday_bars.toLocaleString()} bars pulled`
+                : `${bars.symbols_saved.toLocaleString()} symbols saved${bars.symbols_total ? ` of ${bars.symbols_total.toLocaleString()}` : ""}${bars.batches_total ? ` · batch ${bars.batches_done}/${bars.batches_total}` : ""}`}
+            </span>
+            {bars.batches_total > 0 && (
+              <progress className="sweep-bar" value={bars.batches_done} max={bars.batches_total} />
             )}
-          </dl>
+          </div>
         )}
-        <div className="card-actions">
-          <button
-            className="small"
-            disabled={bars?.running}
-            onClick={runSweep}
-            title="Download daily bars for the whole universe, then rank each day's risers"
-          >
-            {bars?.running ? "Sweeping…" : "⭳ Run sweep"}
-          </button>
-          <button
-            className="small btn-accent-ghost"
-            disabled={bars?.running}
-            onClick={runIntraday}
-            title="Pull 15-minute bars for the ranked movers (enables intraday replay)"
-          >
-            ⭳ Sweep intraday
-          </button>
-          <button
-            className="small btn-ghost"
-            disabled={bars?.running}
-            onClick={runReconstruct}
-            title="Recompute the risers from bars already cached — no download"
-          >
-            ↻ Re-rank
-          </button>
-          <button
-            className="small btn-info"
-            type="button"
-            title="Freshest cached riser + whether its 15-min data is in the cache"
-            onClick={() => setShowFresh((v) => !v)}
-          >
-            ⓘ
-          </button>
+        {bars?.last_error && !bars.running && (
+          <p className="hint error">Last sweep error: {bars.last_error}</p>
+        )}
+
+        <div className="cache-grid">
+          <section className="cache-col">
+            <h4>Stocks</h4>
+            <CacheMetrics stats={lastStock.current} hasIntraday={bars?.has_intraday ?? false} />
+            <div className="card-actions">
+              <button
+                className="small"
+                disabled={bars?.running}
+                onClick={runSweep}
+                title="Download daily bars for the whole US-stock universe, then rank each day's risers"
+              >
+                {bars?.running ? "Sweeping…" : "⭳ Run sweep"}
+              </button>
+              <button
+                className="small btn-accent-ghost"
+                disabled={bars?.running}
+                onClick={runIntraday}
+                title="Pull 15-minute bars for the ranked movers (enables intraday replay)"
+              >
+                ⭳ Sweep intraday
+              </button>
+              <button
+                className="small btn-ghost"
+                disabled={bars?.running}
+                onClick={runReconstruct}
+                title="Recompute the risers from bars already cached — no download"
+              >
+                ↻ Re-rank
+              </button>
+              <button
+                className="small btn-info"
+                type="button"
+                title="Freshest cached riser + whether its 15-min data is in the cache"
+                onClick={() => setShowFresh((v) => !v)}
+              >
+                ⓘ
+              </button>
+            </div>
+          </section>
+
+          <section className="cache-col">
+            <h4>Crypto</h4>
+            <CacheMetrics stats={lastCrypto.current} hasIntraday={bars?.crypto_has_intraday ?? false} unitPairs />
+            <div className="card-actions">
+              <button
+                className="small"
+                disabled={bars?.running}
+                onClick={runCrypto}
+                title="Download daily bars for every crypto USD pair, then rank each day's risers (one step)"
+              >
+                {bars?.running ? "Sweeping…" : "⭳ Run crypto sweep"}
+              </button>
+              <button
+                className="small btn-accent-ghost"
+                disabled={bars?.running}
+                onClick={runCryptoIntraday}
+                title="Pull 15-minute bars for the ranked crypto movers (enables intraday crypto replay)"
+              >
+                ⭳ Sweep crypto intraday
+              </button>
+            </div>
+          </section>
         </div>
-        <p className="hint">
-          <strong>Crypto</strong> replays off its own separate cache. The crypto universe is tiny (~20–40 USD pairs), so
-          one button sweeps <em>every</em> pair's daily bars and ranks each day's risers in one step; then sweep crypto
-          intraday for 15-minute bars. Crypto is 24/7, so its "day" is the UTC calendar day.
-        </p>
-        <div className="card-actions">
-          <button
-            className="small"
-            disabled={bars?.running}
-            onClick={runCrypto}
-            title="Download daily bars for every crypto USD pair, then rank each day's risers"
-          >
-            {bars?.running ? "Sweeping…" : "⭳ Run crypto sweep"}
-          </button>
-          <button
-            className="small btn-accent-ghost"
-            disabled={bars?.running}
-            onClick={runCryptoIntraday}
-            title="Pull 15-minute bars for the ranked crypto movers (enables intraday crypto replay)"
-          >
-            ⭳ Sweep crypto intraday
-          </button>
-        </div>
+
         {showFresh &&
-          (bars?.cache?.freshest_mover ? (
+          (lastStock.current?.freshest_mover ? (
             <p className="hint">
-              Freshest riser: <strong>{bars.cache.freshest_mover.symbol}</strong>{" "}
-              {bars.cache.freshest_mover.change_pct >= 0 ? "+" : ""}
-              {bars.cache.freshest_mover.change_pct}% on {bars.cache.freshest_mover.day} —{" "}
-              {bars.cache.freshest_mover.has_intraday ? (
+              Freshest stock riser: <strong>{lastStock.current.freshest_mover.symbol}</strong>{" "}
+              {lastStock.current.freshest_mover.change_pct >= 0 ? "+" : ""}
+              {lastStock.current.freshest_mover.change_pct}% on {lastStock.current.freshest_mover.day} —{" "}
+              {lastStock.current.freshest_mover.has_intraday ? (
                 <span className="ok-text">✓ 15-min data cached (intraday-ready)</span>
               ) : (
                 <span className="warn-text">✗ no 15-min data yet — run Sweep intraday</span>
@@ -450,6 +428,40 @@ export default function Settings() {
           ) : (
             <p className="hint">No movers cached yet — run a sweep first.</p>
           ))}
+
+        <details className="cache-help">
+          <summary>How the sweep works (three steps)</summary>
+          <p className="hint">
+            <strong>1. Run sweep</strong> downloads one daily price bar (open/high/low/close) for the <em>entire</em>{" "}
+            tradable US-stock universe — thousands of symbols, every stock on a real exchange, not just the movers. It's a
+            raw price dump: at this point nothing yet knows which stocks were the day's risers. Takes several minutes, and
+            it's cached and idempotent — run it again with more history to reach further back and only the missing older
+            days are added, never re-downloaded. QT also re-runs it automatically each trading evening. A full sweep
+            finishes by ranking the risers for you (step 2), so normally you never press Re-rank yourself.
+          </p>
+          <p className="hint">
+            <strong>2. Re-rank</strong> turns that raw dump into <em>each past day's top risers</em>: for every day it
+            measures each stock's gain at its intraday peak (daily high vs. the prior close), drops penny and low-volume
+            junk (the scanner's price and dollar-volume filters), and keeps the top 100 (the backtest then picks how many
+            of those to use per day). This is the step that <em>creates</em> the risers list — the raw sweep doesn't
+            contain it. It recomputes from bars <em>already</em> cached, so no download and it takes seconds. You only
+            need it on its own after changing the ranking criteria (the scanner's filters, the gain metric, or how many
+            risers to keep); otherwise a full sweep already did it.
+          </p>
+          <p className="hint">
+            <strong>3. Sweep intraday</strong> then pulls 15-minute bars for those ranked movers only (just those names,
+            on their mover-days, plus a short prior-session baseline), so the backtest can judge an <em>intraday</em>{" "}
+            strategy on how each day actually traded — VWAP, the entry window, and flatten-before-close all behave for
+            real. Without it, replay falls back to daily bars, which can't simulate any intraday exit. Needs a daily
+            sweep first so there are movers to fetch.
+          </p>
+          <p className="hint">
+            <strong>Crypto</strong> uses its own separate cache. The crypto universe is tiny (~20–40 USD pairs), so one
+            button sweeps <em>every</em> pair's daily bars and ranks each day's risers in a single step (no separate
+            Re-rank); then sweep crypto intraday for 15-minute bars. Crypto is 24/7, so its "day" is the UTC calendar
+            day.
+          </p>
+        </details>
       </div>
 
       <div className="card">

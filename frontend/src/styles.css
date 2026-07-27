@@ -1430,3 +1430,88 @@ button.linklike {
   stroke-dasharray: 3 3;
   opacity: 0.6;
 }
+
+/* Historical bar cache panel: title + live status pill on one line. */
+.cache-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+.cache-head h3 {
+  margin: 0;
+}
+
+/* Full-width progress strip shown while a sweep runs (above the two columns). */
+.cache-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  margin: 0.75rem 0;
+  padding: 0.6rem 0.75rem;
+  background: rgba(243, 156, 18, 0.08);
+  border: 1px solid rgba(243, 156, 18, 0.35);
+  border-radius: 8px;
+  font-variant-numeric: tabular-nums;
+}
+.cache-progress .sweep-bar {
+  width: 100%;
+}
+
+/* Stocks | Crypto side-by-side, aligned row-for-row so the two caches compare
+   at a glance. Collapses to one column on narrow screens. */
+.cache-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.25rem;
+  margin-top: 0.5rem;
+}
+.cache-col {
+  min-width: 0; /* let the column shrink instead of overflowing the card */
+  padding: 0.9rem 1rem;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  display: flex;
+  flex-direction: column;
+}
+.cache-col h4 {
+  margin: 0 0 0.75rem;
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+/* Push each column's action row to the bottom so both button rows line up
+   even when the metric text wraps differently. */
+.cache-col .card-actions {
+  margin-top: auto;
+}
+.cache-metrics {
+  margin-bottom: 0.5rem;
+}
+
+/* Collapsible "how it works" — keeps the long explanation out of the way. */
+.cache-help {
+  margin-top: 1rem;
+  border-top: 1px solid var(--border);
+  padding-top: 0.75rem;
+}
+.cache-help summary {
+  cursor: pointer;
+  color: var(--accent);
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+.cache-help summary:hover {
+  text-decoration: underline;
+}
+.cache-help p {
+  margin-top: 0.75rem;
+}
+
+@media (max-width: 640px) {
+  .cache-grid {
+    grid-template-columns: 1fr;
+  }
+}
