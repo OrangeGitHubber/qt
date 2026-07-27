@@ -80,9 +80,9 @@ export const GLOSSARY: Record<string, GlossaryEntry> = {
     url: "https://www.investopedia.com/terms/m/margin.asp",
   },
   swing_mode: {
-    term: "Swing mode",
+    term: "Trading style: Swing vs Intraday",
     explain:
-      "Hold positions overnight and judge exits over days, instead of scalping intraday. Default for stocks: bid-ask spreads and free-data limitations punish rapid stock trading; the downside is overnight gaps.",
+      "Two opposite styles, so it's one choice. SWING holds positions overnight and judges exits over days (soft exits like take-profit wait until the day after entry; stops still act same-day). INTRADAY flattens before the close and never holds overnight (for stocks; crypto has no close). Stocks default to Swing — spreads and free-data limits punish rapid stock trading, though the trade-off is overnight-gap risk. Crypto is the intraday lab (24/7, cleaner data).",
     url: "https://www.investopedia.com/terms/s/swingtrading.asp",
   },
   sleeve: {

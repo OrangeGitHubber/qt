@@ -3,6 +3,19 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Trading style is one choice; backtest warns when replay falls back to daily (2026-07-26)
+
+- **Swing vs Intraday is now a single "Trading style" choice**, not two independent
+  checkboxes. They're opposites — Swing holds overnight, Intraday flattens before
+  the close — and enabling both was contradictory (the engine even suppressed
+  flatten under swing). Picking Intraday sets flatten-before-close for stocks
+  (crypto has no close); picking Swing turns it off and holds overnight.
+- **The backtest now warns, prominently, when a scanner replay runs on daily
+  bars for an intraday strategy.** Previously the only hint was the word "daily
+  bars" in the header, so it looked like flatten-before-close was broken when it
+  simply couldn't be simulated. The banner points you to run an intraday sweep
+  and re-run.
+
 ## Bar-cache panel shows persisted totals, not just this run's progress (2026-07-26)
 
 After a container redeploy the Historical bar cache panel showed all zeros and

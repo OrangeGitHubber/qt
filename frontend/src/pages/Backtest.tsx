@@ -318,6 +318,18 @@ export default function Backtest() {
                 : result.symbols.join(", ")}{" "}
               · last {result.days} days ({result.timeframe})
             </h3>
+            {result.scanner_replay &&
+              result.replay_intraday === false &&
+              strategy &&
+              (!strategy.swing_mode || strategy.params.exit.flatten_before_close) && (
+                <p className="hint warn">
+                  ⚠ <strong>This ran on daily bars, not intraday.</strong> Your strategy trades intraday
+                  (flatten-before-close / no overnight hold), which a daily-bar replay can't simulate — positions look
+                  like they exit the next day and stops can gap overnight instead of firing intraday. Run an{" "}
+                  <strong>intraday sweep</strong> (Settings → Historical bar cache) so replay uses 15-minute bars, then
+                  re-run for a true test.
+                </p>
+              )}
             {result.trades === 0 && result.diagnosis?.summary && (
               <div className="card note" style={{ cursor: "default" }}>
                 <strong>Why zero trades?</strong> {result.diagnosis.summary}

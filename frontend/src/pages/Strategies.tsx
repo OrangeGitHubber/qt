@@ -124,6 +124,24 @@ function Editor({
     setS((cur) => ({ ...cur, params: { ...cur.params!, exit: { ...cur.params!.exit, [key]: value } } }));
   }
 
+  // Swing vs intraday are opposites (hold overnight vs flatten before the close),
+  // so they're one choice, not two independent checkboxes. Intraday implies
+  // flatten-before-close for stocks; crypto has no close, so flatten stays off.
+  const tradingStyle: "swing" | "intraday" = s.swing_mode ? "swing" : "intraday";
+  function setStyle(style: "swing" | "intraday") {
+    setS((cur) => ({
+      ...cur,
+      swing_mode: style === "swing",
+      params: {
+        ...cur.params!,
+        exit: {
+          ...cur.params!.exit,
+          flatten_before_close: style === "intraday" && cur.asset_class === "stock",
+        },
+      },
+    }));
+  }
+
   async function save(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
@@ -341,13 +359,6 @@ function Editor({
             onChange={(e) => setExit("exit_below_vwap", e.target.checked)} />
           Exit if price falls below VWAP <InfoTip k="vwap" />
         </label>
-        {s.asset_class === "stock" && (
-          <label className="check">
-            <input type="checkbox" checked={p.exit.flatten_before_close}
-              onChange={(e) => setExit("flatten_before_close", e.target.checked)} />
-            Flatten before market close
-          </label>
-        )}
       </div>
 
       <h4>Sizing & safety</h4>
@@ -367,10 +378,14 @@ function Editor({
           <NumberField step="1" min="1" max="25" value={s.max_positions!}
             onChange={(n) => setS({ ...s, max_positions: n })} />
         </label>
-        <label className="check">
-          <input type="checkbox" checked={s.swing_mode}
-            onChange={(e) => setS({ ...s, swing_mode: e.target.checked })} />
-          Swing mode <InfoTip k="swing_mode" />
+        <label>
+          Trading style <InfoTip k="swing_mode" />
+          <select value={tradingStyle} onChange={(e) => setStyle(e.target.value as "swing" | "intraday")}>
+            <option value="swing">Swing — hold overnight, exit over days</option>
+            <option value="intraday">
+              Intraday — {s.asset_class === "stock" ? "flatten before the close, " : ""}no overnight hold
+            </option>
+          </select>
         </label>
         <label className="check">
           <input type="checkbox" checked={s.ignore_regime}
@@ -416,8 +431,7 @@ function Editor({
           ⚠ <strong>Tight stop-loss ({stopPct}%) with swing mode on.</strong> Holding overnight but bailing on a{" "}
           {stopPct}% move means normal daily noise (most stocks swing more than that intraday) will stop you out almost
           immediately — usually at a small loss. Swing stops should be wider than the symbol's typical daily move (ATR),
-          often 5–8%. For a stop this tight, trade intraday instead: turn <em>off</em> swing mode and turn{" "}
-          <em>on</em> "Flatten before market close".
+          often 5–8%. For a stop this tight, set <strong>Trading style</strong> to <em>Intraday</em> instead.
         </p>
       )}
       {error && <div className="error">{error}</div>}
