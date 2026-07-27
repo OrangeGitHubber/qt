@@ -3,6 +3,17 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Backtest: compare two strategies side by side (2026-07-27)
+
+The backtest page can now run **two** strategies over the exact same universe,
+period, cash and spread and put them head to head — a "Compare against
+(optional)" picker next to the strategy selector. When set, both strategies run
+and you get a **head-to-head table** (net P&L, win rate, max drawdown, trades,
+profit factor, return on money used — the winner of each highlighted) plus **both
+equity curves overlaid** on one chart. Because every setting except the strategy
+rules is identical, the difference you see is purely the strategy. Part of Phase
+4's "side-by-side compare of strategy configs."
+
 ## Fix: crypto scanner's volume floor was set ~40× too high (2026-07-27)
 
 Crypto scanner replay was only finding ~16 "riser" days across a whole year of

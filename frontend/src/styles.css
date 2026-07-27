@@ -1523,6 +1523,18 @@ button.linklike {
   }
 }
 
+/* Backtest head-to-head comparison table. */
+.compare-table {
+  margin: 1rem 0;
+}
+.compare-table h4 {
+  margin: 0 0 0.5rem;
+}
+.compare-table .cmp-win {
+  font-weight: 700;
+  color: var(--ok);
+}
+
 /* Slack message-category opt-in list. */
 .notify-prefs {
   margin-top: 1.1rem;

@@ -24,6 +24,15 @@ function Stat({ label, value, tone }: { label: string; value: string; tone?: "up
   );
 }
 
+// Which side of a head-to-head metric wins? true = A, false = B, null = tie/n-a.
+function cmp(a: number | null | undefined, b: number | null | undefined, higherBetter: boolean): boolean | null {
+  if (a == null || b == null || a === b) return null;
+  return higherBetter ? a > b : a < b;
+}
+function pct(v: number | null | undefined): string {
+  return v != null ? `${v}%` : "—";
+}
+
 export default function Backtest() {
   const [strategies, setStrategies] = useState<StrategyRow[]>([]);
   const [strategyId, setStrategyId] = useState<number | null>(null);
@@ -39,6 +48,8 @@ export default function Backtest() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<BacktestResult | null>(null);
+  const [compareId, setCompareId] = useState<number | null>(null); // optional 2nd strategy
+  const [compareResult, setCompareResult] = useState<BacktestResult | null>(null);
 
   // Place each buy/sell on the equity curve's day index.
   const markers = useMemo<ChartMarker[]>(() => {
@@ -170,18 +181,28 @@ export default function Backtest() {
     setBusy(true);
     setError(null);
     setResult(null);
+    setCompareResult(null);
+    // Both strategies run over the SAME settings (universe, period, cash,
+    // spread) so the only difference is the strategy's own rules — an
+    // apples-to-apples head-to-head.
+    const base = {
+      symbols,
+      scanner_replay: scannerReplay,
+      replay_top_n: replayTopN,
+      days,
+      timeframe,
+      starting_cash: cash,
+      spread_pct: spread,
+    };
     try {
-      const r = await runBacktest({
-        strategy_id: strategyId,
-        symbols,
-        scanner_replay: scannerReplay,
-        replay_top_n: replayTopN,
-        days,
-        timeframe,
-        starting_cash: cash,
-        spread_pct: spread,
-      });
+      const [r, cr] = await Promise.all([
+        runBacktest({ strategy_id: strategyId, ...base }),
+        compareId !== null && compareId !== strategyId
+          ? runBacktest({ strategy_id: compareId, ...base })
+          : Promise.resolve(null),
+      ]);
       setResult(r);
+      setCompareResult(cr);
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -216,6 +237,19 @@ export default function Backtest() {
                     {s.name} ({s.asset_class})
                   </option>
                 ))}
+              </select>
+            </label>
+            <label>
+              <span className="field-cap">Compare against (optional)</span>
+              <select value={compareId ?? ""} onChange={(e) => setCompareId(e.target.value ? Number(e.target.value) : null)}>
+                <option value="">— none —</option>
+                {strategies
+                  .filter((s) => s.id !== strategyId)
+                  .map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.name} ({s.asset_class})
+                    </option>
+                  ))}
               </select>
             </label>
             {/* a composite widget, not a single control — <label> would
@@ -370,6 +404,52 @@ export default function Backtest() {
               <Stat label="Max drawdown" value={`${result.max_drawdown_pct}%`} tone={result.max_drawdown_pct > 10 ? "down" : undefined} />
             </div>
 
+            {compareResult &&
+              (() => {
+                const A = result;
+                const B = compareResult;
+                const aName = strategies.find((s) => s.id === strategyId)?.name ?? "Strategy A";
+                const bName = strategies.find((s) => s.id === compareId)?.name ?? "Strategy B";
+                // aWins: true → A is better, false → B is better, null → tie/n-a.
+                // Higher is better except drawdown (lower is better).
+                const rows = [
+                  { label: "Net P&L", a: `${A.net_pnl_pct}%`, b: `${B.net_pnl_pct}%`, aWins: cmp(A.net_pnl_pct, B.net_pnl_pct, true) },
+                  { label: "Win rate", a: pct(A.win_rate), b: pct(B.win_rate), aWins: cmp(A.win_rate, B.win_rate, true) },
+                  { label: "Max drawdown", a: `${A.max_drawdown_pct}%`, b: `${B.max_drawdown_pct}%`, aWins: cmp(A.max_drawdown_pct, B.max_drawdown_pct, false) },
+                  { label: "Trades", a: String(A.trades), b: String(B.trades), aWins: null },
+                  { label: "Profit factor", a: A.profit_factor != null ? String(A.profit_factor) : "—", b: B.profit_factor != null ? String(B.profit_factor) : "—", aWins: cmp(A.profit_factor, B.profit_factor, true) },
+                  { label: "Return on money used", a: pct(A.return_on_deployed_pct), b: pct(B.return_on_deployed_pct), aWins: cmp(A.return_on_deployed_pct, B.return_on_deployed_pct, true) },
+                ];
+                return (
+                  <div className="compare-table">
+                    <h4>
+                      Head-to-head{" "}
+                      <span className="hint">(same universe, period &amp; cash — only the strategy rules differ)</span>
+                    </h4>
+                    <div className="table-scroll">
+                      <table>
+                        <thead>
+                          <tr>
+                            <th>Metric</th>
+                            <th>{aName}</th>
+                            <th>{bName}</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {rows.map((r) => (
+                            <tr key={r.label}>
+                              <td>{r.label}</td>
+                              <td className={r.aWins === true ? "cmp-win" : ""}>{r.a}</td>
+                              <td className={r.aWins === false ? "cmp-win" : ""}>{r.b}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                );
+              })()}
+
             {result.trades > 0 && (
               <div className="deployment">
                 <h4>
@@ -402,9 +482,22 @@ export default function Backtest() {
 
             <LineChart
               labels={result.equity_days}
-              markers={markers}
+              markers={compareResult ? [] : markers}
               series={[
-                { label: "This strategy", color: "var(--accent)", values: result.equity },
+                {
+                  label: compareResult ? strategies.find((s) => s.id === strategyId)?.name ?? "Strategy A" : "This strategy",
+                  color: "var(--accent)",
+                  values: result.equity,
+                },
+                ...(compareResult
+                  ? [
+                      {
+                        label: strategies.find((s) => s.id === compareId)?.name ?? "Strategy B",
+                        color: "#a78bfa",
+                        values: compareResult.equity,
+                      },
+                    ]
+                  : []),
                 ...(result.hold_benchmark
                   ? [
                       {
