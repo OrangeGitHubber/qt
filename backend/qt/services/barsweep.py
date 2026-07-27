@@ -179,9 +179,11 @@ def reconstruct_movers(
     total_rows = q.count() if progress else 0
 
     quotes_by_day: dict[str, list[DayQuote]] = {}
+    all_days: set[str] = set()  # distinct daily-bar days actually in the cache
     prev_symbol: str | None = None
     prev_close: float | None = None
     for i, bar in enumerate(q.order_by(daily_model.symbol, daily_model.day).yield_per(5000), start=1):
+        all_days.add(bar.day)
         if bar.symbol != prev_symbol:
             prev_symbol = bar.symbol
             prev_close = None
@@ -197,6 +199,7 @@ def reconstruct_movers(
             progress("load", i, total_rows)
 
     days = [d for d in sorted(quotes_by_day) if since_day is None or d >= since_day]
+    stored_days = 0
     for j, day in enumerate(days, start=1):
         ranked = barcache.rank_movers(
             quotes_by_day[day],
@@ -207,9 +210,18 @@ def reconstruct_movers(
             min_dollar_volume=min_dollar_volume,
         )
         barcache.store_movers(sess, day, ranked, model=mover_model)
+        if ranked:
+            stored_days += 1
         if progress and (j % 20 == 0 or j == len(days)):
             progress("rank", j, len(days))
     sess.commit()
+    # Diagnostic: separates "how many days of bars are cached" from "how many days
+    # produced a mover" — pinpoints whether a low mover-day count is a save gap or
+    # a filter/ranking effect.
+    log.info(
+        "reconstruct %s: %d distinct daily-bar days cached, %d rankable, %d stored with >=1 mover",
+        getattr(mover_model, "__tablename__", mover_model), len(all_days), len(days), stored_days,
+    )
     return len(days)
 
 
