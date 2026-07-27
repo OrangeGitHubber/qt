@@ -3,6 +3,17 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Slack trade alerts: ticker now unmistakable (2026-07-27)
+
+A buy alert like "bought 27 DAMD @ $1.85 — up 17.19% today, above VWAP…" could
+be misread — with nothing separating the symbol from the reason, one reader
+thought the bot had "bought VWAP". The buy and sell messages now put a `×`
+between the quantity and the symbol, bold the symbol itself, and fence the
+sections apart with `·` separators and plain labels, e.g. "bought 27 × *DAMD*
+@ $1.8500 · reason: up 17.19% today, above VWAP; all rails passed · strategy:
+Small cap daily pumps". Same information, just impossible to confuse the ticker
+for part of the reason.
+
 ## Settings: bar-cache panel reorganised as stocks | crypto columns (2026-07-27)
 
 The historical-bar-cache controls had grown into a hard-to-scan pile — stock

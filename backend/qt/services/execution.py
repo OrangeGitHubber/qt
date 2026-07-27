@@ -131,8 +131,8 @@ async def open_trade(
     )
     await notify.slack(
         session,
-        f":large_green_circle: *{mode.upper()}* bought {trade.qty:g} {cand.symbol} "
-        f"@ ${trade.entry_price:,.4f} — {reason} (strategy: {strategy.name})",
+        f":large_green_circle: *{mode.upper()}* bought {trade.qty:g} × *{cand.symbol}* "
+        f"@ ${trade.entry_price:,.4f} · reason: {reason} · strategy: {strategy.name}",
     )
     return trade
 
@@ -209,7 +209,7 @@ async def close_trade(
     )
     await notify.slack(
         session,
-        f"{emoji} *{trade.mode.upper()}* sold {trade.qty:g} {trade.symbol} @ ${exit_price:,.4f} — "
-        f"{reason} → P&L *${trade.pnl:,.2f}* ({pnl_pct:+.2f}%)",
+        f"{emoji} *{trade.mode.upper()}* sold {trade.qty:g} × *{trade.symbol}* @ ${exit_price:,.4f} "
+        f"· reason: {reason} · P&L *${trade.pnl:,.2f}* ({pnl_pct:+.2f}%)",
     )
     return True
