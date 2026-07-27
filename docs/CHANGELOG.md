@@ -3,6 +3,27 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Dashboard: per-strategy contribution breakdown (2026-07-27)
+
+The dashboard scoreboard shows ONE bot line, which can't tell you *which*
+strategy made or lost the money. A new "Strategy contributions" card breaks that
+single number apart.
+
+It has two parts. First, a table: each strategy's realized (locked-in) profit or
+loss, its trade count, win rate, and how many positions it still has open — and
+the rows sum exactly to the account's realized total, so nothing is hidden or
+double-counted. Each strategy gets a stable colour used everywhere on the card.
+
+Second, a stacked-bar chart of the last 30 days that had trades: one bar per day,
+each bar split by strategy, gains rising above the zero line and losses dropping
+below. It answers "who contributed what, and when" at a glance — you can see a
+single strategy quietly bleeding on days the total still looked fine.
+
+Both are computed straight from the closed-trade journal (grouped by strategy,
+bucketed by exit date), so there's no new data to store and the numbers always
+match the journal. Only the current engine mode's trades count (paper trades
+don't mix into a live breakdown).
+
 ## Crypto scanner-replay backtesting (2026-07-27)
 
 A crypto "today's risers" strategy can now be backtested with scanner replay,

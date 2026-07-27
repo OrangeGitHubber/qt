@@ -1,6 +1,6 @@
 """Engine control endpoints: mode ladder, risk rails, journal, scoreboard."""
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
@@ -276,3 +276,37 @@ def strategy_pnl(session: Session = Depends(get_session)) -> dict:
     strategies.sort(key=lambda s: s["realized_pnl"], reverse=True)
     realized_total = round(sum(s["realized_pnl"] for s in strategies), 2)
     return {"mode": mode, "realized_total": realized_total, "strategies": strategies}
+
+
+@router.get("/strategy-pnl-daily")
+def strategy_pnl_daily(days: int = 30, session: Session = Depends(get_session)) -> dict:
+    """Per-strategy realized P&L bucketed by day (active mode) for a stacked
+    daily-contribution chart. Derived from closed trades grouped by exit DATE ×
+    strategy — no snapshot storage needed. Realized only; a day with no closed
+    trades simply doesn't appear."""
+    mode = get_mode(session)
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%d")
+    day_col = func.date(Trade.exit_at)  # 'YYYY-MM-DD' of the (UTC) exit timestamp
+    rows = (
+        session.query(day_col, Trade.strategy_id, func.coalesce(func.sum(Trade.pnl), 0.0))
+        .filter(
+            Trade.mode == mode, Trade.status == "closed",
+            Trade.exit_at.isnot(None), day_col >= cutoff,
+        )
+        .group_by(day_col, Trade.strategy_id)
+        .all()
+    )
+    names = dict(session.query(Strategy.id, Strategy.name).all())
+    days_sorted = sorted({d for d, _, _ in rows})
+    idx = {d: i for i, d in enumerate(days_sorted)}
+    per_strategy: dict[int, list[float]] = {}
+    for d, sid, pnl in rows:
+        vals = per_strategy.setdefault(sid, [0.0] * len(days_sorted))
+        vals[idx[d]] = round(float(pnl or 0), 2)
+    strategies = [
+        {"strategy_id": sid, "name": names.get(sid, f"#{sid} (deleted)"),
+         "values": vals, "total": round(sum(vals), 2)}
+        for sid, vals in per_strategy.items()
+    ]
+    strategies.sort(key=lambda s: s["total"], reverse=True)
+    return {"mode": mode, "days": days_sorted, "strategies": strategies}

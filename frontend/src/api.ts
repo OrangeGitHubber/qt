@@ -199,6 +199,28 @@ export const getJournal = (mode?: string, status?: string, assetClass?: string) 
 };
 export const getScoreboard = () => fetch("/api/engine/scoreboard").then((r) => handle<Scoreboard>(r));
 
+export interface StrategyPnl {
+  mode: string;
+  realized_total: number;
+  strategies: {
+    strategy_id: number;
+    name: string;
+    realized_pnl: number;
+    trades: number;
+    wins: number;
+    win_rate: number | null;
+    open_positions: number;
+  }[];
+}
+export interface StrategyPnlDaily {
+  mode: string;
+  days: string[];
+  strategies: { strategy_id: number; name: string; values: number[]; total: number }[];
+}
+export const getStrategyPnl = () => fetch("/api/engine/strategy-pnl").then((r) => handle<StrategyPnl>(r));
+export const getStrategyPnlDaily = (days = 30) =>
+  fetch(`/api/engine/strategy-pnl-daily?days=${days}`).then((r) => handle<StrategyPnlDaily>(r));
+
 export interface BarCacheStats {
   daily_symbols: number;
   movers_days: number;

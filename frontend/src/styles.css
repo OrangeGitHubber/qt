@@ -1416,3 +1416,17 @@ button.linklike {
   border-color: var(--warn);
   color: var(--warn);
 }
+
+/* Stacked daily-P&L bars (Dashboard "Strategy contributions"). */
+.stacked-bars {
+  width: 100%;
+  height: auto;
+  display: block;
+  margin: 0.25rem 0 0.5rem;
+}
+.stacked-bars .axis-line {
+  stroke: var(--muted);
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+  opacity: 0.6;
+}

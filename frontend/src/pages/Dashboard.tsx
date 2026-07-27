@@ -1,7 +1,22 @@
 import { useCallback, useEffect, useState } from "react";
-import { EngineState, getEngine, getScoreboard, Scoreboard, setEngineMode, StatusResponse } from "../api";
+import {
+  EngineState,
+  getEngine,
+  getScoreboard,
+  getStrategyPnl,
+  getStrategyPnlDaily,
+  Scoreboard,
+  setEngineMode,
+  StatusResponse,
+  StrategyPnl,
+  StrategyPnlDaily,
+} from "../api";
 import InfoTip from "../components/InfoTip";
 import LineChart from "../components/LineChart";
+import StackedPnlBars, { PnlSeries } from "../components/StackedPnlBars";
+
+// Categorical palette for per-strategy colors (chart + table swatch share it).
+const PALETTE = ["#4f8cff", "#2ecc71", "#f39c12", "#a78bfa", "#22d3ee", "#f472b6", "#e74c3c", "#94a3b8"];
 
 function money(v: string | undefined, currency = "USD") {
   if (v === undefined) return "—";
@@ -25,20 +40,6 @@ function heartbeat(iso: string | null): { label: string; stale: boolean } {
 function signed(n: number): string {
   return `${n >= 0 ? "+" : "−"}$${Math.abs(n).toFixed(2)}`;
 }
-
-type StrategyPnl = {
-  mode: string;
-  realized_total: number;
-  strategies: {
-    strategy_id: number;
-    name: string;
-    realized_pnl: number;
-    trades: number;
-    wins: number;
-    win_rate: number | null;
-    open_positions: number;
-  }[];
-};
 
 export default function Dashboard({ status }: { status: StatusResponse; onRefresh?: () => void }) {
   const { broker, market, error } = status;
@@ -98,64 +99,94 @@ export default function Dashboard({ status }: { status: StatusResponse; onRefres
 }
 
 function StrategyContributionsCard() {
-  const [data, setData] = useState<StrategyPnl | null>(null);
+  const [totals, setTotals] = useState<StrategyPnl | null>(null);
+  const [daily, setDaily] = useState<StrategyPnlDaily | null>(null);
 
   useEffect(() => {
-    fetch("/api/engine/strategy-pnl")
-      .then((r) => (r.ok ? r.json() : Promise.reject()))
-      .then(setData)
-      .catch(() => setData(null));
+    getStrategyPnl().then(setTotals).catch(() => setTotals(null));
+    getStrategyPnlDaily(30).then(setDaily).catch(() => setDaily(null));
   }, []);
 
-  if (!data) return null;
+  if (!totals) return null;
+
+  // One stable colour per strategy, shared by the table swatch and the chart.
+  const orderIds = (daily?.strategies ?? totals.strategies).map((s) => s.strategy_id);
+  const colorFor = (id: number) => PALETTE[Math.max(0, orderIds.indexOf(id)) % PALETTE.length];
+  const series: PnlSeries[] = (daily?.strategies ?? []).map((s) => ({
+    name: s.name,
+    color: colorFor(s.strategy_id),
+    values: s.values,
+  }));
+
   return (
     <div className="card">
       <h3>
-        Strategy contributions <span className="hint">(realized · {data.mode} mode)</span>
+        Strategy contributions <span className="hint">(realized · {totals.mode} mode)</span>
       </h3>
       <p className="hint">
         Each strategy's realized (locked-in) profit or loss — the exact split behind the single scoreboard line, and it
         sums to the account's realized total. Open positions are shown as a count, not yet marked to market.
       </p>
-      {data.strategies.length === 0 ? (
+      {totals.strategies.length === 0 ? (
         <p className="hint">
-          No {data.mode}-mode trades yet — each strategy's contribution appears here once it closes a trade.
+          No {totals.mode}-mode trades yet — each strategy's contribution appears here once it closes a trade.
         </p>
       ) : (
-        <table>
-          <thead>
-            <tr>
-              <th>Strategy</th>
-              <th>Realized P&amp;L</th>
-              <th>Trades</th>
-              <th>Win rate</th>
-              <th>Open</th>
-            </tr>
-          </thead>
-          <tbody>
-            {data.strategies.map((s) => (
-              <tr key={s.strategy_id}>
-                <td className="sym">{s.name}</td>
-                <td className={s.realized_pnl >= 0 ? "up" : "down"}>{signed(s.realized_pnl)}</td>
-                <td>{s.trades}</td>
-                <td>{s.win_rate == null ? "—" : `${Math.round(s.win_rate * 100)}%`}</td>
-                <td>{s.open_positions || "—"}</td>
+        <>
+          <table>
+            <thead>
+              <tr>
+                <th>Strategy</th>
+                <th>Realized P&amp;L</th>
+                <th>Trades</th>
+                <th>Win rate</th>
+                <th>Open</th>
               </tr>
-            ))}
-            <tr>
-              <td className="sym" style={{ borderTop: "2px solid var(--border)" }}>
-                Total
-              </td>
-              <td
-                className={data.realized_total >= 0 ? "up" : "down"}
-                style={{ borderTop: "2px solid var(--border)", fontWeight: 700 }}
-              >
-                {signed(data.realized_total)}
-              </td>
-              <td colSpan={3} style={{ borderTop: "2px solid var(--border)" }}></td>
-            </tr>
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {totals.strategies.map((s) => (
+                <tr key={s.strategy_id}>
+                  <td className="sym">
+                    <span className="swatch" style={{ background: colorFor(s.strategy_id) }} /> {s.name}
+                  </td>
+                  <td className={s.realized_pnl >= 0 ? "up" : "down"}>{signed(s.realized_pnl)}</td>
+                  <td>{s.trades}</td>
+                  <td>{s.win_rate == null ? "—" : `${Math.round(s.win_rate * 100)}%`}</td>
+                  <td>{s.open_positions || "—"}</td>
+                </tr>
+              ))}
+              <tr>
+                <td className="sym" style={{ borderTop: "2px solid var(--border)" }}>
+                  Total
+                </td>
+                <td
+                  className={totals.realized_total >= 0 ? "up" : "down"}
+                  style={{ borderTop: "2px solid var(--border)", fontWeight: 700 }}
+                >
+                  {signed(totals.realized_total)}
+                </td>
+                <td colSpan={3} style={{ borderTop: "2px solid var(--border)" }}></td>
+              </tr>
+            </tbody>
+          </table>
+
+          {daily && daily.days.length > 0 && (
+            <>
+              <p className="hint" style={{ marginTop: "1rem" }}>
+                Daily realized contribution (last 30 days with trades) — each bar is a day, stacked by strategy; gains
+                rise above the line, losses drop below.
+              </p>
+              <StackedPnlBars days={daily.days} series={series} />
+              <div className="legend">
+                {series.map((s) => (
+                  <span key={s.name}>
+                    <span className="swatch" style={{ background: s.color }} /> {s.name}
+                  </span>
+                ))}
+              </div>
+            </>
+          )}
+        </>
       )}
     </div>
   );

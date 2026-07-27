@@ -147,3 +147,43 @@ def test_strategy_pnl_breaks_down_realized_by_strategy(client):
         s.query(Trade).delete()
         s.query(Strategy).delete()
         set_setting(s, "engine_mode", "off")
+
+
+def test_strategy_pnl_daily_buckets_realized_by_exit_date(client):
+    from datetime import datetime
+
+    from qt.models import Strategy, Trade
+
+    with session_scope() as s:
+        set_setting(s, "engine_mode", "paper")
+        s.query(Trade).delete()
+        s.query(Strategy).delete()
+        a = Strategy(name="Alpha", asset_class="stock", params="{}")
+        b = Strategy(name="Beta", asset_class="stock", params="{}")
+        s.add_all([a, b])
+        s.flush()
+
+        def closed(sid, sym, pnl, day):
+            return Trade(strategy_id=sid, mode="paper", symbol=sym, asset_class="stock",
+                         status="closed", qty=1, notional=100, pnl=pnl,
+                         exit_at=datetime(int(day[:4]), int(day[5:7]), int(day[8:10]), 15, 0))
+
+        s.add_all([
+            closed(a.id, "X", 10, "2026-07-20"),
+            closed(a.id, "Y", 5, "2026-07-21"),
+            closed(b.id, "Z", -8, "2026-07-20"),
+            Trade(strategy_id=a.id, mode="paper", symbol="O", asset_class="stock", status="open", qty=1, notional=100),
+        ])
+        s.commit()
+
+    body = client.get("/api/engine/strategy-pnl-daily?days=3650").json()
+    assert body["days"] == ["2026-07-20", "2026-07-21"]  # only days with closed trades
+    by = {r["name"]: r for r in body["strategies"]}
+    assert by["Alpha"]["values"] == [10.0, 5.0] and by["Alpha"]["total"] == 15.0
+    assert by["Beta"]["values"] == [-8.0, 0.0] and by["Beta"]["total"] == -8.0
+    assert body["strategies"][0]["name"] == "Alpha"  # sorted by total, best first
+
+    with session_scope() as s:
+        s.query(Trade).delete()
+        s.query(Strategy).delete()
+        set_setting(s, "engine_mode", "off")
