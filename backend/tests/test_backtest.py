@@ -106,6 +106,36 @@ def test_flatten_before_close_fires_on_last_intraday_bar():
     assert trade["entry_price"] == 104 and trade["exit_price"] == 106  # exits on the day's last bar
 
 
+def _daily(closes: list[float], start_day: str = "2026-05-04") -> list[dict]:
+    """One bar per ET day (stamped 14:00Z = 10:00 ET, safely inside the day)."""
+    from datetime import date
+
+    d0 = date.fromisoformat(start_day)
+    out = []
+    for i, c in enumerate(closes):
+        out.append({"t": f"{(d0 + timedelta(days=i)).isoformat()}T14:00:00Z",
+                    "c": c, "v": 1000, "vw": c})
+    return out
+
+
+def test_flatten_before_close_on_daily_bars_still_enters():
+    # Regression: with flatten-before-close on and DAILY bars (one bar per day,
+    # so each bar is both first AND last of its day), the entry guard must NOT
+    # skip every bar — that produced "0 bars evaluated, 0 trades".
+    strat = {
+        **STRATEGY,
+        "params": {
+            "entry": STRATEGY["params"]["entry"],
+            "exit": {**STRATEGY["params"]["exit"], "flatten_before_close": True},
+        },
+    }
+    series = _daily([100, 104, 104])  # day1 baseline, day2 +4% (entry), day3 flat
+    result = run_backtest(strat, {"TEST": series}, RISK, starting_cash=5000, spread_pct=0)
+    assert result["diagnosis"]["bars_evaluated"] > 0   # bars WERE evaluated
+    assert result["trades"] == 1                        # entered day2…
+    assert result["trade_list"][0]["exit_reason"] == "flatten before market close"  # …flattened day3
+
+
 def test_stop_loss_and_costs():
     # Entry at 104, collapse to 99 → stop-loss. Spread cost should worsen P&L.
     series = _spread_day([100, 100, 100], [104, 99, 99])

@@ -64,7 +64,8 @@ def _prepare(bars: list[dict]) -> list[dict]:
     for i, bar in enumerate(bars):
         ts = _parse_ts(bar["t"])
         day = _et_day(ts)
-        if day != cur_day:
+        first_of_day = day != cur_day
+        if first_of_day:
             prev_day_close = last_close
             cur_day = day
             cum_pv = cum_v = 0.0
@@ -73,7 +74,9 @@ def _prepare(bars: list[dict]) -> list[dict]:
         cum_v += volume
         change_pct = ((bar["c"] / prev_day_close - 1) * 100) if prev_day_close else None
         # Last bar of its ET day: the "before the close" moment a flatten-before-
-        # close exit needs. On daily bars every bar is the last of its day.
+        # close exit needs. `first_of_day` distinguishes a genuine intraday close
+        # from a DAILY bar (which is both first and last of its day) — the entry
+        # guard must not treat a one-bar day as "the flatten bar".
         next_day = _et_day(_parse_ts(bars[i + 1]["t"])) if i + 1 < len(bars) else None
         out.append(
             {
@@ -83,6 +86,7 @@ def _prepare(bars: list[dict]) -> list[dict]:
                 "change_pct": change_pct,
                 "vwap": (cum_pv / cum_v) if cum_v else None,
                 "last_of_day": next_day != day,
+                "first_of_day": first_of_day,
             }
         )
         last_close = float(bar["c"])
@@ -214,8 +218,14 @@ def run_backtest(
             if bar["change_pct"] is None:
                 continue
             # Never open a position on the very bar we'd flatten it for the close —
-            # a scalp with no time to work, then instantly liquidated.
-            if bar.get("last_of_day") and params.get("exit", {}).get("flatten_before_close"):
+            # a scalp with no time to work. Only applies to a genuine intraday
+            # last bar; a DAILY bar is both first and last of its day, so skipping
+            # it here would (wrongly) block every entry on the daily fallback.
+            if (
+                bar.get("last_of_day")
+                and not bar.get("first_of_day")
+                and params.get("exit", {}).get("flatten_before_close")
+            ):
                 continue
             diag["bars_evaluated"] += 1
             if diag["max_day_gain_pct"] is None or bar["change_pct"] > diag["max_day_gain_pct"]:

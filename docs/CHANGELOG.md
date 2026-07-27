@@ -3,6 +3,15 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Fix: flatten-before-close strategy gave zero trades on daily bars (2026-07-26)
+
+The new "don't open a position on the bar we'd flatten it" guard skipped any bar
+that's the last of its day — but a *daily* bar is the only bar of its day, so on
+the daily-bar replay path it skipped **every** bar, producing "0 bars evaluated,
+0 trades" for any strategy with flatten-before-close on. The guard now only
+applies to a genuine intraday last bar (a bar that isn't also the first of its
+day), so daily replay evaluates and trades normally again.
+
 ## Fix: scanner replay on an existing cache (missing intraday table) (2026-07-26)
 
 A cache built before the intraday feature (e.g. a durable Postgres cache with
