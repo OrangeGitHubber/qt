@@ -163,6 +163,12 @@ export const GLOSSARY: Record<string, GlossaryEntry> = {
       "A named group of symbols you pick — a theme like Defense or Banking. It is NOT an authoritative sector database: Alpaca provides no sector or industry data on this plan, so the starter baskets are hand-picked and yours to edit, and they drift as companies change. A basket is just a convenient, editable list.",
     url: "https://www.investopedia.com/terms/s/sector.asp",
   },
+  dca: {
+    term: "Dollar-cost averaging",
+    explain:
+      "Buying a fixed set of symbols on a fixed schedule (e.g. every 7 days) regardless of price or momentum — the same dollars, rain or shine. It removes timing decisions and is the steady baseline a smarter strategy has to beat. QT implements it as independent lots: each scheduled buy is its own separate position (no averaging together, no momentum exits), so they simply accumulate unless you add a stop.",
+    url: "https://www.investopedia.com/terms/d/dollarcostaveraging.asp",
+  },
   rank_by: {
     term: "Top-N ranking",
     explain:

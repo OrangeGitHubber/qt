@@ -50,6 +50,9 @@ export interface StrategyParams {
     exit_slippage_pct: number;
     exit_slippage_max_pct: number;
   };
+  // Present only on a DCA baseline sleeve: buy the fixed symbol list every
+  // interval_days as independent lots. Absent or <= 0 = not a DCA strategy.
+  dca?: { interval_days: number };
 }
 
 export type RankBy = "momentum_today" | "return_30d" | "relative_strength";
@@ -83,6 +86,7 @@ export interface Preset {
   swing_mode: boolean;
   rank_by?: RankBy; // basket presets carry a ranking + count
   top_n?: number;
+  symbols?: string[]; // custom-universe presets (e.g. DCA sleeve) can seed a symbol list
   params: StrategyParams;
 }
 

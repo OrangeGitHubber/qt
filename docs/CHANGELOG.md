@@ -3,6 +3,25 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## DCA baseline sleeve strategy (2026-07-27)
+
+A new **"DCA baseline sleeve (weekly)"** preset: an always-on
+dollar-cost-averaging sleeve that buys a **fixed set of ETFs on a fixed cadence**
+(every 7 days by default) no matter what the market is doing. It's the dumb,
+steady baseline the momentum strategies have to beat — the same dollars, rain or
+shine, with no timing decisions. Pick the preset (it seeds SPY + QQQ; edit to
+your own always-buy list), set "Buy every N days," and it accumulates.
+
+Under the hood each scheduled buy is its **own independent lot** — a clean,
+single position — not an averaged-together basis. That keeps the engine's
+one-position-per-symbol model intact while letting several lots of the same
+symbol coexist: the DCA path bypasses **only** the "already open for this symbol"
+check, so a fresh weekly buy is allowed even while earlier lots are still held.
+**Every other safety rail still applies** — the sleeve budget, the exposure cap
+(never more than your cash), the account-wide trade-rate limit, and the
+daily-loss kill switch. Lots are buy-and-hold with no momentum exits unless you
+add a stop yourself.
+
 ## Sector-ETF relative-strength rotation strategy (2026-07-27)
 
 A new **"Sector rotation"** preset (and the engine support behind it): hold only

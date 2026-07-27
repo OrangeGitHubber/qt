@@ -31,8 +31,11 @@ class EntryRules(BaseModel):
 
 
 class ExitRules(BaseModel):
-    trailing_stop_pct: float = Field(default=5.0, ge=0.5, le=50)
-    stop_loss_pct: float = Field(default=4.0, gt=0, le=50)  # a hard stop is mandatory
+    # Lower bounds allow 0 so a buy-and-hold DCA sleeve can turn every exit off.
+    # A hard stop stays MANDATORY for normal strategies — enforced in
+    # StrategyParams below, which can see whether this is a DCA sleeve.
+    trailing_stop_pct: float = Field(default=5.0, ge=0, le=50)
+    stop_loss_pct: float = Field(default=4.0, ge=0, le=50)
     take_profit_pct: float = Field(default=0, ge=0, le=500)  # 0 = disabled
     max_holding_hours: float = Field(default=0, ge=0, le=2400)  # 0 = disabled
     flatten_before_close: bool = False
@@ -52,9 +55,29 @@ class ExitRules(BaseModel):
         return self
 
 
+class DCAConfig(BaseModel):
+    """Dollar-cost-averaging sleeve config. A strategy carrying this with
+    interval_days > 0 buys its fixed symbol list every N days as independent
+    lots, regardless of momentum — the steady baseline the momentum strategies
+    must beat. Absent (None) or interval_days <= 0 = not a DCA strategy."""
+
+    interval_days: int = Field(default=0, ge=0, le=365)  # 0 = disabled
+
+
 class StrategyParams(BaseModel):
     entry: EntryRules = EntryRules()
     exit: ExitRules = ExitRules()
+    dca: DCAConfig | None = None  # present only for DCA sleeve strategies
+
+    @model_validator(mode="after")
+    def _stop_required_unless_dca(self) -> "StrategyParams":
+        # A hard stop-loss is mandatory for every normal strategy. The lone
+        # exception is a buy-and-hold DCA sleeve, which is allowed to run with
+        # all exits off (the user may still add a stop if they want one).
+        is_dca = self.dca is not None and self.dca.interval_days > 0
+        if not is_dca and self.exit.stop_loss_pct <= 0:
+            raise ValueError("A hard stop-loss is mandatory (stop_loss_pct must be > 0).")
+        return self
 
 
 class StrategyBody(BaseModel):

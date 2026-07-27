@@ -448,6 +448,21 @@ async def _consider_entries(
         if strategy.asset_class == "stock" and not market_open:
             continue
 
+        params = json.loads(strategy.params)
+
+        # DCA sleeve branch: a strategy whose params carry dca.interval_days > 0
+        # is an always-on dollar-cost-averaging baseline. It buys a FIXED symbol
+        # list on a fixed cadence regardless of momentum, so it takes its own
+        # entry path (independent lots) and skips BOTH the momentum entry rules
+        # and the regime gate — DCA buys through all market conditions by design.
+        dca = params.get("dca") or {}
+        if int(dca.get("interval_days", 0) or 0) > 0:
+            await _consider_dca_entries(
+                session, client, mode, strategy, params, equity, risk,
+                leverage_unlocked, daily_loss, today_start,
+            )
+            continue
+
         # Regime gate (stocks only, exits unaffected)
         if strategy.asset_class == "stock" and not strategy.ignore_regime:
             if get_setting(session, "regime_filter_enabled") is not False:
@@ -464,7 +479,6 @@ async def _consider_entries(
             continue
         candidates, scan_result = candidates
 
-        params = json.loads(strategy.params)
         for cand in candidates:
             entry_ok, entry_reason = evaluate_entry(params, cand, now_et)
             if not entry_ok:
@@ -498,6 +512,107 @@ async def _consider_entries(
                 session, client, strategy, version_id, mode, cand,
                 f"{entry_reason}; {rails_reason}",
             )
+
+
+async def _consider_dca_entries(
+    session: Session,
+    client: AlpacaClient,
+    mode: str,
+    strategy: Strategy,
+    params: dict,
+    equity: float,
+    risk: dict,
+    leverage_unlocked: bool,
+    daily_loss: float,
+    today_start: datetime,
+) -> None:
+    """DCA (dollar-cost-averaging) sleeve: buy a FIXED symbol list on a fixed
+    cadence, regardless of momentum — the dumb, steady baseline the momentum
+    strategies must beat.
+
+    Each scheduled buy is its own clean single-entry Trade — an independent LOT.
+    There is NO averaged basis and NO multi-buy→one-sell: the engine's one-open-
+    position-per-symbol model is preserved, we simply allow SEVERAL lots of the
+    same symbol to coexist. To do that we bypass EXACTLY ONE rail, the
+    "already open for this symbol" check; every other rail (sleeve budget,
+    exposure ≤ equity, cross-strategy trade-rate limiter, daily-loss kill switch,
+    cooldown, wash-sale) still runs through check_rails unchanged.
+
+    Lots are buy-and-hold: they carry the strategy's exit rules like any other
+    trade, so if the user leaves all exits off they simply accumulate.
+    """
+    interval_days = int(params["dca"]["interval_days"])
+    symbols = json.loads(strategy.symbols) if strategy.symbols else []
+    if not symbols:
+        return
+
+    # Snapshot the fixed list for prices. DCA does NOT run the momentum entry
+    # rules — the price is only needed to size the lot.
+    try:
+        candidates = await _symbol_candidates(client, strategy.asset_class, symbols)
+    except AlpacaError as exc:
+        log.warning("DCA candidates for '%s' failed: %s", strategy.name, exc)
+        return
+    cand_by_symbol = {c.symbol: c for c in candidates}
+
+    now_utc = datetime.now(timezone.utc)
+    interval = timedelta(days=interval_days)
+    version_id = _latest_version_id(session, strategy.id)
+
+    for sym in symbols:
+        cand = cand_by_symbol.get(sym)
+        if cand is None:
+            continue  # no price this cycle — can't size a lot; try again next tick
+
+        # Cadence check: the most recent NON-rejected lot for THIS strategy+symbol.
+        # entry_at (the buy instant) drives the schedule; a lot that has since
+        # closed still counts as the last buy. None = never bought → due now.
+        last_buy = (
+            session.query(func.max(Trade.entry_at))
+            .filter(
+                Trade.mode == mode,
+                Trade.strategy_id == strategy.id,
+                Trade.symbol == sym,
+                Trade.status != "rejected",
+            )
+            .scalar()
+        )
+        if last_buy is not None and last_buy.tzinfo is None:
+            last_buy = last_buy.replace(tzinfo=timezone.utc)
+        if last_buy is not None and (now_utc - last_buy) < interval:
+            continue  # still inside the interval — not due yet
+
+        ctx = _build_rail_context(
+            session, mode, strategy, sym, equity, risk,
+            leverage_unlocked, daily_loss, today_start,
+        )
+        # THE DCA bypass — the only rail DCA skips. Independent lots mean a fresh
+        # buy is allowed even while a prior lot for this symbol is still open.
+        # Neutralise ONLY this flag; check_rails then enforces everything else.
+        ctx.already_open_symbol = False
+        rails_ok, rails_reason = check_rails(
+            {"max_positions": strategy.max_positions, "sleeve_usd": strategy.sleeve_usd},
+            strategy.sizing_usd,
+            ctx,
+        )
+        reason = f"DCA scheduled lot (every {interval_days}d)"
+        if not rails_ok:
+            session.add(
+                Trade(
+                    strategy_id=strategy.id, config_version_id=version_id,
+                    mode=mode, symbol=sym, asset_class=cand.asset_class,
+                    qty=0, notional=0, status="rejected",
+                    entry_reason=f"wanted to buy ({reason}) but {rails_reason}",
+                )
+            )
+            continue
+
+        from qt.services import execution
+
+        await execution.open_trade(
+            session, client, strategy, version_id, mode, cand,
+            f"{reason}; {rails_reason}",
+        )
 
 
 async def _candidates_for(

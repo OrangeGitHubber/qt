@@ -119,6 +119,9 @@ function Editor({
       // Basket presets (e.g. sector rotation) carry their own ranking + count.
       rank_by: (p.rank_by ?? s.rank_by ?? "momentum_today") as StrategyRow["rank_by"],
       top_n: p.top_n ?? s.top_n ?? 10,
+      // Custom-universe presets (e.g. the DCA sleeve) can seed a starter symbol
+      // list; the deep-copied params carries params.dca along for the ride.
+      symbols: p.symbols ?? s.symbols ?? [],
       params: JSON.parse(JSON.stringify(p.params)),
     });
   }
@@ -268,6 +271,34 @@ function Editor({
             apply). Good for a focused, one-off strategy — e.g. just SPCX — without building a whole basket. Only{" "}
             {s.asset_class === "crypto" ? "crypto pairs" : "stocks"} are searchable here because this is a{" "}
             {s.asset_class === "crypto" ? "crypto" : "stocks"} strategy.
+          </p>
+        </>
+      )}
+
+      {p.dca && (
+        <>
+          <h4>
+            DCA schedule <InfoTip k="dca" />
+          </h4>
+          <div className="filter-grid">
+            <label>
+              Buy every N days
+              <NumberField
+                step="1"
+                min="1"
+                value={p.dca.interval_days}
+                onChange={(n) =>
+                  setS((cur) => ({ ...cur, params: { ...cur.params!, dca: { interval_days: n } } }))
+                }
+              />
+            </label>
+          </div>
+          <p className="hint">
+            This is a <strong>dollar-cost-averaging</strong> sleeve: it buys each symbol above every{" "}
+            <strong>{p.dca.interval_days}</strong> day{p.dca.interval_days === 1 ? "" : "s"} as an{" "}
+            <strong>independent lot</strong> — no averaging and no momentum exits, so lots simply
+            accumulate on this cadence (a buy-and-hold baseline) unless you set a stop below. Every
+            other safety rail — sleeve budget, exposure, trade-rate and daily-loss — still applies.
           </p>
         </>
       )}

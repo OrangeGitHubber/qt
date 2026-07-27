@@ -92,6 +92,45 @@ PRESETS: dict[str, dict] = {
             },
         },
     },
+    "dca_sleeve": {
+        "label": "DCA baseline sleeve (weekly)",
+        "description": (
+            "Dollar-cost averaging: buys a FIXED set of ETFs every 7 days no matter "
+            "what the market is doing — the dumb, steady baseline the momentum "
+            "strategies must beat. Each weekly buy is its own independent lot "
+            "(no averaging, no momentum exits), so it just accumulates unless you "
+            "add a stop. Edit the symbols below to your own always-buy list."
+        ),
+        "asset_class": "stock",
+        "universe": "custom",
+        # Seed a sensible always-buy list; the user edits it in the symbol picker.
+        "symbols": ["SPY", "QQQ"],
+        "swing_mode": True,
+        "params": {
+            # Momentum-free: DCA ignores the entry rules entirely, but keep them
+            # neutral so nothing filters the fixed list if the code path changes.
+            "entry": {
+                "min_day_gain_pct": 0.0,
+                "max_day_gain_pct": 0.0,
+                "min_price": 0.0,
+                "max_price": 0.0,
+                "require_above_vwap": False,
+                "entry_window_start": None,
+                "entry_window_end": None,
+            },
+            # Buy-and-hold: ALL exits off. The user may add a stop later.
+            "exit": {
+                "trailing_stop_pct": 0.0,
+                "stop_loss_pct": 0.0,
+                "take_profit_pct": 0.0,
+                "max_holding_hours": 0,
+                "flatten_before_close": False,
+                "exit_below_vwap": False,
+            },
+            # THE DCA switch: buy every 7 days as independent lots.
+            "dca": {"interval_days": 7},
+        },
+    },
     "watchlist_swing": {
         "label": "Watchlist only — swing",
         "description": (
