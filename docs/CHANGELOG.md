@@ -3,6 +3,30 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Portfolio (multi-strategy) backtest (2026-07-27)
+
+The backtester could only replay **one** strategy at a time — but live, the engine
+runs **all** your enabled strategies at once, competing for the **same account**.
+The new **Portfolio** mode on the Backtest page closes that gap: pick two or more
+strategies and replay them together over one shared cash balance and the exact
+**global risk rails** the live engine enforces — the cap on total open positions,
+exposure never exceeding your equity (no borrowing), the account-wide trade-rate
+limit, and the daily-loss kill switch. Each strategy still keeps its own sleeve
+budget, position sizing, and universe; they simply take turns drawing from one
+wallet, just like they would with real money.
+
+You get one **portfolio equity curve** and the usual honest metrics (net P&L, win
+rate, max drawdown, trades, profit factor) plus the capital-deployment tiles for
+the whole book — and, crucially, a **per-strategy contribution breakdown**: how
+much realized profit or loss each strategy added, its trade count, and its share
+of the result. Those contributions add up exactly to the portfolio total, so you
+can see which strategy actually carried the book and which just diluted it. Same
+honesty framing as the single backtest — modeled fills, a partial data feed, and
+**past results predict nothing**; a scanner strategy falls back to its watchlist
+because a shared timeline can't reconstruct the historical daily risers. The
+existing single-strategy backtest and the head-to-head "Compare against" feature
+are untouched.
+
 ## DCA baseline sleeve strategy (2026-07-27)
 
 A new **"DCA baseline sleeve (weekly)"** preset: an always-on

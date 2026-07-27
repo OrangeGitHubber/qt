@@ -551,6 +551,20 @@ tr:last-child td {
   cursor: default;
 }
 
+/* Portfolio backtest: a multi-select checklist of strategies to run together. */
+.portfolio-picker {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 0.35rem 1rem;
+  padding: 0.5rem 0.65rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel, transparent);
+}
+.portfolio-picker label.check {
+  margin: 0;
+}
+
 /* Click-to-sort table header: looks like the header text, acts like a button. */
 .th-sort {
   margin: 0;

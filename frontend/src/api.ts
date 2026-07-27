@@ -383,6 +383,60 @@ export const runBacktest = (body: {
   spread_pct: number;
 }) => fetch("/api/backtest", json(body)).then((r) => handle<BacktestResult>(r));
 
+// Portfolio (multi-strategy) backtest: N strategies over the SAME period sharing
+// ONE account + the global rails, with a per-strategy contribution breakdown.
+export interface PortfolioContribution {
+  strategy_id: number;
+  strategy_name: string;
+  realized_pnl: number;
+  trades: number;
+  wins: number;
+  win_rate: number | null;
+  share_pct: number | null; // sign-preserving share of the portfolio realized total
+}
+
+export interface PortfolioBacktestTrade extends BacktestTrade {
+  strategy_id: number;
+  strategy_name: string;
+}
+
+export interface PortfolioBacktestResult {
+  strategy_count: number;
+  strategy_names: string[];
+  timeframe: string;
+  days: number;
+  starting_cash: number;
+  final_equity: number;
+  net_pnl: number;
+  net_pnl_pct: number;
+  trades: number;
+  win_rate: number | null;
+  avg_win: number | null;
+  avg_loss: number | null;
+  profit_factor: number | null;
+  max_drawdown_pct: number;
+  spread_cost_pct_per_side: number;
+  max_deployed_usd: number;
+  pct_capital_deployed: number;
+  return_on_deployed_pct: number | null;
+  time_in_market_pct: number;
+  realized_total: number;
+  contributions: PortfolioContribution[];
+  equity_days: string[];
+  equity: number[];
+  hold_benchmark: (number | null)[] | null;
+  hold_benchmark_label: string | null;
+  trade_list: PortfolioBacktestTrade[];
+}
+
+export const runPortfolioBacktest = (body: {
+  strategy_ids: number[];
+  days: number;
+  timeframe: string;
+  starting_cash: number;
+  spread_pct: number;
+}) => fetch("/api/backtest/portfolio", json(body)).then((r) => handle<PortfolioBacktestResult>(r));
+
 async function handle<T>(resp: Response): Promise<T> {
   if (!resp.ok) {
     let detail = resp.statusText;

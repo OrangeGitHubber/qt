@@ -426,6 +426,283 @@ def run_backtest(
     }
 
 
+@dataclass
+class PortfolioTrade(SimTrade):
+    """A SimTrade that also remembers which strategy opened it — the portfolio
+    run shares ONE account across N strategies, so every fill must be attributable
+    back to its strategy for the contribution breakdown."""
+
+    strategy_id: int = 0
+    strategy_name: str = ""
+
+
+def run_portfolio_backtest(
+    strategies: list[dict],
+    bars_by_strategy: dict[int, dict[str, list[dict]]],
+    risk: dict,
+    starting_cash: float = 5000.0,
+    spread_pct: float = 0.1,
+    market: str = "stock",
+) -> dict:
+    """Portfolio simulation: replay N strategies over ONE merged timeline sharing
+    a SINGLE cash account and the GLOBAL risk rails — exactly like the live engine,
+    where every enabled strategy competes for the same account.
+
+    Each `strategies[i]` is a strategy dict (the run_backtest shape) PLUS `id` and
+    `name`. `bars_by_strategy` maps strategy id → its own {symbol: raw bars}; a
+    strategy trades only its own universe. The rails that bind are cross-strategy:
+    max_total_positions, exposure ≤ equity (no leverage), the per-day trade-rate
+    limiter, and the daily-loss kill switch — while each strategy keeps its own
+    sleeve, sizing and max_positions. `market` selects day bucketing (ET for
+    stocks, UTC for crypto), matching run_backtest.
+
+    Returns the standard single-run metrics + equity curve at PORTFOLIO level, PLUS
+    a per-strategy `contributions` breakdown whose realized P&L sums to the
+    portfolio net P&L. The single-strategy run_backtest is untouched — this is a
+    separate arbitration layer over the shared primitives.
+    """
+    day_of = _day_fn(market)
+    slip = spread_pct / 100
+    strat_by_id = {s["id"]: s for s in strategies}
+    order = {s["id"]: i for i, s in enumerate(strategies)}  # deterministic tie-break
+
+    # Prepare each strategy's own bars, then fold everything into one chronological
+    # event stream tagged with the strategy that owns each bar.
+    prepared_by_strategy: dict[int, dict[str, list[dict]]] = {
+        sid: {s: _prepare(b, day_of) for s, b in (bars_by_strategy.get(sid) or {}).items() if b}
+        for sid in strat_by_id
+    }
+    events: dict[datetime, list[tuple[int, str, dict]]] = {}
+    for sid, series_map in prepared_by_strategy.items():
+        for symbol, series in series_map.items():
+            for bar in series:
+                events.setdefault(bar["ts"], []).append((sid, symbol, bar))
+    if not events:
+        return {"error": "No historical bars for those strategies/timeframe."}
+
+    cash = starting_cash
+    open_trades: dict[str, PortfolioTrade] = {}  # keyed by symbol (account-wide, matches the live 'already open' rail)
+    closed: list[PortfolioTrade] = []
+    entries_by_day: dict[str, int] = {}          # cross-strategy trade-rate limiter
+    realized_by_day: dict[str, float] = {}       # daily-loss kill switch
+    last_loss_at: dict[str, datetime] = {}
+    last_price: dict[str, float] = {}
+    equity_curve: list[tuple[str, float]] = []
+    max_deployed = 0.0
+    bars_with_position = 0
+    total_bar_ticks = 0
+
+    for ts in sorted(events):
+        tick = events[ts]
+        # index this tick's bars for exit lookup + refresh last-seen prices
+        bar_at: dict[tuple[int, str], dict] = {}
+        for sid, symbol, bar in tick:
+            bar_at[(sid, symbol)] = bar
+            last_price[symbol] = bar["close"]
+        day = day_of(ts)
+
+        # ---- exits first (each trade managed by ITS OWN strategy's rules) ----
+        for symbol, trade in list(open_trades.items()):
+            bar = bar_at.get((trade.strategy_id, symbol))
+            if not bar:
+                continue
+            strat = strat_by_id[trade.strategy_id]
+            price = bar["close"]
+            trade.high_water = max(trade.high_water, price)
+            should_exit, reason = evaluate_exit(
+                strat["params"], strat["swing_mode"], trade.entry_price, trade.entry_at,
+                trade.high_water, price, bar["vwap"], ts, bar.get("last_of_day", False),
+            )
+            if not should_exit:
+                continue
+            fill = price * (1 - slip)
+            trade.exit_price = fill
+            trade.exit_at = ts
+            trade.exit_reason = reason
+            trade.pnl = round((fill - trade.entry_price) * trade.qty, 2)
+            cash += fill * trade.qty
+            realized_by_day[day] = realized_by_day.get(day, 0.0) + trade.pnl
+            if trade.pnl < 0:
+                last_loss_at[symbol] = ts
+            closed.append(trade)
+            del open_trades[symbol]
+
+        # ---- entries (deterministic order: strategy index, then symbol) ----
+        for sid, symbol, bar in sorted(tick, key=lambda e: (order[e[0]], e[1])):
+            strat = strat_by_id[sid]
+            params = strat["params"]
+            if bar["change_pct"] is None:
+                continue
+            # never open on the very bar we'd flatten for the close (see run_backtest)
+            if (
+                bar.get("last_of_day")
+                and not bar.get("first_of_day")
+                and params.get("exit", {}).get("flatten_before_close")
+            ):
+                continue
+            # recompute the shared account state for EACH candidate so an entry
+            # earlier in this bar counts against the rails for the next one
+            open_exposure = sum(t.entry_price * t.qty for t in open_trades.values())
+            equity = cash + open_exposure
+            cand = Candidate(
+                symbol=symbol, asset_class=strat["asset_class"],
+                price=bar["close"], change_pct=bar["change_pct"], vwap=bar["vwap"],
+            )
+            ok, entry_reason = evaluate_entry(params, cand, ts.astimezone(ET))
+            if not ok:
+                continue
+            strat_open = [t for t in open_trades.values() if t.strategy_id == sid]
+            strat_exposure = sum(t.entry_price * t.qty for t in strat_open)
+            daily_loss = max(0.0, -realized_by_day.get(day, 0.0))
+            ctx = RailContext(
+                equity=equity,
+                open_positions_total=len(open_trades),
+                open_exposure_usd=open_exposure,
+                open_positions_strategy=len(strat_open),
+                open_exposure_strategy_usd=strat_exposure,
+                entries_today=entries_by_day.get(day, 0),
+                already_open_symbol=symbol in open_trades,
+                last_loss_at=last_loss_at.get(symbol),
+                loss_sale_within_31d=(
+                    strat["asset_class"] == "stock"
+                    and symbol in last_loss_at
+                    and (ts - last_loss_at[symbol]) <= timedelta(days=31)
+                ),
+                risk=risk,
+                leverage_unlocked=False,
+                daily_loss_usd=daily_loss,
+            )
+            # cooldown rail uses wall-clock now(); replicate it against sim time
+            last_loss = ctx.last_loss_at
+            ctx.last_loss_at = None
+            rails_ok, _rails_reason = check_rails(
+                {"max_positions": strat["max_positions"], "sleeve_usd": strat["sleeve_usd"]},
+                strat["sizing_usd"], ctx,
+            )
+            if rails_ok and last_loss is not None:
+                cooldown = timedelta(hours=risk.get("cooldown_hours_after_loss", 24))
+                if ts - last_loss < cooldown:
+                    rails_ok = False
+            if not rails_ok:
+                continue
+            sizing = strat["sizing_usd"]
+            fill = bar["close"] * (1 + slip)
+            qty = float(int(sizing // fill)) if strat["asset_class"] == "stock" else round(sizing / fill, 6)
+            if qty <= 0 or fill * qty > cash:
+                continue
+            cash -= fill * qty
+            entries_by_day[day] = entries_by_day.get(day, 0) + 1
+            open_trades[symbol] = PortfolioTrade(
+                symbol=symbol, qty=qty, entry_price=fill, entry_at=ts,
+                entry_reason=entry_reason, high_water=fill,
+                strategy_id=sid, strategy_name=strat.get("name", ""),
+            )
+
+        deployed = sum(t.entry_price * t.qty for t in open_trades.values())
+        max_deployed = max(max_deployed, deployed)
+        total_bar_ticks += 1
+        if open_trades:
+            bars_with_position += 1
+
+        mark = cash + sum(t.qty * last_price.get(t.symbol, t.entry_price) for t in open_trades.values())
+        if not equity_curve or equity_curve[-1][0] != day:
+            equity_curve.append((day, mark))
+        else:
+            equity_curve[-1] = (day, mark)
+
+    # liquidate leftovers at the last seen price so metrics are complete
+    for symbol, trade in list(open_trades.items()):
+        fill = last_price.get(symbol, trade.entry_price) * (1 - slip)
+        trade.exit_price = fill
+        trade.exit_at = max(events)
+        trade.exit_reason = "end of backtest (forced liquidation)"
+        trade.pnl = round((fill - trade.entry_price) * trade.qty, 2)
+        cash += fill * trade.qty
+        closed.append(trade)
+    open_trades.clear()
+
+    wins = [t for t in closed if (t.pnl or 0) > 0]
+    losses = [t for t in closed if (t.pnl or 0) <= 0]
+    gross_win = sum(t.pnl or 0 for t in wins)
+    gross_loss = -sum(t.pnl or 0 for t in losses)
+    final_equity = cash
+    net_pnl = round(final_equity - starting_cash, 2)
+    equity_values = [v for _, v in equity_curve]
+    days_index = [d for d, _ in equity_curve]
+
+    pct_deployed = round(max_deployed / starting_cash * 100, 2) if starting_cash else 0.0
+    return_on_deployed = round(net_pnl / max_deployed * 100, 2) if max_deployed > 0 else None
+    time_in_market = round(bars_with_position / total_bar_ticks * 100, 1) if total_bar_ticks else 0.0
+
+    # Per-strategy contribution: realized P&L, trade count, and share of the
+    # portfolio result. These realized totals sum EXACTLY to net_pnl (every fill
+    # flows through the one shared cash balance).
+    realized_total = round(sum(t.pnl or 0 for t in closed), 2)
+    contributions = []
+    for strat in strategies:
+        sid = strat["id"]
+        mine = [t for t in closed if t.strategy_id == sid]
+        my_wins = [t for t in mine if (t.pnl or 0) > 0]
+        realized = round(sum(t.pnl or 0 for t in mine), 2)
+        contributions.append(
+            {
+                "strategy_id": sid,
+                "strategy_name": strat.get("name", ""),
+                "realized_pnl": realized,
+                "trades": len(mine),
+                "wins": len(my_wins),
+                "win_rate": round(len(my_wins) / len(mine) * 100, 1) if mine else None,
+                # Share of the portfolio's realized total. Sign-preserving, so a
+                # losing sleeve inside a winning book shows a negative share.
+                "share_pct": round(realized / realized_total * 100, 1) if realized_total else None,
+            }
+        )
+
+    all_symbols = {s: series for m in prepared_by_strategy.values() for s, series in m.items()}
+    return {
+        "starting_cash": starting_cash,
+        "final_equity": round(final_equity, 2),
+        "net_pnl": net_pnl,
+        "net_pnl_pct": round((final_equity / starting_cash - 1) * 100, 2),
+        "trades": len(closed),
+        "win_rate": round(len(wins) / len(closed) * 100, 1) if closed else None,
+        "avg_win": round(gross_win / len(wins), 2) if wins else None,
+        "avg_loss": round(-gross_loss / len(losses), 2) if losses else None,
+        "profit_factor": round(gross_win / gross_loss, 2) if gross_loss > 0 else None,
+        "max_drawdown_pct": _max_drawdown(equity_values),
+        "spread_cost_pct_per_side": spread_pct,
+        "max_deployed_usd": round(max_deployed, 2),
+        "pct_capital_deployed": pct_deployed,
+        "return_on_deployed_pct": return_on_deployed,
+        "time_in_market_pct": time_in_market,
+        "realized_total": realized_total,
+        "contributions": contributions,
+        "strategy_count": len(strategies),
+        "strategy_names": [s.get("name", "") for s in strategies],
+        "equity_days": days_index,
+        "equity": [round((v / starting_cash - 1) * 100, 2) for _, v in equity_curve],
+        "hold_benchmark": _hold_benchmark(all_symbols, days_index),
+        "hold_benchmark_label": (
+            list(all_symbols)[0] if len(all_symbols) == 1
+            else f"{len(all_symbols)} symbols (equal weight)"
+        ),
+        "trade_list": [
+            {
+                "symbol": t.symbol, "qty": t.qty,
+                "strategy_id": t.strategy_id, "strategy_name": t.strategy_name,
+                "entry_price": round(t.entry_price, 4), "entry_at": t.entry_at.isoformat(),
+                "entry_day": day_of(t.entry_at),
+                "entry_reason": t.entry_reason,
+                "exit_price": round(t.exit_price or 0, 4),
+                "exit_at": t.exit_at.isoformat() if t.exit_at else None,
+                "exit_day": day_of(t.exit_at) if t.exit_at else None,
+                "exit_reason": t.exit_reason, "pnl": t.pnl,
+            }
+            for t in closed
+        ],
+    }
+
+
 async def fetch_benchmark(
     client: AlpacaClient, asset_class: str, start_iso: str, days_index: list[str],
     market: str = "stock",

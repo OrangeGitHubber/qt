@@ -1,5 +1,14 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import { Basket, BacktestResult, getBaskets, getStrategies, runBacktest, StrategyRow } from "../api";
+import {
+  Basket,
+  BacktestResult,
+  getBaskets,
+  getStrategies,
+  PortfolioBacktestResult,
+  runBacktest,
+  runPortfolioBacktest,
+  StrategyRow,
+} from "../api";
 import InfoTip from "../components/InfoTip";
 import LineChart, { ChartMarker } from "../components/LineChart";
 import NumberField from "../components/NumberField";
@@ -34,6 +43,7 @@ function pct(v: number | null | undefined): string {
 }
 
 export default function Backtest() {
+  const [mode, setMode] = useState<"single" | "portfolio">("single");
   const [strategies, setStrategies] = useState<StrategyRow[]>([]);
   const [strategyId, setStrategyId] = useState<number | null>(null);
   const [baskets, setBaskets] = useState<Basket[]>([]);
@@ -50,6 +60,12 @@ export default function Backtest() {
   const [result, setResult] = useState<BacktestResult | null>(null);
   const [compareId, setCompareId] = useState<number | null>(null); // optional 2nd strategy
   const [compareResult, setCompareResult] = useState<BacktestResult | null>(null);
+
+  // Portfolio mode: N strategies sharing ONE account + the same global rails.
+  const [portfolioIds, setPortfolioIds] = useState<number[]>([]);
+  const [portfolioResult, setPortfolioResult] = useState<PortfolioBacktestResult | null>(null);
+  const [portfolioBusy, setPortfolioBusy] = useState(false);
+  const [portfolioError, setPortfolioError] = useState<string | null>(null);
 
   // Place each buy/sell on the equity curve's day index.
   const markers = useMemo<ChartMarker[]>(() => {
@@ -210,11 +226,278 @@ export default function Backtest() {
     }
   }
 
+  // Portfolio trade log: every buy/sell in time order, tagged with its strategy.
+  const portfolioEvents = useMemo<(TradeEvent & { strategy: string })[]>(() => {
+    if (!portfolioResult) return [];
+    const out: (TradeEvent & { strategy: string })[] = [];
+    for (const t of portfolioResult.trade_list) {
+      out.push({ at: t.entry_at, action: "Bought", symbol: t.symbol, price: t.entry_price, qty: t.qty, reason: t.entry_reason, strategy: t.strategy_name });
+      if (t.exit_at) {
+        out.push({ at: t.exit_at, action: "Sold", symbol: t.symbol, price: t.exit_price, pnl: t.pnl, reason: t.exit_reason, strategy: t.strategy_name });
+      }
+    }
+    out.sort((a, b) => new Date(a.at).getTime() - new Date(b.at).getTime());
+    return out;
+  }, [portfolioResult]);
+
+  function togglePortfolioId(id: number) {
+    setPortfolioIds((ids) => (ids.includes(id) ? ids.filter((x) => x !== id) : [...ids, id]));
+  }
+
+  async function runPortfolio(e: FormEvent) {
+    e.preventDefault();
+    if (portfolioIds.length === 0) return;
+    setPortfolioBusy(true);
+    setPortfolioError(null);
+    setPortfolioResult(null);
+    try {
+      const r = await runPortfolioBacktest({
+        strategy_ids: portfolioIds,
+        days,
+        timeframe,
+        starting_cash: cash,
+        spread_pct: spread,
+      });
+      setPortfolioResult(r);
+    } catch (err) {
+      setPortfolioError((err as Error).message);
+    } finally {
+      setPortfolioBusy(false);
+    }
+  }
+
   return (
     <>
       <div className="toolbar">
         <h2>Backtest</h2>
+        <div className="seg">
+          <button type="button" className={mode === "single" ? "active" : ""} onClick={() => setMode("single")}>
+            Single strategy
+          </button>
+          <button type="button" className={mode === "portfolio" ? "active" : ""} onClick={() => setMode("portfolio")}>
+            Portfolio
+          </button>
+        </div>
       </div>
+
+      {mode === "portfolio" && (
+        <>
+          <div className="card">
+            <p className="hint">
+              Runs <strong>several strategies at once over the same period, sharing ONE account</strong> and the same
+              global risk rails the live engine enforces — max total positions, exposure capped at your equity (no
+              leverage), the cross-strategy trade-rate limit, and the daily-loss kill switch. Each strategy still keeps
+              its own sleeve, sizing and universe. Below the portfolio result you'll see a{" "}
+              <strong>per-strategy contribution breakdown</strong>. Same honest limits as the single backtest — fills are
+              modeled as price ± spread, the free IEX feed sees a slice of the market, and{" "}
+              <strong>past results predict nothing</strong>. A scanner strategy falls back to its asset-class watchlist
+              (a merged timeline can't reconstruct the historical daily risers).
+            </p>
+            <form className="backtest-form" onSubmit={runPortfolio}>
+              <div className="field">
+                <span className="field-cap">Strategies in the portfolio (pick two or more)</span>
+                <div className="portfolio-picker">
+                  {strategies.length === 0 && <span className="hint">Create a strategy first.</span>}
+                  {strategies.map((s) => (
+                    <label key={s.id} className="check">
+                      <input type="checkbox" checked={portfolioIds.includes(s.id)} onChange={() => togglePortfolioId(s.id)} />
+                      {s.name} <span className="hint">({s.asset_class})</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+              <div className="filter-grid">
+                <label>
+                  <span className="field-cap">
+                    History (days) <InfoTip k="history_days" />
+                  </span>
+                  <NumberField min={7} max={730} step={1} value={days} onChange={setDays} />
+                </label>
+                <label>
+                  <span className="field-cap">
+                    Bar size <InfoTip k="bar" />
+                  </span>
+                  <select value={timeframe} onChange={(e) => setTimeframe(e.target.value)}>
+                    <option value="15Min">15 minutes (slow, precise)</option>
+                    <option value="1Hour">1 hour (recommended)</option>
+                    <option value="1Day">1 day (fast, coarse)</option>
+                  </select>
+                </label>
+                <label>
+                  <span className="field-cap">
+                    Starting cash ($) <InfoTip k="starting_cash" />
+                  </span>
+                  <NumberField min={100} step="any" value={cash} onChange={setCash} />
+                </label>
+                <label>
+                  <span className="field-cap">
+                    Spread cost per side (%) <InfoTip k="spread_cost" />
+                  </span>
+                  <NumberField min={0} max={2} step={0.05} value={spread} onChange={setSpread} />
+                </label>
+              </div>
+              <p className="hint">
+                One shared account across all picked strategies — set the starting cash to the whole account you'd give
+                the book, not a single sleeve.
+              </p>
+              {portfolioError && <div className="error">{portfolioError}</div>}
+              <button disabled={portfolioBusy || portfolioIds.length === 0}>
+                {portfolioBusy ? "Replaying history…" : "Run portfolio"}
+              </button>
+            </form>
+          </div>
+
+          {portfolioResult && (
+            <>
+              <div className="card">
+                <h3>
+                  Portfolio · {portfolioResult.strategy_count} strategies ({portfolioResult.strategy_names.join(", ")}) ·
+                  last {portfolioResult.days} days ({portfolioResult.timeframe})
+                </h3>
+                <p className="hint">
+                  <strong>Simulation, not real trading.</strong> All strategies competed for one cash balance under the
+                  global rails, exactly as they would live. Fills are assumed at price ± the spread cost; a real order
+                  can miss on a fast or thin move, gap overnight, or halt. Treat a good result as <em>not yet
+                  disproven</em>, never proven.
+                </p>
+                <div className="stats">
+                  <Stat
+                    label="Net P&L"
+                    value={`$${portfolioResult.net_pnl.toLocaleString()} (${portfolioResult.net_pnl_pct >= 0 ? "+" : ""}${portfolioResult.net_pnl_pct}%)`}
+                    tone={portfolioResult.net_pnl >= 0 ? "up" : "down"}
+                  />
+                  <Stat label="Trades" value={String(portfolioResult.trades)} />
+                  <Stat label="Win rate" value={portfolioResult.win_rate != null ? `${portfolioResult.win_rate}%` : "—"} />
+                  <Stat label="Avg win / loss" value={`${portfolioResult.avg_win ?? "—"} / ${portfolioResult.avg_loss ?? "—"}`} />
+                  <Stat label="Profit factor" value={portfolioResult.profit_factor != null ? String(portfolioResult.profit_factor) : "—"} />
+                  <Stat
+                    label="Max drawdown"
+                    value={`${portfolioResult.max_drawdown_pct}%`}
+                    tone={portfolioResult.max_drawdown_pct > 10 ? "down" : undefined}
+                  />
+                </div>
+
+                {portfolioResult.trades > 0 && (
+                  <div className="deployment">
+                    <h4>
+                      How much of your money actually worked? <InfoTip k="capital_deployed" />
+                    </h4>
+                    <div className="stats">
+                      <Stat
+                        label="Most ever invested"
+                        value={`$${portfolioResult.max_deployed_usd.toLocaleString()} (${portfolioResult.pct_capital_deployed}%)`}
+                        tone={portfolioResult.pct_capital_deployed < 20 ? "down" : undefined}
+                      />
+                      <Stat label="Time holding anything" value={`${portfolioResult.time_in_market_pct}%`} />
+                      <Stat
+                        label="Return on money used"
+                        value={portfolioResult.return_on_deployed_pct != null ? `${portfolioResult.return_on_deployed_pct}%` : "—"}
+                        tone={(portfolioResult.return_on_deployed_pct ?? 0) >= 0 ? "up" : "down"}
+                      />
+                    </div>
+                  </div>
+                )}
+
+                <LineChart
+                  labels={portfolioResult.equity_days}
+                  series={[
+                    { label: "Portfolio", color: "var(--accent)", values: portfolioResult.equity },
+                    ...(portfolioResult.hold_benchmark
+                      ? [
+                          {
+                            label: `Buy & hold ${portfolioResult.hold_benchmark_label}`,
+                            color: "var(--warn)",
+                            values: portfolioResult.hold_benchmark,
+                          },
+                        ]
+                      : []),
+                  ]}
+                />
+              </div>
+
+              <div className="card">
+                <h3>
+                  Per-strategy contribution{" "}
+                  <span className="hint">(realized P&amp;L sums to the portfolio total ${portfolioResult.realized_total.toLocaleString()})</span>
+                </h3>
+                <div className="table-scroll">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Strategy</th>
+                        <th>Realized P&L</th>
+                        <th>Share</th>
+                        <th>Trades</th>
+                        <th>Win rate</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {portfolioResult.contributions.map((c) => (
+                        <tr key={c.strategy_id}>
+                          <td className="sym">{c.strategy_name}</td>
+                          <td className={c.realized_pnl >= 0 ? "up" : "down"}>
+                            {c.realized_pnl >= 0 ? "+" : ""}${c.realized_pnl.toLocaleString()}
+                          </td>
+                          <td>{c.share_pct != null ? `${c.share_pct}%` : "—"}</td>
+                          <td>{c.trades}</td>
+                          <td>{c.win_rate != null ? `${c.win_rate}%` : "—"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              <div className="card">
+                <h3>
+                  Trade log — every buy and sell in order{" "}
+                  <span className="hint">
+                    ({portfolioEvents.length} actions across {portfolioResult.trade_list.length} trades)
+                  </span>
+                </h3>
+                <div className="table-scroll">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Date</th>
+                        <th>Strategy</th>
+                        <th>Action</th>
+                        <th>Symbol</th>
+                        <th>Price</th>
+                        <th>P&L</th>
+                        <th>Why</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {portfolioEvents.map((ev, i) => (
+                        <tr key={i}>
+                          <td>{new Date(ev.at).toLocaleDateString()}</td>
+                          <td className="hint">{ev.strategy}</td>
+                          <td className={ev.action === "Bought" ? "up" : "down"}>
+                            {ev.action === "Bought" ? "▲ Bought" : "▼ Sold"}
+                          </td>
+                          <td className="sym">{ev.symbol}</td>
+                          <td>
+                            ${ev.price.toFixed(4)}
+                            {ev.qty != null && <span className="hint"> ×{ev.qty}</span>}
+                          </td>
+                          <td className={ev.pnl == null ? "" : ev.pnl >= 0 ? "up" : "down"}>
+                            {ev.pnl == null ? <span className="hint">—</span> : `$${ev.pnl.toFixed(2)}`}
+                          </td>
+                          <td className="hint">{ev.reason}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </>
+          )}
+        </>
+      )}
+
+      {mode === "single" && (
+      <>
       <div className="card">
         <p className="hint">
           Replays a strategy's exact rules over past prices — the same code the live engine runs. It defaults to the
@@ -589,6 +872,8 @@ export default function Backtest() {
             </div>
           </div>
         </>
+      )}
+      </>
       )}
     </>
   );
