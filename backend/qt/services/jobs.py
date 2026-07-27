@@ -62,12 +62,14 @@ async def reconcile_open_trades() -> None:
 
 
 async def daily_movers_sweep() -> None:
-    """Keep the scanner-replay cache current: after the US close, pull the day's
-    universe daily bars and re-rank the recent days' risers.
+    """Keep the STOCK scanner-replay cache current: after the US close, pull the
+    day's universe daily bars and re-rank the recent days' risers.
 
     Only MAINTAINS a cache the user already built — it never bootstraps one, so
     users who don't use scanner replay pay no daily Alpaca cost. Skips non-trading
-    days. Best-effort; failures are logged, not fatal."""
+    days (stocks don't trade weekends/holidays). Crypto is maintained separately
+    by crypto_movers_sweep, which runs every calendar day. Best-effort; failures
+    are logged, not fatal."""
     try:
         from qt.services import barcache, barsweep, calendar, scanner
 
@@ -77,7 +79,7 @@ async def daily_movers_sweep() -> None:
                 return
             try:
                 if not await calendar.is_trading_today(client):
-                    return  # holiday/weekend — no new bar to fetch
+                    return  # holiday/weekend — no new stock bar to fetch
             except Exception:
                 log.warning("daily movers sweep: calendar check failed, proceeding anyway")
 
@@ -97,25 +99,48 @@ async def daily_movers_sweep() -> None:
                         max_price=f["max_price"], min_dollar_volume=f["min_dollar_volume"],
                     )
                     log.info("daily movers sweep done: %s", summary)
-
-                # CRYPTO cache — independently maintained on the same rule: never
-                # bootstrap, only keep a cache the user already built current.
-                # This runs on US trading days (the calendar gate above). Crypto
-                # is 24/7, but the update's overlap_days window re-pulls the last
-                # several days, so a skipped weekend/holiday is caught on the next
-                # trading day rather than lost.
-                if sess.query(barcache.CryptoDailyBar).first() is not None:
-                    cf = scanner.CRYPTO_DEFAULTS
-                    crypto_summary = await barsweep.crypto_daily_movers_update(
-                        client, sess,
-                        min_change_pct=cf["min_change_pct"], min_price=cf["min_price"],
-                        max_price=cf["max_price"], min_dollar_volume=cf["min_dollar_volume"],
-                    )
-                    log.info("crypto daily movers sweep done: %s", crypto_summary)
             finally:
                 sess.close()
     except Exception:
         log.exception("daily movers sweep failed")
+
+
+async def crypto_movers_sweep() -> None:
+    """Keep the CRYPTO scanner-replay cache current — the 24/7 twin of
+    daily_movers_sweep. Crypto never closes, so this runs EVERY calendar day
+    (no US-trading-calendar gate), keeping weekend and holiday movers fresh
+    instead of letting them lag until the next US trading day.
+
+    Same 'maintain, never bootstrap' rule: a no-op unless the user has already
+    built a crypto cache, so non-users pay nothing. The daily sweep skips the
+    still-forming current UTC day and only caches completed days. Best-effort;
+    failures are logged, not fatal."""
+    try:
+        from qt.services import barcache, barsweep, scanner
+
+        with session_scope() as session:
+            client = get_client(session)
+            if client is None:
+                return
+            try:
+                barcache.init_cache()
+            except Exception:
+                log.exception("crypto movers sweep: could not open the bar cache")
+                return
+            sess = barcache.session()
+            try:
+                if sess.query(barcache.CryptoDailyBar).first() is not None:
+                    cf = scanner.CRYPTO_DEFAULTS
+                    summary = await barsweep.crypto_daily_movers_update(
+                        client, sess,
+                        min_change_pct=cf["min_change_pct"], min_price=cf["min_price"],
+                        max_price=cf["max_price"], min_dollar_volume=cf["min_dollar_volume"],
+                    )
+                    log.info("crypto movers sweep done: %s", summary)
+            finally:
+                sess.close()
+    except Exception:
+        log.exception("crypto movers sweep failed")
 
 
 async def snapshot_benchmarks() -> None:

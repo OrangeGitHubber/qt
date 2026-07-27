@@ -3,6 +3,25 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Crypto cache upkeep now runs every calendar day (2026-07-27)
+
+The nightly job that keeps the scanner-replay cache current used to run only on
+US trading days (after the 16:00 ET close) and maintained both the stock and
+crypto caches together. That's right for stocks, but crypto trades 24/7 — so on
+weekends and US holidays the crypto cache's newest movers lagged by a few days.
+
+Crypto now has its own upkeep job that runs **every calendar day** at 00:20 UTC,
+independent of the US market calendar, so weekend and holiday movers stay fresh.
+Stocks keep their trading-day-gated 18:00 ET job unchanged.
+
+Along the way, a subtle correctness fix: because a crypto daily bar for "today"
+is always still forming (crypto never closes) and the cache only ever *adds*
+bars it hasn't seen, a daily run could have cached that partial near-the-open bar
+and frozen it — quietly flattening the day's percent change. The daily sweep now
+skips the in-progress UTC day and only caches completed days. Both the automatic
+upkeep and the manual "Run crypto sweep" button benefit. Still a no-op unless
+you've actually built a crypto cache.
+
 ## Dashboard: per-strategy contribution breakdown (2026-07-27)
 
 The dashboard scoreboard shows ONE bot line, which can't tell you *which*

@@ -37,6 +37,7 @@ def _start_scheduler():
     from qt.services.engine import tick
     from qt.services.jobs import (
         backup_database,
+        crypto_movers_sweep,
         daily_movers_sweep,
         daily_summary,
         reconcile_open_trades,
@@ -83,12 +84,23 @@ def _start_scheduler():
     scheduler.add_job(
         backup_database, "date", run_date=datetime.now(timezone.utc) + timedelta(seconds=30)
     )
-    # Scanner-replay cache upkeep: 18:00 ET on trading days, well after the 16:00
-    # close so the day's daily bars are finalized. No-op unless a historical
-    # sweep has already been run, so non-users pay nothing.
+    # Scanner-replay cache upkeep (STOCKS): 18:00 ET on trading days, well after
+    # the 16:00 close so the day's daily bars are finalized. No-op unless a
+    # historical sweep has already been run, so non-users pay nothing.
     scheduler.add_job(
         daily_movers_sweep,
         CronTrigger(day_of_week="mon-fri", hour=18, minute=0, timezone="America/New_York"),
+        max_instances=1,
+        coalesce=True,
+    )
+    # Scanner-replay cache upkeep (CRYPTO): every calendar day at 00:20 UTC, just
+    # after the UTC day rolls over so the just-completed day's bar is final (the
+    # sweep skips the still-forming current day). Crypto trades 24/7, so unlike
+    # stocks it isn't gated to US trading days — weekend/holiday movers stay
+    # fresh. No-op unless a crypto cache already exists.
+    scheduler.add_job(
+        crypto_movers_sweep,
+        CronTrigger(hour=0, minute=20, timezone="UTC"),
         max_instances=1,
         coalesce=True,
     )

@@ -370,6 +370,12 @@ async def sweep_crypto_daily_bars(
     assets = await client.list_assets("crypto")
     symbols = crypto_universe(assets)
     start_iso = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    # Crypto trades 24/7, so "today's" UTC daily bar is always still forming.
+    # save_daily_bars is insert-or-ignore: cache that partial (near-open) bar and
+    # it's frozen there forever, corrupting the day's change_pct. Only completed
+    # UTC days are cacheable — drop today. (Stocks avoid this by sweeping after
+    # the 16:00 ET close, when the day's bar is final.)
+    today_utc = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
     batches = [symbols[i : i + batch_size] for i in range(0, len(symbols), batch_size)]
     symbols_saved = 0
@@ -387,6 +393,7 @@ async def sweep_crypto_daily_bars(
                 progress(idx, len(batches), symbols_saved)
             continue
         for symbol, bars in data.items():
+            bars = [b for b in bars if (b.get("t") or "")[:10] != today_utc]
             if not bars:
                 continue
             barcache.save_daily_bars(sess, symbol, bars, model=CryptoDailyBar)

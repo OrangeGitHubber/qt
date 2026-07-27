@@ -334,6 +334,24 @@ def test_sweep_crypto_daily_bars_saves_to_crypto_table_by_utc_day():
     assert sorted(b.day for b in btc) == ["2026-06-01", "2026-06-02"]
 
 
+def test_sweep_crypto_daily_bars_skips_the_in_progress_utc_day():
+    """Crypto trades 24/7, so the current UTC day's bar is still forming. Because
+    saves are insert-or-ignore, caching that partial bar would freeze it near the
+    open forever — so today's bar must be dropped, only completed days stored."""
+    from datetime import datetime, timezone
+
+    s = _mem_session()
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    # A completed day plus today's still-forming bar.
+    bars = {"BTC/USD": [_bar("2026-06-01", 100.0), _bar(today, 130.0)]}
+    client = FakeCryptoClient([{"symbol": "BTC/USD", "tradable": True}], bars)
+    asyncio.run(barsweep.sweep_crypto_daily_bars(client, s, days=30, batch_size=20))
+
+    days = [b.day for b in s.query(barcache.CryptoDailyBar).all()]
+    assert days == ["2026-06-01"]  # today's in-progress bar was not cached
+    assert today not in days
+
+
 def test_reconstruct_crypto_movers_ranks_utc_days():
     s = _mem_session()
     barcache.save_daily_bars(s, "BTC/USD", [_bar("2026-06-01", 100.0), _bar("2026-06-02", 130.0)],
