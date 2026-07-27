@@ -174,3 +174,52 @@ def test_cached_daily_bars_shapes_like_alpaca_and_filters():
         {"t": "2026-06-01T14:00:00Z", "o": 11, "h": 13, "l": 10, "c": 12, "v": 2e6, "vw": 11.5}
     ]  # pre-start bar dropped; stamped 14:00Z so it stays on the same ET day
     assert barcache.cached_daily_bars(s, [], "2026-06-01") == {}
+
+
+def test_crypto_tables_are_separate_and_stamp_inside_the_utc_day():
+    s = _mem_session()
+    # Crypto data goes to the crypto tables and never touches the stock tables.
+    barcache.save_daily_bars(s, "BTC/USD", [
+        {"t": "2026-06-01T00:00:00Z", "o": 100, "h": 130, "l": 95, "c": 120, "v": 1e6, "vw": 115},
+    ], model=barcache.CryptoDailyBar)
+    barcache.store_movers(s, "2026-06-01", [("BTC/USD", 20.0, 120.0, 1.2e8)], model=barcache.CryptoDailyMover)
+    barcache.save_intraday_bars(s, "BTC/USD", [
+        {"t": "2026-06-01T12:00:00Z", "o": 100, "h": 130, "l": 95, "c": 120, "v": 1e5, "vw": 115},
+    ], model=barcache.CryptoIntradayBar)
+    s.commit()
+    assert s.query(barcache.DailyBar).count() == 0
+    assert s.query(barcache.DailyMover).count() == 0
+    assert s.query(barcache.IntradayBar).count() == 0
+
+    # Daily bars are stamped 12:00Z — inside the UTC calendar day the crypto
+    # backtest buckets by (midnight UTC would be ambiguous at the boundary).
+    got = barcache.cached_daily_bars(s, ["BTC/USD"], "2026-06-01",
+                                     model=barcache.CryptoDailyBar, stamp="T12:00:00Z")
+    assert got["BTC/USD"][0]["t"] == "2026-06-01T12:00:00Z"
+
+    # movers_between / cached_intraday_bars / has_intraday all target the crypto tables.
+    assert barcache.movers_between(s, "2026-06-01", model=barcache.CryptoDailyMover) == {"2026-06-01": ["BTC/USD"]}
+    assert barcache.has_intraday(s, model=barcache.CryptoIntradayBar) is True
+    assert barcache.has_intraday(s) is False  # stock intraday still empty
+
+
+def test_crypto_cache_stats_reads_the_crypto_tables():
+    s = _mem_session()
+    assert barcache.crypto_cache_stats(s) == {
+        "daily_symbols": 0, "movers_days": 0, "intraday_bars": 0, "latest_day": None, "freshest_mover": None,
+    }
+    barcache.save_daily_bars(s, "BTC/USD", [
+        {"t": "2026-06-01T00:00:00Z", "o": 1, "h": 1, "l": 1, "c": 1, "v": 1, "vw": 1},
+        {"t": "2026-06-02T00:00:00Z", "o": 1, "h": 1, "l": 1, "c": 1, "v": 1, "vw": 1},
+    ], model=barcache.CryptoDailyBar)
+    barcache.store_movers(s, "2026-06-02", [("BTC/USD", 5.0, 1.0, 1e6)], model=barcache.CryptoDailyMover)
+    barcache.save_intraday_bars(s, "BTC/USD", [
+        {"t": "2026-06-02T12:00:00Z", "o": 1, "h": 1, "l": 1, "c": 1, "v": 1, "vw": 1},
+    ], model=barcache.CryptoIntradayBar)
+    s.commit()
+    assert barcache.crypto_cache_stats(s) == {
+        "daily_symbols": 1, "movers_days": 1, "intraday_bars": 1, "latest_day": "2026-06-02",
+        "freshest_mover": {"symbol": "BTC/USD", "day": "2026-06-02", "change_pct": 5.0, "has_intraday": True},
+    }
+    # And the stock stats remain empty — the two caches are independent.
+    assert barcache.cache_stats(s)["daily_symbols"] == 0

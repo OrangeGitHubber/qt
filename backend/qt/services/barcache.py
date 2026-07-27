@@ -77,6 +77,65 @@ class IntradayBar(CacheBase):
     vw: Mapped[float | None] = mapped_column(Float, nullable=True)
 
 
+# ---------------------------------------------------------------------------
+# CRYPTO cache — SEPARATE tables with the same column shapes as the stock ones.
+#
+# Kept apart from the stock tables on purpose:
+#   * create_all ADDS these without touching the existing (large, expensive)
+#     stock tables — fully non-destructive.
+#   * a shared daily_movers table would collide on its (day, rank) PK the moment
+#     both a stock and a crypto riser wanted rank 1 of the same day.
+#
+# The one semantic difference from stocks: crypto's "day" is the UTC calendar
+# day (Alpaca's crypto daily bar is UTC-aligned and the market is 24/7), not the
+# ET session day. The columns are identical, so the shared read/write/reconstruct
+# helpers below are parameterized by model rather than duplicated.
+# ---------------------------------------------------------------------------
+
+
+class CryptoDailyBar(CacheBase):
+    """One crypto pair's daily OHLCV bar, keyed by UTC calendar day."""
+
+    __tablename__ = "crypto_daily_bars"
+
+    symbol: Mapped[str] = mapped_column(String(32), primary_key=True)
+    day: Mapped[str] = mapped_column(String(10), primary_key=True)  # YYYY-MM-DD (UTC day)
+    o: Mapped[float] = mapped_column(Float, default=0.0)
+    h: Mapped[float] = mapped_column(Float, default=0.0)
+    l: Mapped[float] = mapped_column(Float, default=0.0)
+    c: Mapped[float] = mapped_column(Float, default=0.0)
+    v: Mapped[float] = mapped_column(Float, default=0.0)
+    vw: Mapped[float | None] = mapped_column(Float, nullable=True)
+
+
+class CryptoDailyMover(CacheBase):
+    """A reconstructed crypto 'today's risers' entry: rank N of a past UTC day."""
+
+    __tablename__ = "crypto_daily_movers"
+
+    day: Mapped[str] = mapped_column(String(10), primary_key=True)
+    rank: Mapped[int] = mapped_column(Integer, primary_key=True)
+    symbol: Mapped[str] = mapped_column(String(32))
+    change_pct: Mapped[float] = mapped_column(Float)
+    price: Mapped[float] = mapped_column(Float)
+    dollar_volume: Mapped[float] = mapped_column(Float)
+
+
+class CryptoIntradayBar(CacheBase):
+    """One intraday (e.g. 15-min) crypto bar for a mover, timestamps in real UTC."""
+
+    __tablename__ = "crypto_intraday_bars"
+
+    symbol: Mapped[str] = mapped_column(String(32), primary_key=True)
+    ts: Mapped[str] = mapped_column(String(20), primary_key=True)  # ISO 'YYYY-MM-DDTHH:MM:SSZ'
+    o: Mapped[float] = mapped_column(Float, default=0.0)
+    h: Mapped[float] = mapped_column(Float, default=0.0)
+    l: Mapped[float] = mapped_column(Float, default=0.0)
+    c: Mapped[float] = mapped_column(Float, default=0.0)
+    v: Mapped[float] = mapped_column(Float, default=0.0)
+    vw: Mapped[float | None] = mapped_column(Float, nullable=True)
+
+
 def make_engine(url: str | None = None) -> Engine:
     url = url or bar_cache_url()
     kwargs: dict = {}
@@ -182,9 +241,10 @@ def _insert_ignore(sess: OrmSession, model, rows: list[dict]) -> None:
     sess.execute(ins(model).on_conflict_do_nothing().values(rows))
 
 
-def save_daily_bars(sess: OrmSession, symbol: str, bars: list[dict]) -> int:
+def save_daily_bars(sess: OrmSession, symbol: str, bars: list[dict], model=DailyBar) -> int:
     """Persist Alpaca daily bars (dicts with t,o,h,l,c,v,vw) for one symbol.
-    Idempotent — re-running a sweep won't duplicate closed bars."""
+    Idempotent — re-running a sweep won't duplicate closed bars. `model` selects
+    the stock (default) or crypto daily table; the row shape is identical."""
     rows: list[dict] = []
     for b in bars:
         day = (b.get("t") or "")[:10]
@@ -199,25 +259,27 @@ def save_daily_bars(sess: OrmSession, symbol: str, bars: list[dict]) -> int:
                 "vw": float(b["vw"]) if b.get("vw") is not None else None,
             }
         )
-    _insert_ignore(sess, DailyBar, rows)
+    _insert_ignore(sess, model, rows)
     return len(rows)
 
 
-def store_movers(sess: OrmSession, day: str, ranked: list[tuple[str, float, float, float]]) -> None:
-    """Replace the cached top-N risers for one day."""
-    sess.query(DailyMover).filter(DailyMover.day == day).delete()
+def store_movers(
+    sess: OrmSession, day: str, ranked: list[tuple[str, float, float, float]], model=DailyMover
+) -> None:
+    """Replace the cached top-N risers for one day (stock or crypto table)."""
+    sess.query(model).filter(model.day == day).delete()
     for rank, (symbol, change_pct, price, dollar_volume) in enumerate(ranked, start=1):
-        sess.add(DailyMover(day=day, rank=rank, symbol=symbol, change_pct=change_pct,
-                            price=price, dollar_volume=dollar_volume))
+        sess.add(model(day=day, rank=rank, symbol=symbol, change_pct=change_pct,
+                       price=price, dollar_volume=dollar_volume))
 
 
-def top_movers(sess: OrmSession, day: str) -> list[DailyMover]:
-    """The cached risers for a day, best first."""
-    return sess.query(DailyMover).filter(DailyMover.day == day).order_by(DailyMover.rank).all()
+def top_movers(sess: OrmSession, day: str, model=DailyMover) -> list:
+    """The cached risers for a day, best first (stock or crypto table)."""
+    return sess.query(model).filter(model.day == day).order_by(model.rank).all()
 
 
 def movers_between(
-    sess: OrmSession, start_day: str, top_n: int | None = None
+    sess: OrmSession, start_day: str, top_n: int | None = None, model=DailyMover
 ) -> dict[str, list[str]]:
     """{day: [symbols ranked]} for all reconstructed days on/after start_day —
     the per-day 'today's risers' a scanner-replay backtest gates entries on.
@@ -227,9 +289,9 @@ def movers_between(
     riser count up or down instantly without re-sweeping or re-ranking. None
     returns everything stored."""
     rows = (
-        sess.query(DailyMover)
-        .filter(DailyMover.day >= start_day)
-        .order_by(DailyMover.day, DailyMover.rank)
+        sess.query(model)
+        .filter(model.day >= start_day)
+        .order_by(model.day, model.rank)
         .all()
     )
     out: dict[str, list[str]] = {}
@@ -240,9 +302,16 @@ def movers_between(
     return out
 
 
-def cached_daily_bars(sess: OrmSession, symbols: list[str], start_day: str) -> dict[str, list[dict]]:
+def cached_daily_bars(
+    sess: OrmSession, symbols: list[str], start_day: str, model=DailyBar, stamp: str = "T14:00:00Z"
+) -> dict[str, list[dict]]:
     """Cached daily bars for `symbols` on/after start_day, shaped like Alpaca
-    bar dicts (t/o/h/l/c/v/vw) so the backtester consumes them unchanged."""
+    bar dicts (t/o/h/l/c/v/vw) so the backtester consumes them unchanged.
+
+    `stamp` places each bar INSIDE its trading day so the backtest's day-bucket
+    matches the movers key. Stocks stamp 14:00Z (10:00 ET — inside the ET day,
+    where midnight UTC would roll back to the prior calendar day). Crypto stamps
+    12:00Z — squarely inside the UTC calendar day the crypto backtest buckets by."""
     if not symbols:
         return {}
     out: dict[str, list[dict]] = {}
@@ -250,24 +319,22 @@ def cached_daily_bars(sess: OrmSession, symbols: list[str], start_day: str) -> d
     for i in range(0, len(symbols), 500):
         chunk = symbols[i : i + 500]
         rows = (
-            sess.query(DailyBar)
-            .filter(DailyBar.symbol.in_(chunk), DailyBar.day >= start_day)
-            .order_by(DailyBar.symbol, DailyBar.day)
+            sess.query(model)
+            .filter(model.symbol.in_(chunk), model.day >= start_day)
+            .order_by(model.symbol, model.day)
             .all()
         )
         for b in rows:
-            # Stamp at 14:00Z (10:00 ET) — INSIDE the ET trading day — not midnight
-            # UTC, which _et_day() would roll back to the previous calendar day and
-            # so misalign the backtest's day key from the movers/eligible-by-day key.
             out.setdefault(b.symbol, []).append(
-                {"t": f"{b.day}T14:00:00Z", "o": b.o, "h": b.h, "l": b.l, "c": b.c, "v": b.v, "vw": b.vw}
+                {"t": f"{b.day}{stamp}", "o": b.o, "h": b.h, "l": b.l, "c": b.c, "v": b.v, "vw": b.vw}
             )
     return out
 
 
-def save_intraday_bars(sess: OrmSession, symbol: str, bars: list[dict]) -> int:
+def save_intraday_bars(sess: OrmSession, symbol: str, bars: list[dict], model=IntradayBar) -> int:
     """Persist Alpaca intraday bars (dicts with t,o,h,l,c,v,vw) for one symbol.
-    Idempotent — closed intraday bars are immutable, so re-sweeps don't duplicate."""
+    Idempotent — closed intraday bars are immutable, so re-sweeps don't duplicate.
+    `model` selects the stock (default) or crypto intraday table."""
     rows: list[dict] = []
     for b in bars:
         ts = b.get("t")
@@ -282,12 +349,12 @@ def save_intraday_bars(sess: OrmSession, symbol: str, bars: list[dict]) -> int:
                 "vw": float(b["vw"]) if b.get("vw") is not None else None,
             }
         )
-    _insert_ignore(sess, IntradayBar, rows)
+    _insert_ignore(sess, model, rows)
     return len(rows)
 
 
 def cached_intraday_bars(
-    sess: OrmSession, symbols: list[str], start_day: str
+    sess: OrmSession, symbols: list[str], start_day: str, model=IntradayBar
 ) -> dict[str, list[dict]]:
     """Cached intraday bars for `symbols` with a timestamp on/after start_day,
     shaped like Alpaca bar dicts (t/o/h/l/c/v/vw) so the backtester consumes
@@ -299,9 +366,9 @@ def cached_intraday_bars(
     for i in range(0, len(symbols), 500):
         chunk = symbols[i : i + 500]
         rows = (
-            sess.query(IntradayBar)
-            .filter(IntradayBar.symbol.in_(chunk), IntradayBar.ts >= start_day)
-            .order_by(IntradayBar.symbol, IntradayBar.ts)
+            sess.query(model)
+            .filter(model.symbol.in_(chunk), model.ts >= start_day)
+            .order_by(model.symbol, model.ts)
             .all()
         )
         for b in rows:
@@ -311,25 +378,25 @@ def cached_intraday_bars(
     return out
 
 
-def has_intraday(sess: OrmSession) -> bool:
+def has_intraday(sess: OrmSession, model=IntradayBar) -> bool:
     """Whether any intraday bars are cached (stage-2 replay is possible)."""
-    return sess.query(IntradayBar).first() is not None
+    return sess.query(model).first() is not None
 
 
-def freshest_mover(sess: OrmSession) -> dict | None:
+def freshest_mover(sess: OrmSession, mover_model=DailyMover, intraday_model=IntradayBar) -> dict | None:
     """The #1 riser on the most recent reconstructed day, and whether its 15-min
     bars are cached — a quick 'is the intraday sweep caught up to the latest
     movers?' spot-check for the UI. None if no movers are cached yet."""
     row = (
-        sess.query(DailyMover)
-        .order_by(DailyMover.day.desc(), DailyMover.rank.asc())
+        sess.query(mover_model)
+        .order_by(mover_model.day.desc(), mover_model.rank.asc())
         .first()
     )
     if row is None:
         return None
     has_15m = (
-        sess.query(IntradayBar)
-        .filter(IntradayBar.symbol == row.symbol, IntradayBar.ts.like(f"{row.day}T%"))
+        sess.query(intraday_model)
+        .filter(intraday_model.symbol == row.symbol, intraday_model.ts.like(f"{row.day}T%"))
         .first()
         is not None
     )
@@ -341,14 +408,22 @@ def freshest_mover(sess: OrmSession) -> dict | None:
     }
 
 
-def cache_stats(sess: OrmSession) -> dict:
+def cache_stats(
+    sess: OrmSession, daily_model=DailyBar, mover_model=DailyMover, intraday_model=IntradayBar
+) -> dict:
     """What's actually PERSISTED in the cache, independent of any in-process
     sweep counters (which reset on redeploy). Lets the UI show the real state of
-    a durable Postgres cache after a container restart instead of zeros."""
+    a durable Postgres cache after a container restart instead of zeros. Defaults
+    to the stock tables; pass the crypto models for the crypto cache view."""
     return {
-        "daily_symbols": int(sess.query(func.count(func.distinct(DailyBar.symbol))).scalar() or 0),
-        "movers_days": int(sess.query(func.count(func.distinct(DailyMover.day))).scalar() or 0),
-        "intraday_bars": int(sess.query(func.count()).select_from(IntradayBar).scalar() or 0),
-        "latest_day": sess.query(func.max(DailyBar.day)).scalar(),  # 'YYYY-MM-DD' | None
-        "freshest_mover": freshest_mover(sess),
+        "daily_symbols": int(sess.query(func.count(func.distinct(daily_model.symbol))).scalar() or 0),
+        "movers_days": int(sess.query(func.count(func.distinct(mover_model.day))).scalar() or 0),
+        "intraday_bars": int(sess.query(func.count()).select_from(intraday_model).scalar() or 0),
+        "latest_day": sess.query(func.max(daily_model.day)).scalar(),  # 'YYYY-MM-DD' | None
+        "freshest_mover": freshest_mover(sess, mover_model, intraday_model),
     }
+
+
+def crypto_cache_stats(sess: OrmSession) -> dict:
+    """cache_stats over the crypto tables."""
+    return cache_stats(sess, CryptoDailyBar, CryptoDailyMover, CryptoIntradayBar)

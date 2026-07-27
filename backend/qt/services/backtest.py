@@ -53,9 +53,22 @@ def _et_day(ts: datetime) -> str:
     return ts.astimezone(ET).strftime("%Y-%m-%d")
 
 
-def _prepare(bars: list[dict]) -> list[dict]:
-    """Annotate each bar with day-gain vs previous ET day's close and a
-    running intraday VWAP."""
+def _utc_day(ts: datetime) -> str:
+    return ts.astimezone(timezone.utc).strftime("%Y-%m-%d")
+
+
+def _day_fn(market: str):
+    """The day-bucketing function for a market. Stocks bucket by the ET SESSION
+    day (the default — keeps every existing stock backtest byte-identical);
+    crypto is 24/7 and Alpaca's crypto bars are UTC-aligned, so crypto buckets by
+    the UTC calendar day — matching how crypto movers are keyed in the cache."""
+    return _utc_day if market == "crypto" else _et_day
+
+
+def _prepare(bars: list[dict], day_of=_et_day) -> list[dict]:
+    """Annotate each bar with day-gain vs previous day's close and a running
+    intraday VWAP. `day_of` buckets bars into trading days (ET for stocks, UTC
+    for crypto)."""
     out = []
     prev_day_close: float | None = None
     cur_day: str | None = None
@@ -63,7 +76,7 @@ def _prepare(bars: list[dict]) -> list[dict]:
     cum_pv = cum_v = 0.0
     for i, bar in enumerate(bars):
         ts = _parse_ts(bar["t"])
-        day = _et_day(ts)
+        day = day_of(ts)
         first_of_day = day != cur_day
         if first_of_day:
             prev_day_close = last_close
@@ -73,11 +86,11 @@ def _prepare(bars: list[dict]) -> list[dict]:
         cum_pv += float(bar.get("vw") or bar["c"]) * volume
         cum_v += volume
         change_pct = ((bar["c"] / prev_day_close - 1) * 100) if prev_day_close else None
-        # Last bar of its ET day: the "before the close" moment a flatten-before-
+        # Last bar of its day: the "before the close" moment a flatten-before-
         # close exit needs. `first_of_day` distinguishes a genuine intraday close
         # from a DAILY bar (which is both first and last of its day) — the entry
         # guard must not treat a one-bar day as "the flatten bar".
-        next_day = _et_day(_parse_ts(bars[i + 1]["t"])) if i + 1 < len(bars) else None
+        next_day = day_of(_parse_ts(bars[i + 1]["t"])) if i + 1 < len(bars) else None
         out.append(
             {
                 "ts": ts,
@@ -140,6 +153,7 @@ def run_backtest(
     starting_cash: float = 5000.0,
     spread_pct: float = 0.1,
     eligible_by_day: dict[str, set[str]] | None = None,
+    market: str = "stock",
 ) -> dict:
     """Pure simulation: strategy dict (same shape as the DB row), raw bars per
     symbol, global risk config. Returns metrics + equity curve + trades.
@@ -147,13 +161,18 @@ def run_backtest(
     `eligible_by_day` powers "scanner replay": when given, a symbol may only be
     ENTERED on a day it appears in that day's set (the day's reconstructed
     top-N risers). Exits are never gated — an open position always manages
-    itself. When None, every symbol is eligible every day (fixed-list mode)."""
+    itself. When None, every symbol is eligible every day (fixed-list mode).
+
+    `market` selects day bucketing: 'stock' (default) keys days by the ET session
+    day; 'crypto' keys by the UTC calendar day, matching the crypto movers cache.
+    The default keeps every existing stock backtest byte-identical."""
     params = strategy["params"]
     swing = strategy["swing_mode"]
     sizing = strategy["sizing_usd"]
     slip = spread_pct / 100
+    day_of = _day_fn(market)
 
-    prepared = {s: _prepare(b) for s, b in bars_by_symbol.items() if b}
+    prepared = {s: _prepare(b, day_of) for s, b in bars_by_symbol.items() if b}
     # chronological event stream across all symbols
     events: dict[datetime, dict[str, dict]] = {}
     for symbol, series in prepared.items():
@@ -183,7 +202,7 @@ def run_backtest(
         bars = events[ts]
         for symbol, bar in bars.items():
             last_price[symbol] = bar["close"]
-        day = _et_day(ts)
+        day = day_of(ts)
 
         # ---- exits first ----
         for symbol, trade in list(state.open_trades.items()):
@@ -392,13 +411,14 @@ def run_backtest(
             {
                 "symbol": t.symbol, "qty": t.qty,
                 "entry_price": round(t.entry_price, 4), "entry_at": t.entry_at.isoformat(),
-                # ET day strings so the chart can place markers without the
-                # frontend re-deriving timezones and drifting off by a day
-                "entry_day": _et_day(t.entry_at),
+                # Day strings so the chart can place markers without the frontend
+                # re-deriving timezones and drifting off by a day (ET for stocks,
+                # UTC for crypto — matching the equity-curve day index).
+                "entry_day": day_of(t.entry_at),
                 "entry_reason": t.entry_reason,
                 "exit_price": round(t.exit_price or 0, 4),
                 "exit_at": t.exit_at.isoformat() if t.exit_at else None,
-                "exit_day": _et_day(t.exit_at) if t.exit_at else None,
+                "exit_day": day_of(t.exit_at) if t.exit_at else None,
                 "exit_reason": t.exit_reason, "pnl": t.pnl,
             }
             for t in closed
@@ -407,14 +427,17 @@ def run_backtest(
 
 
 async def fetch_benchmark(
-    client: AlpacaClient, asset_class: str, start_iso: str, days_index: list[str]
+    client: AlpacaClient, asset_class: str, start_iso: str, days_index: list[str],
+    market: str = "stock",
 ) -> list[float | None]:
     """Buy-and-hold % series for SPY (stocks) or BTC/USD (crypto), aligned to
-    the backtest's day index."""
+    the backtest's day index. `market` buckets the benchmark's daily closes into
+    the same day keys the backtest used (ET for a stock replay, UTC for crypto)."""
     symbol = "SPY" if asset_class == "stock" else "BTC/USD"
+    day_of = _day_fn(market)
     bars = await client.historical_bars([symbol], asset_class, "1Day", start_iso)
     series = bars.get(symbol) or []
-    closes: dict[str, float] = {_et_day(_parse_ts(b["t"])): float(b["c"]) for b in series}
+    closes: dict[str, float] = {day_of(_parse_ts(b["t"])): float(b["c"]) for b in series}
     base: float | None = None
     out: list[float | None] = []
     last: float | None = None
