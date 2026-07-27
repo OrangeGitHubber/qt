@@ -3,6 +3,24 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Advanced per-strategy order-fill settings (2026-07-27)
+
+New "Advanced — order fills" section on the strategy editor exposes how
+aggressively QT prices its marketable limit orders — previously fixed constants:
+
+- **Entry slippage %** (default 0.5) — how far *through* the market the buy limit
+  is priced.
+- **Exit slippage %** (default 1.0) — how far *below* the market the sell limit
+  is priced.
+- **Max exit slippage %** (default 1.0 = off) — set above the base to enable an
+  **escalating chase**: each time an exit misses the fill, the sell price widens
+  one step further down (up to the max), so a fast drop still gets out. It stays
+  a limit order — QT never sends a naked market order.
+
+Defaults reproduce the previous behaviour exactly. These affect live/paper orders
+only; the backtest uses its own spread-cost input and assumes fills. (The retry
+interval itself is the global ~1-minute engine tick, not per-strategy.)
+
 ## Re-rank progress bar + a freshest-riser cache check (2026-07-27)
 
 - **Re-rank now shows real progress**, not an opaque "re-ranking…". It reports two

@@ -2,6 +2,7 @@
 orders, marketable limit only, idempotent client order IDs)."""
 
 import asyncio
+import json
 import logging
 import uuid
 from datetime import datetime, timezone
@@ -15,9 +16,28 @@ from qt.services.engine import Candidate
 
 log = logging.getLogger("qt.execution")
 
-ENTRY_SLIP = 1.005  # buy limit 0.5% through the price = "marketable"
-EXIT_SLIP = 0.99  # sell limit 1% through = exits must fill
+ENTRY_SLIP_PCT = 0.5  # default: buy limit 0.5% through the price = "marketable"
+EXIT_SLIP_PCT = 1.0  # default: sell limit 1% through = exits must fill
 FILL_POLL_SECONDS = (1, 2, 3)  # ~6s total
+
+# trade.id -> consecutive failed exit attempts, for the escalating exit chase.
+# In-memory: resets on restart (escalation simply restarts from the base buffer).
+_exit_attempts: dict[int, int] = {}
+
+
+def _escalated_exit_pct(base: float, cap: float | None, attempts: int) -> float:
+    """The exit marketable buffer for this attempt: start at `base`, widen by one
+    base step per prior miss, capped at `cap`. cap<=base means no escalation."""
+    base = max(0.0, base)
+    cap = max(base, cap if cap is not None else base)
+    return min(cap, base + attempts * base)
+
+
+def _entry_slip_pct(strategy: Strategy) -> float:
+    try:
+        return float(json.loads(strategy.params).get("entry", {}).get("entry_slippage_pct", ENTRY_SLIP_PCT))
+    except Exception:  # noqa: BLE001 — bad/old params: fall back to the default
+        return ENTRY_SLIP_PCT
 
 
 def _round_price(price: float) -> float:
@@ -74,7 +94,7 @@ async def open_trade(
 
     if mode == "paper":
         client_order_id = f"qt-{uuid.uuid4().hex[:20]}"
-        limit = _round_price(cand.price * ENTRY_SLIP)
+        limit = _round_price(cand.price * (1 + _entry_slip_pct(strategy) / 100))
         try:
             order = await client.submit_order(
                 cand.symbol, qty, "buy", limit, client_order_id,
@@ -118,19 +138,32 @@ async def open_trade(
 
 
 async def close_trade(
-    session: Session, client: AlpacaClient, trade: Trade, price: float, reason: str
+    session: Session,
+    client: AlpacaClient,
+    trade: Trade,
+    price: float,
+    reason: str,
+    *,
+    slip_pct: float = EXIT_SLIP_PCT,
+    slip_max_pct: float | None = None,
 ) -> bool:
     exit_price = price
 
     if trade.mode == "paper":
         client_order_id = f"qt-x-{uuid.uuid4().hex[:18]}"
-        limit = _round_price(price * EXIT_SLIP)
+        # Escalating marketable sell: widen the buffer with each prior miss (up to
+        # slip_max_pct) so a fast drop still gets out — still a limit, never a
+        # naked market order.
+        attempts = _exit_attempts.get(trade.id, 0)
+        pct = _escalated_exit_pct(slip_pct, slip_max_pct, attempts)
+        limit = _round_price(price * (1 - pct / 100))
         try:
             order = await client.submit_order(
                 trade.symbol, trade.qty, "sell", limit, client_order_id,
                 time_in_force="gtc" if trade.asset_class == "crypto" else "day",
             )
         except AlpacaError as exc:
+            _exit_attempts[trade.id] = attempts + 1
             session.add(
                 AuditLog(
                     category="trade",
@@ -145,13 +178,16 @@ async def close_trade(
                 await client.cancel_order(order["id"])
             except AlpacaError:
                 pass
+            _exit_attempts[trade.id] = attempts + 1
             session.add(
                 AuditLog(
                     category="trade",
-                    message=f"[paper] SELL {trade.symbol} did not fill — will retry next cycle",
+                    message=f"[paper] SELL {trade.symbol} did not fill at {pct:.1f}% "
+                    f"(attempt {attempts + 1}) — will retry next cycle",
                 )
             )
             return False
+        _exit_attempts.pop(trade.id, None)  # filled — reset the escalation
         trade.exit_order_id = order["id"]
         exit_price = float(filled.get("filled_avg_price") or price)
 

@@ -46,6 +46,7 @@ const EMPTY: Partial<StrategyRow> = {
       require_above_vwap: true,
       entry_window_start: "09:30",
       entry_window_end: "15:30",
+      entry_slippage_pct: 0.5,
     },
     exit: {
       trailing_stop_pct: 5,
@@ -54,6 +55,8 @@ const EMPTY: Partial<StrategyRow> = {
       max_holding_hours: 120,
       flatten_before_close: false,
       exit_below_vwap: false,
+      exit_slippage_pct: 1,
+      exit_slippage_max_pct: 1,
     },
   },
 };
@@ -393,6 +396,37 @@ function Editor({
           Ignore regime filter (not recommended) <InfoTip k="regime_filter" />
         </label>
       </div>
+
+      <h4>Advanced — order fills</h4>
+      <p className="hint">
+        How aggressively QT prices its marketable limit orders. Defaults match the built-in behaviour; widen them if
+        exits (or entries) miss fills on fast, thin movers. These affect live/paper orders only — the backtest uses its
+        own spread-cost setting and assumes fills.
+      </p>
+      <div className="filter-grid">
+        <label>
+          Entry slippage (%) <InfoTip k="entry_slippage" />
+          <NumberField step="0.1" min="0" max="5" value={p.entry.entry_slippage_pct ?? 0.5}
+            onChange={(n) => setEntry("entry_slippage_pct", n)} />
+        </label>
+        <label>
+          Exit slippage (%) <InfoTip k="exit_slippage" />
+          <NumberField step="0.1" min="0" max="10" value={p.exit.exit_slippage_pct ?? 1}
+            onChange={(n) => setExit("exit_slippage_pct", n)} />
+        </label>
+        <label>
+          Max exit slippage (%) <InfoTip k="exit_slippage" />
+          <NumberField step="0.1" min="0" max="20" value={p.exit.exit_slippage_max_pct ?? 1}
+            onChange={(n) => setExit("exit_slippage_max_pct", n)} />
+        </label>
+      </div>
+      <p className="hint">
+        Set <strong>Max exit slippage</strong> above <strong>Exit slippage</strong> to enable an escalating chase: each
+        time an exit misses, the sell price widens one step further below the market (up to the max) so a fast drop
+        still gets out — always a limit, never a naked market order. Equal values = no escalation. The retry interval
+        itself (~1 min) is a global engine setting, not per-strategy.
+      </p>
+
       <p className={`sleeve-readout${overAllocated ? " over" : ""}`}>
         All strategy sleeves total <strong>{money(totalSleeves)}</strong>
         {equity != null ? (

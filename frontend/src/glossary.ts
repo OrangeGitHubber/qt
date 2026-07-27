@@ -79,6 +79,18 @@ export const GLOSSARY: Record<string, GlossaryEntry> = {
       "Trading with borrowed money. Since June 2026, accounts over $2k can trade with up to 4x intraday buying power — meaning losses are also 4x faster, and you can lose more than a position's worth in hours. QT keeps this off unless you unlock it at the server level AND confirm the risk.",
     url: "https://www.investopedia.com/terms/m/margin.asp",
   },
+  entry_slippage: {
+    term: "Entry slippage (marketable buffer)",
+    explain:
+      "QT never sends a naked market order — it sends a 'marketable' limit priced a little THROUGH the market so it crosses the spread and fills. This is how far through, for buys: 0.5% = default. Higher fills more reliably on fast/thin names but at a worse price; 0% is a passive limit at the quote that may not fill. Live/paper only — the backtest models fills with its own spread-cost input.",
+    url: "https://www.investopedia.com/terms/s/slippage.asp",
+  },
+  exit_slippage: {
+    term: "Exit slippage + escalating chase",
+    explain:
+      "How far BELOW the market QT prices the marketable SELL limit when exiting (1% = default). If a sell misses the fill (price dropping faster than the order, or a thin book), QT cancels and retries next cycle. Set 'Max exit slippage' above the base to ESCALATE: each miss widens the sell price one step further down, up to the max, so a fast drop still gets out — still a limit, never a market order. Equal base and max = no escalation. Wider = more certain exits, worse price. Live/paper only.",
+    url: "https://www.investopedia.com/terms/s/slippage.asp",
+  },
   swing_mode: {
     term: "Trading style: Swing vs Intraday",
     explain:

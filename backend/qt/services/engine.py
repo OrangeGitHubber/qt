@@ -343,7 +343,12 @@ async def _manage_exits(
 
         from qt.services import execution
 
-        await execution.close_trade(session, client, trade, price, reason)
+        exit_cfg = params.get("exit", {})
+        await execution.close_trade(
+            session, client, trade, price, reason,
+            slip_pct=exit_cfg.get("exit_slippage_pct", execution.EXIT_SLIP_PCT),
+            slip_max_pct=exit_cfg.get("exit_slippage_max_pct"),
+        )
 
 
 async def _consider_entries(

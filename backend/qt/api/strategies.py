@@ -23,6 +23,11 @@ class EntryRules(BaseModel):
     require_above_vwap: bool = True
     entry_window_start: str | None = None  # "HH:MM" US/Eastern; None = any time
     entry_window_end: str | None = None
+    # Advanced execution: how far THROUGH the market to price the marketable buy
+    # limit (0.5% = default). Higher = fills more reliably, worse price; 0 = a
+    # passive limit AT the quote (may not fill). Paper/live only — the backtest
+    # uses its own spread-cost input.
+    entry_slippage_pct: float = Field(default=0.5, ge=0, le=5)
 
 
 class ExitRules(BaseModel):
@@ -32,6 +37,19 @@ class ExitRules(BaseModel):
     max_holding_hours: float = Field(default=0, ge=0, le=2400)  # 0 = disabled
     flatten_before_close: bool = False
     exit_below_vwap: bool = False
+    # Advanced execution: how far BELOW the market to price the marketable sell
+    # limit (1% = default). exit_slippage_max_pct >= exit_slippage_pct enables an
+    # escalating chase — each time an exit misses the fill, the buffer widens by
+    # one base step up to the max, so a fast drop still gets out (still a LIMIT,
+    # never a naked market order). Paper/live only — the backtest assumes fills.
+    exit_slippage_pct: float = Field(default=1.0, ge=0, le=10)
+    exit_slippage_max_pct: float = Field(default=1.0, ge=0, le=20)
+
+    @model_validator(mode="after")
+    def _exit_slip(self) -> "ExitRules":
+        if self.exit_slippage_max_pct < self.exit_slippage_pct:
+            raise ValueError("Max exit slippage can't be less than the base exit slippage.")
+        return self
 
 
 class StrategyParams(BaseModel):

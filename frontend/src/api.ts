@@ -37,6 +37,7 @@ export interface StrategyParams {
     require_above_vwap: boolean;
     entry_window_start: string | null;
     entry_window_end: string | null;
+    entry_slippage_pct: number;
   };
   exit: {
     trailing_stop_pct: number;
@@ -45,6 +46,8 @@ export interface StrategyParams {
     max_holding_hours: number;
     flatten_before_close: boolean;
     exit_below_vwap: boolean;
+    exit_slippage_pct: number;
+    exit_slippage_max_pct: number;
   };
 }
 
