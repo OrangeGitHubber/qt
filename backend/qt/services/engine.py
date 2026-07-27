@@ -24,7 +24,7 @@ from qt.broker.alpaca import AlpacaClient, AlpacaError
 from qt.broker.factory import get_client
 from qt.db import session_scope
 from qt.models import AuditLog, Strategy, StrategyConfigVersion, Trade
-from qt.services import notify, regime, scanner
+from qt.services import notify, persistence, regime, scanner
 from qt.settings_service import get_setting, set_setting
 
 log = logging.getLogger("qt.engine")
@@ -351,6 +351,10 @@ async def _manage_exits(
         )
 
 
+# One-time log guard so the persistence-freeze warning doesn't repeat every tick.
+_entries_frozen_logged = False
+
+
 async def _consider_entries(
     session: Session,
     client: AlpacaClient,
@@ -359,6 +363,25 @@ async def _consider_entries(
     market_open: bool,
     leverage_unlocked: bool,
 ) -> None:
+    # Non-negotiable persistence guard: if we've CONFIDENTLY detected that /data
+    # is ephemeral (the trade journal won't survive a restart), do NOT open new
+    # positions. A lost journal blinds the "already open" rail, so the bot
+    # re-buys positions the broker already holds — duplicate orders and orphans,
+    # exactly the incident this guards against. Exits and reconciliation still
+    # run; only new entries freeze. Boot already logged + Slack-alerted this, and
+    # the dashboard shows a persistent red banner. Only `False` (confident)
+    # freezes — an ambiguous `None` (local dev, no /proc) trades normally.
+    global _entries_frozen_logged
+    if persistence.boot_state().get("data_persistent") is False:
+        if not _entries_frozen_logged:
+            log.error(
+                "NEW ENTRIES FROZEN — /data is not persistent, so the trade journal is "
+                "ephemeral and re-buying already-held positions is likely. Fix the volume "
+                "mapping (see the dashboard banner / docs/data-persistence.md). Exits still run."
+            )
+            _entries_frozen_logged = True
+        return
+
     strategies = session.query(Strategy).filter(Strategy.enabled.is_(True)).all()
     if not strategies:
         return

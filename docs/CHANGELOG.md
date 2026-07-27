@@ -3,6 +3,25 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Persistence is now enforced: no trading on an ephemeral journal (2026-07-27)
+
+The app already *detected* a non-persistent `/data` and warned loudly (red
+banner + Slack + log), but it kept trading anyway — and that's dangerous. When
+the trade journal doesn't survive a restart, the engine forgets what it holds,
+the "don't buy the same symbol twice" rail goes blind (it only checks the local
+journal), and the bot **re-buys positions the broker already holds** — duplicate
+orders and untracked "orphan" positions. That is exactly how a pile of 2am
+crypto buys appeared on one paper account.
+
+Now, when the engine is *confident* `/data` is ephemeral, it **freezes new
+entries** — it opens no new positions until the volume mapping is fixed. Exits
+and broker reconciliation still run (closing a position is always safe), so
+nothing gets stranded. If persistence can't be determined (e.g. local
+development, no container), trading proceeds normally — the freeze only triggers
+on a confident "this is throwaway storage" verdict, so there are no false
+alarms. The fix on your side is still to correct the `/data` volume mapping
+(host path → container `/data`, never inverted — see docs/data-persistence.md).
+
 ## Fixed the sideways-scrolling page (2026-07-27)
 
 The whole app had a faint horizontal scrollbar: the page was a bit wider than
