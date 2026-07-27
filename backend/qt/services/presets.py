@@ -58,6 +58,40 @@ PRESETS: dict[str, dict] = {
             },
         },
     },
+    "sector_rotation": {
+        "label": "Sector rotation — relative-strength leaders (basket)",
+        "description": (
+            "Holds only the few strongest names in a basket and rotates: buys the "
+            "top-N ranked by relative strength (price vs its 200-day average) and "
+            "sells one the instant it drops out of the top-N. Low turnover, and it "
+            "reads daily bars so the thin free intraday feed doesn't matter. After "
+            "picking this, choose your Sector-ETFs basket in the editor."
+        ),
+        "asset_class": "stock",
+        "universe": "basket",
+        "rank_by": "relative_strength",
+        "top_n": 3,
+        "swing_mode": True,
+        "params": {
+            "entry": {
+                # Rank-based: any current top-N member is eligible — the ranking,
+                # not a daily-gain threshold, is the signal.
+                "min_day_gain_pct": 0.0,
+                "require_above_vwap": False,
+                "entry_window_start": None,
+                "entry_window_end": None,
+            },
+            "exit": {
+                "rotate_on_rank_dropout": True,  # THE rotation rule
+                "stop_loss_pct": 15.0,           # wide safety net; rotation does the work
+                "trailing_stop_pct": 0.0,
+                "take_profit_pct": 0.0,
+                "max_holding_hours": 0,          # 0 = no time cap (low turnover)
+                "flatten_before_close": False,
+                "exit_below_vwap": False,
+            },
+        },
+    },
     "watchlist_swing": {
         "label": "Watchlist only — swing",
         "description": (

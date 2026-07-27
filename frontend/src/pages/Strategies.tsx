@@ -116,6 +116,9 @@ function Editor({
       asset_class: p.asset_class,
       universe: p.universe as StrategyRow["universe"],
       swing_mode: p.swing_mode,
+      // Basket presets (e.g. sector rotation) carry their own ranking + count.
+      rank_by: (p.rank_by ?? s.rank_by ?? "momentum_today") as StrategyRow["rank_by"],
+      top_n: p.top_n ?? s.top_n ?? 10,
       params: JSON.parse(JSON.stringify(p.params)),
     });
   }
@@ -362,6 +365,13 @@ function Editor({
             onChange={(e) => setExit("exit_below_vwap", e.target.checked)} />
           Exit if price falls below VWAP <InfoTip k="vwap" />
         </label>
+        {s.universe === "basket" && (
+          <label className="check">
+            <input type="checkbox" checked={!!p.exit.rotate_on_rank_dropout}
+              onChange={(e) => setExit("rotate_on_rank_dropout", e.target.checked)} />
+            Rotate out when it leaves the top {s.top_n} <InfoTip k="rotate_on_rank_dropout" />
+          </label>
+        )}
       </div>
 
       <h4>Sizing & safety</h4>

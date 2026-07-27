@@ -295,6 +295,45 @@ async def tick(leverage_unlocked: bool = False) -> None:
         watchdog.record_heartbeat(session)
 
 
+async def _rotation_dropout_reasons(
+    session: Session, client: AlpacaClient, open_trades: list[Trade]
+) -> dict[int, str]:
+    """For rotation strategies (basket universe + exit.rotate_on_rank_dropout),
+    return {trade_id: reason} for each open position whose symbol has fallen out
+    of its strategy's current top-N ranking — the signal to rotate it out. A
+    strategy whose ranking can't be computed right now is skipped so we never
+    force a blind exit."""
+    rotate: dict[int, Strategy] = {}
+    seen: set[int] = set()
+    for t in open_trades:
+        if t.strategy_id in seen:
+            continue
+        seen.add(t.strategy_id)
+        s = session.get(Strategy, t.strategy_id)
+        if s is None or s.universe != "basket":
+            continue
+        try:
+            exit_cfg = json.loads(s.params).get("exit", {})
+        except (TypeError, ValueError):
+            exit_cfg = {}
+        if exit_cfg.get("rotate_on_rank_dropout"):
+            rotate[s.id] = s
+
+    reasons: dict[int, str] = {}
+    for sid, s in rotate.items():
+        try:
+            top = {c.symbol for c in await _basket_candidates(session, client, s)}
+        except AlpacaError as exc:
+            log.warning("rotation rank check for '%s' failed — holding positions: %s", s.name, exc)
+            continue
+        if not top:
+            continue  # couldn't rank right now — don't rotate blindly
+        for t in open_trades:
+            if t.strategy_id == sid and t.symbol not in top:
+                reasons[t.id] = f"rotated out of the top {s.top_n} by {s.rank_by.replace('_', ' ')}"
+    return reasons
+
+
 async def _manage_exits(
     session: Session, client: AlpacaClient, mode: str, market_open: bool, closes_soon: bool
 ) -> None:
@@ -310,6 +349,13 @@ async def _manage_exits(
         return
 
     now = datetime.now(timezone.utc)
+    # Rotation strategies (a basket ranked by relative strength etc.) sell a
+    # holding the moment it drops OUT of the current top-N — that IS the rotation.
+    # Compute each such strategy's live top-N once, up front, and mark the
+    # dropouts; the per-trade loop below turns them into exits (still respecting
+    # market hours). A ranking we can't compute leaves holdings untouched.
+    rotation_reason = await _rotation_dropout_reasons(session, client, open_trades)
+
     for trade in open_trades:
         if trade.asset_class == "stock" and not market_open:
             continue  # can't exit a stock while the market is closed
@@ -324,20 +370,24 @@ async def _manage_exits(
         strategy = session.get(Strategy, trade.strategy_id)
         params = json.loads(strategy.params) if strategy else {}
         entry_at = trade.entry_at if trade.entry_at.tzinfo else trade.entry_at.replace(tzinfo=timezone.utc)
-        should_exit, reason = evaluate_exit(
-            params,
-            strategy.swing_mode if strategy else True,
-            trade.entry_price,
-            entry_at,
-            trade.high_water or price,
-            price,
-            vwap,
-            now,
-            # "flatten before close" is a stock concept — crypto has no close,
-            # and closes_soon is derived from the stock clock. Never let it
-            # flatten a 24/7 crypto position.
-            closes_soon and trade.asset_class == "stock",
-        )
+        if trade.id in rotation_reason:
+            # Rank-dropout wins over the normal exit rules — rotate out now.
+            should_exit, reason = True, rotation_reason[trade.id]
+        else:
+            should_exit, reason = evaluate_exit(
+                params,
+                strategy.swing_mode if strategy else True,
+                trade.entry_price,
+                entry_at,
+                trade.high_water or price,
+                price,
+                vwap,
+                now,
+                # "flatten before close" is a stock concept — crypto has no close,
+                # and closes_soon is derived from the stock clock. Never let it
+                # flatten a 24/7 crypto position.
+                closes_soon and trade.asset_class == "stock",
+            )
         if not should_exit:
             continue
 

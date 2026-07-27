@@ -46,6 +46,7 @@ export interface StrategyParams {
     max_holding_hours: number;
     flatten_before_close: boolean;
     exit_below_vwap: boolean;
+    rotate_on_rank_dropout?: boolean; // basket rotation: sell when it leaves the top-N
     exit_slippage_pct: number;
     exit_slippage_max_pct: number;
   };
@@ -80,6 +81,8 @@ export interface Preset {
   asset_class: "stock" | "crypto";
   universe: string;
   swing_mode: boolean;
+  rank_by?: RankBy; // basket presets carry a ranking + count
+  top_n?: number;
   params: StrategyParams;
 }
 

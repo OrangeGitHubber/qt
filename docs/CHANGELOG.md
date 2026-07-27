@@ -3,6 +3,19 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Sector-ETF relative-strength rotation strategy (2026-07-27)
+
+A new **"Sector rotation"** preset (and the engine support behind it): hold only
+the strongest few names in a basket and rotate. It buys the top-N ranked by
+relative strength (price vs its 200-day average) and — the new part — **sells a
+holding the instant it drops out of the top-N**, rotating into whatever's leading
+now. That rank-drop-out exit is a new per-strategy option ("Rotate out when it
+leaves the top N"), shown for basket strategies, with a wide stop-loss as the
+safety net. Low turnover, and it leans on daily bars so the thin free intraday
+feed doesn't matter. Like all top-N ranking, it's a live-engine feature (a
+backtest can't reconstruct the historical daily ranking). Pick the preset, then
+choose your Sector-ETFs basket in the editor.
+
 ## Backtest: compare two strategies side by side (2026-07-27)
 
 The backtest page can now run **two** strategies over the exact same universe,
