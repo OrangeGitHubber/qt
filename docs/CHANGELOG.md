@@ -3,6 +3,17 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Fixed the sideways-scrolling page (2026-07-27)
+
+The whole app had a faint horizontal scrollbar: the page was a bit wider than
+the window, so you could nudge it sideways. The cause was the row of page
+buttons at the top (Dashboard, Scanner, … Settings) refusing to wrap — on a
+narrower window they ran off the right edge and dragged the whole page with
+them. They now wrap onto a second line instead. As a bonus, wide data tables
+(scanner results, trade logs, etc.) now scroll inside their own box on small
+screens rather than pushing the page sideways. Nothing looks different on a
+normal-width window.
+
 ## Choose which Slack messages QT sends (2026-07-27)
 
 Slack was all-or-nothing: set a webhook and you got everything. The Slack

@@ -85,6 +85,7 @@ export default function Journal() {
             blocked — will appear here with its full reasoning.
           </p>
         ) : (
+          <div className="table-scroll">
           <table>
             <thead>
               <tr>
@@ -160,6 +161,7 @@ export default function Journal() {
               })}
             </tbody>
           </table>
+          </div>
         )}
       </div>
     </>

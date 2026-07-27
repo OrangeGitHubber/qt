@@ -266,6 +266,7 @@ footer {
 /* Tabs */
 .tabs {
   display: flex;
+  flex-wrap: wrap;
   gap: 0.25rem;
   margin-bottom: 1.25rem;
   border-bottom: 1px solid var(--border);
@@ -409,6 +410,12 @@ button.small.watch-btn.watched:hover {
   background: rgba(79, 140, 255, 0.2);
   border-color: var(--accent);
   color: var(--text);
+}
+
+/* Wide tables scroll inside their own box instead of pushing the page sideways */
+.table-scroll {
+  overflow-x: auto;
+  max-width: 100%;
 }
 
 table {

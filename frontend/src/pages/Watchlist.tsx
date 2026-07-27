@@ -137,6 +137,7 @@ export default function Watchlist() {
         ) : view.length === 0 ? (
           <p className="hint">No {filter === "stock" ? "stocks" : "crypto"} in your watchlist.</p>
         ) : (
+          <div className="table-scroll">
           <table>
             <thead>
               <tr>
@@ -187,6 +188,7 @@ export default function Watchlist() {
               ))}
             </tbody>
           </table>
+          </div>
         )}
       </div>
     </>

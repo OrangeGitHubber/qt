@@ -81,6 +81,7 @@ function MoversTable({
       {rows.length === 0 ? (
         <EmptyReason meta={meta} filters={filters} />
       ) : (
+        <div className="table-scroll">
         <table>
           <thead>
             <tr>
@@ -119,6 +120,7 @@ function MoversTable({
             })}
           </tbody>
         </table>
+        </div>
       )}
     </div>
   );

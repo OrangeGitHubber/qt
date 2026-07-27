@@ -149,6 +149,7 @@ function StrategyContributionsCard() {
         </p>
       ) : (
         <>
+          <div className="table-scroll">
           <table>
             <thead>
               <tr>
@@ -185,6 +186,7 @@ function StrategyContributionsCard() {
               </tr>
             </tbody>
           </table>
+          </div>
 
           <p className="hint" style={{ marginTop: "1rem" }}>
             Daily realized contribution ({windowDays > 0 ? `last ${windowDays} days` : "all time"}, days with trades)

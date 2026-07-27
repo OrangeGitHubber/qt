@@ -461,6 +461,7 @@ export default function Backtest() {
                 ({events.length} actions across {result.trade_list.length} trades)
               </span>
             </h3>
+            <div className="table-scroll">
             <table>
               <thead>
                 <tr>
@@ -492,6 +493,7 @@ export default function Backtest() {
                 ))}
               </tbody>
             </table>
+            </div>
           </div>
         </>
       )}

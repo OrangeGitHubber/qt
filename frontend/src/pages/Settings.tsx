@@ -550,6 +550,7 @@ export default function Settings() {
           <p className="hint">Allowlist unavailable.</p>
         ) : (
           <>
+            <div className="table-scroll">
             <table>
               <tbody>
                 {allow.emails.map((e) => (
@@ -567,6 +568,7 @@ export default function Settings() {
                 ))}
               </tbody>
             </table>
+            </div>
             <div className="addform">
               <input
                 type="email"
