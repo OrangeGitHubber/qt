@@ -18,6 +18,14 @@ import StackedPnlBars, { PnlSeries } from "../components/StackedPnlBars";
 // Categorical palette for per-strategy colors (chart + table swatch share it).
 const PALETTE = ["#4f8cff", "#2ecc71", "#f39c12", "#a78bfa", "#22d3ee", "#f472b6", "#e74c3c", "#94a3b8"];
 
+// Lookback windows for the daily-contribution chart. 0 = all time (no cutoff).
+const PNL_RANGES: { label: string; days: number }[] = [
+  { label: "7D", days: 7 },
+  { label: "30D", days: 30 },
+  { label: "90D", days: 90 },
+  { label: "All", days: 0 },
+];
+
 function money(v: string | undefined, currency = "USD") {
   if (v === undefined) return "—";
   return new Intl.NumberFormat("en-US", { style: "currency", currency }).format(Number(v));
@@ -101,16 +109,24 @@ export default function Dashboard({ status }: { status: StatusResponse; onRefres
 function StrategyContributionsCard() {
   const [totals, setTotals] = useState<StrategyPnl | null>(null);
   const [daily, setDaily] = useState<StrategyPnlDaily | null>(null);
+  const [windowDays, setWindowDays] = useState(30); // chart lookback; 0 = all time
 
+  // Totals table is all-time and fetched once.
   useEffect(() => {
     getStrategyPnl().then(setTotals).catch(() => setTotals(null));
-    getStrategyPnlDaily(30).then(setDaily).catch(() => setDaily(null));
   }, []);
+
+  // The daily chart re-fetches whenever the selected window changes.
+  useEffect(() => {
+    getStrategyPnlDaily(windowDays).then(setDaily).catch(() => setDaily(null));
+  }, [windowDays]);
 
   if (!totals) return null;
 
   // One stable colour per strategy, shared by the table swatch and the chart.
-  const orderIds = (daily?.strategies ?? totals.strategies).map((s) => s.strategy_id);
+  // Keyed off the all-time totals order so colours don't shuffle when the chart
+  // window changes (the daily set is a subset of the strategies in totals).
+  const orderIds = totals.strategies.map((s) => s.strategy_id);
   const colorFor = (id: number) => PALETTE[Math.max(0, orderIds.indexOf(id)) % PALETTE.length];
   const series: PnlSeries[] = (daily?.strategies ?? []).map((s) => ({
     name: s.name,
@@ -170,12 +186,23 @@ function StrategyContributionsCard() {
             </tbody>
           </table>
 
-          {daily && daily.days.length > 0 && (
+          <p className="hint" style={{ marginTop: "1rem" }}>
+            Daily realized contribution ({windowDays > 0 ? `last ${windowDays} days` : "all time"}, days with trades)
+            — each bar is a day, stacked by strategy; gains rise above the line, losses drop below.
+          </p>
+          <div className="range-buttons">
+            {PNL_RANGES.map((r) => (
+              <button
+                key={r.label}
+                className={`small ${windowDays === r.days ? "mode-active" : ""}`}
+                onClick={() => setWindowDays(r.days)}
+              >
+                {r.label}
+              </button>
+            ))}
+          </div>
+          {daily && daily.days.length > 0 ? (
             <>
-              <p className="hint" style={{ marginTop: "1rem" }}>
-                Daily realized contribution (last 30 days with trades) — each bar is a day, stacked by strategy; gains
-                rise above the line, losses drop below.
-              </p>
               <StackedPnlBars days={daily.days} series={series} />
               <div className="legend">
                 {series.map((s) => (
@@ -185,6 +212,8 @@ function StrategyContributionsCard() {
                 ))}
               </div>
             </>
+          ) : (
+            <p className="hint">No closed trades in this window.</p>
           )}
         </>
       )}

@@ -187,3 +187,44 @@ def test_strategy_pnl_daily_buckets_realized_by_exit_date(client):
         s.query(Trade).delete()
         s.query(Strategy).delete()
         set_setting(s, "engine_mode", "off")
+
+
+def test_strategy_pnl_daily_window_cutoff_and_all_time(client):
+    from datetime import datetime, timedelta, timezone
+
+    from qt.models import Strategy, Trade
+
+    now = datetime.now(timezone.utc)
+    old_day = (now - timedelta(days=100)).strftime("%Y-%m-%d")   # outside a 30-day window
+    recent_day = (now - timedelta(days=2)).strftime("%Y-%m-%d")  # inside it
+
+    with session_scope() as s:
+        set_setting(s, "engine_mode", "paper")
+        s.query(Trade).delete()
+        s.query(Strategy).delete()
+        a = Strategy(name="Alpha", asset_class="stock", params="{}")
+        s.add(a)
+        s.flush()
+
+        def closed(pnl, day):
+            return Trade(strategy_id=a.id, mode="paper", symbol="X", asset_class="stock",
+                         status="closed", qty=1, notional=100, pnl=pnl,
+                         exit_at=datetime(int(day[:4]), int(day[5:7]), int(day[8:10]), 15, 0))
+
+        s.add_all([closed(10, old_day), closed(4, recent_day)])
+        s.commit()
+
+    # 30-day window: only the recent day; the older trade is excluded by the cutoff.
+    win = client.get("/api/engine/strategy-pnl-daily?days=30").json()
+    assert win["days"] == [recent_day]
+    assert win["strategies"][0]["total"] == 4.0
+
+    # All time (days=0): no cutoff — both days appear.
+    allt = client.get("/api/engine/strategy-pnl-daily?days=0").json()
+    assert allt["days"] == sorted([old_day, recent_day])
+    assert allt["strategies"][0]["total"] == 14.0
+
+    with session_scope() as s:
+        s.query(Trade).delete()
+        s.query(Strategy).delete()
+        set_setting(s, "engine_mode", "off")

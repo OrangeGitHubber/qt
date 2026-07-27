@@ -56,6 +56,11 @@ bucketed by exit date), so there's no new data to store and the numbers always
 match the journal. Only the current engine mode's trades count (paper trades
 don't mix into a live breakdown).
 
+The daily chart has a **7D / 30D / 90D / All** window selector above it (added
+2026-07-27) so you can zoom the lookback instead of it being fixed at 30 days.
+The totals table stays all-time regardless, so it won't always sum to the
+windowed chart.
+
 ## Crypto scanner-replay backtesting (2026-07-27)
 
 A crypto "today's risers" strategy can now be backtested with scanner replay,

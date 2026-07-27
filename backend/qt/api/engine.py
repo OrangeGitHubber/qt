@@ -283,16 +283,17 @@ def strategy_pnl_daily(days: int = 30, session: Session = Depends(get_session)) 
     """Per-strategy realized P&L bucketed by day (active mode) for a stacked
     daily-contribution chart. Derived from closed trades grouped by exit DATE ×
     strategy — no snapshot storage needed. Realized only; a day with no closed
-    trades simply doesn't appear."""
+    trades simply doesn't appear. `days` is the lookback window; days <= 0 means
+    all time (no cutoff)."""
     mode = get_mode(session)
-    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%d")
     day_col = func.date(Trade.exit_at)  # 'YYYY-MM-DD' of the (UTC) exit timestamp
+    filters = [Trade.mode == mode, Trade.status == "closed", Trade.exit_at.isnot(None)]
+    if days > 0:
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%d")
+        filters.append(day_col >= cutoff)
     rows = (
         session.query(day_col, Trade.strategy_id, func.coalesce(func.sum(Trade.pnl), 0.0))
-        .filter(
-            Trade.mode == mode, Trade.status == "closed",
-            Trade.exit_at.isnot(None), day_col >= cutoff,
-        )
+        .filter(*filters)
         .group_by(day_col, Trade.strategy_id)
         .all()
     )
