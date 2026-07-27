@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from sqlalchemy import Float, Integer, String, create_engine
+from sqlalchemy import Float, Integer, String, create_engine, func
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.engine import Engine
@@ -314,3 +314,15 @@ def cached_intraday_bars(
 def has_intraday(sess: OrmSession) -> bool:
     """Whether any intraday bars are cached (stage-2 replay is possible)."""
     return sess.query(IntradayBar).first() is not None
+
+
+def cache_stats(sess: OrmSession) -> dict:
+    """What's actually PERSISTED in the cache, independent of any in-process
+    sweep counters (which reset on redeploy). Lets the UI show the real state of
+    a durable Postgres cache after a container restart instead of zeros."""
+    return {
+        "daily_symbols": int(sess.query(func.count(func.distinct(DailyBar.symbol))).scalar() or 0),
+        "movers_days": int(sess.query(func.count(func.distinct(DailyMover.day))).scalar() or 0),
+        "intraday_bars": int(sess.query(func.count()).select_from(IntradayBar).scalar() or 0),
+        "latest_day": sess.query(func.max(DailyBar.day)).scalar(),  # 'YYYY-MM-DD' | None
+    }

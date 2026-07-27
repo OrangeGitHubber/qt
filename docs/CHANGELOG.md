@@ -3,6 +3,17 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Bar-cache panel shows persisted totals, not just this run's progress (2026-07-26)
+
+After a container redeploy the Historical bar cache panel showed all zeros and
+"Last run: never" — alarming, because it looked like the swept data was gone. It
+wasn't: the counters were tracked in memory (they reset with the process), while
+the actual cache lives in the (durable) database. The panel now reads the real
+persisted totals from the cache — **symbols cached**, **days of movers**,
+**intraday bars**, and **data through** (the latest cached day) — so a redeploy
+reflects what's actually there. Live per-run progress still shows while a sweep
+is running.
+
 ## Strategy editor warns about two silent config traps (2026-07-26)
 
 Two misconfigurations that quietly wreck a backtest now surface a warning in the

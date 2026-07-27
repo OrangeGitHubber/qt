@@ -210,6 +210,8 @@ export interface BarCacheStatus {
   has_intraday: boolean;
   errors: number;
   last_error: string | null;
+  // Persisted cache totals (from the DB) — survive redeploys; null while a sweep runs.
+  cache: { daily_symbols: number; movers_days: number; intraday_bars: number; latest_day: string | null } | null;
   backend: { kind: string; scheme: string; host: string | null };
 }
 

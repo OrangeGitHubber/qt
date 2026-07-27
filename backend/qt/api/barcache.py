@@ -228,12 +228,19 @@ async def trigger_intraday_sweep(
 @router.get("/status")
 def sweep_status() -> dict:
     has_intraday = False
+    cache = None
     try:
         sess = barcache.session()
         try:
             has_intraday = barcache.has_intraday(sess)
+            # Persisted totals — the real state of the (durable) cache, so a
+            # redeploy shows what's there, not zeros. Skipped mid-sweep: the live
+            # in-memory counters cover that, and count(*) would hammer the DB
+            # every poll.
+            if not _progress.running:
+                cache = barcache.cache_stats(sess)
         finally:
             sess.close()
-    except Exception:  # noqa: BLE001 — a bad/unbuilt cache just means "no intraday yet"
+    except Exception:  # noqa: BLE001 — a bad/unbuilt cache just means "nothing cached yet"
         has_intraday = False
-    return {**asdict(_progress), "has_intraday": has_intraday, "backend": _backend_info()}
+    return {**asdict(_progress), "has_intraday": has_intraday, "cache": cache, "backend": _backend_info()}

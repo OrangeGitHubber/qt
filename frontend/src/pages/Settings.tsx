@@ -298,22 +298,35 @@ export default function Settings() {
                 : "idle"}
               {bars.last_error && <span className="error"> — {bars.last_error}</span>}
             </dd>
-            <dt>Progress</dt>
-            <dd>
-              {bars.kind === "intraday"
-                ? `${bars.symbols_saved.toLocaleString()} symbol-days${bars.batches_total ? ` · day ${bars.batches_done}/${bars.batches_total}` : ""}`
-                : `${bars.symbols_saved.toLocaleString()} symbols saved${bars.symbols_total ? ` of ${bars.symbols_total.toLocaleString()}` : ""}${bars.batches_total ? ` · batch ${bars.batches_done}/${bars.batches_total}` : ""}`}
-            </dd>
-            <dt>Days reconstructed</dt>
-            <dd>{bars.days_reconstructed.toLocaleString()}</dd>
-            <dt>Intraday bars</dt>
-            <dd>
-              {bars.has_intraday
-                ? `${bars.intraday_bars.toLocaleString()} pulled${bars.kind === "intraday" && bars.running ? " (in progress)" : ""} — intraday replay ready`
-                : "none yet — replay uses daily bars"}
-            </dd>
-            <dt>Last run</dt>
-            <dd>{bars.last_run_at ? new Date(bars.last_run_at).toLocaleString() : "never"}</dd>
+            {bars.running ? (
+              // Live progress of the in-flight sweep (resets on redeploy — that's fine, it's ephemeral).
+              <>
+                <dt>Progress</dt>
+                <dd>
+                  {bars.kind === "intraday"
+                    ? `${bars.symbols_saved.toLocaleString()} symbol-days${bars.batches_total ? ` · day ${bars.batches_done}/${bars.batches_total}` : ""}`
+                    : `${bars.symbols_saved.toLocaleString()} symbols saved${bars.symbols_total ? ` of ${bars.symbols_total.toLocaleString()}` : ""}${bars.batches_total ? ` · batch ${bars.batches_done}/${bars.batches_total}` : ""}`}
+                </dd>
+                {bars.kind === "intraday" && <dt>Intraday bars</dt>}
+                {bars.kind === "intraday" && <dd>{bars.intraday_bars.toLocaleString()} pulled (in progress)</dd>}
+              </>
+            ) : (
+              // Persisted cache contents — read from the DB, so they survive redeploys.
+              <>
+                <dt>Symbols cached</dt>
+                <dd>{(bars.cache?.daily_symbols ?? 0).toLocaleString()}</dd>
+                <dt>Days of movers</dt>
+                <dd>{(bars.cache?.movers_days ?? 0).toLocaleString()}</dd>
+                <dt>Intraday bars</dt>
+                <dd>
+                  {bars.has_intraday
+                    ? `${(bars.cache?.intraday_bars ?? 0).toLocaleString()} cached — intraday replay ready`
+                    : "none yet — replay uses daily bars"}
+                </dd>
+                <dt>Data through</dt>
+                <dd>{bars.cache?.latest_day ?? "—"}</dd>
+              </>
+            )}
           </dl>
         )}
         <button className="small" disabled={bars?.running} onClick={runSweep}>

@@ -29,6 +29,23 @@ def test_rank_movers_ranks_by_gain_and_caps_top_n():
     assert ranked[0][1] == 50.0
 
 
+def test_cache_stats_reports_persisted_totals():
+    s = _mem_session()
+    assert barcache.cache_stats(s) == {
+        "daily_symbols": 0, "movers_days": 0, "intraday_bars": 0, "latest_day": None,
+    }
+    barcache.save_daily_bars(s, "AAA", [
+        {"t": "2026-06-01T00:00:00Z", "o": 1, "h": 1, "l": 1, "c": 1, "v": 1, "vw": 1},
+        {"t": "2026-06-02T00:00:00Z", "o": 1, "h": 1, "l": 1, "c": 1, "v": 1, "vw": 1},
+    ])
+    barcache.save_daily_bars(s, "BBB", [{"t": "2026-06-02T00:00:00Z", "o": 1, "h": 1, "l": 1, "c": 1, "v": 1, "vw": 1}])
+    barcache.store_movers(s, "2026-06-02", [("AAA", 5.0, 1.0, 1e6)])
+    barcache.save_intraday_bars(s, "AAA", [{"t": "2026-06-02T14:00:00Z", "o": 1, "h": 1, "l": 1, "c": 1, "v": 1, "vw": 1}])
+    s.commit()
+    stats = barcache.cache_stats(s)
+    assert stats == {"daily_symbols": 2, "movers_days": 1, "intraday_bars": 1, "latest_day": "2026-06-02"}
+
+
 def test_rank_movers_uses_intraday_peak_when_high_is_given():
     # SPIKE closed almost flat (+5%) but peaked +100% intraday; FADE closed
     # +50% with a +55% peak. An intraday scanner would rank SPIKE first — and
