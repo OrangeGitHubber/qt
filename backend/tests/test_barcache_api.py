@@ -63,3 +63,31 @@ def test_status_reports_has_intraday(client, monkeypatch):
         ])
         s.commit()
     assert client.get("/api/barcache/status").json()["has_intraday"] is True
+
+
+def test_crypto_sweep_refuses_while_a_run_is_in_progress(client, configured, monkeypatch):
+    """Crypto shares the same single worker slot as the stock sweeps."""
+    monkeypatch.setattr(barcache_api._progress, "running", True)
+    assert client.post("/api/barcache/sweep-crypto").status_code == 409
+    assert client.post("/api/barcache/sweep-crypto-intraday").status_code == 409
+
+
+def test_status_reports_crypto_cache_separately(client, monkeypatch):
+    """/status surfaces the crypto cache independently of the stock cache."""
+    _mem_cache(monkeypatch)
+    monkeypatch.setattr(barcache_api._progress, "running", False)
+    body = client.get("/api/barcache/status").json()
+    assert body["crypto_has_intraday"] is False
+    assert body["crypto_cache"]["daily_symbols"] == 0
+    with barcache.session() as s:
+        barcache.save_daily_bars(s, "BTC/USD", [
+            {"t": "2026-06-01T00:00:00Z", "o": 10, "h": 10, "l": 10, "c": 10, "v": 1e5, "vw": 10},
+        ], model=barcache.CryptoDailyBar)
+        barcache.save_intraday_bars(s, "BTC/USD", [
+            {"t": "2026-06-01T12:00:00Z", "o": 10, "h": 10, "l": 10, "c": 10, "v": 1e5, "vw": 10},
+        ], model=barcache.CryptoIntradayBar)
+        s.commit()
+    body = client.get("/api/barcache/status").json()
+    assert body["crypto_has_intraday"] is True
+    assert body["crypto_cache"]["daily_symbols"] == 1
+    assert body["has_intraday"] is False  # stock cache still empty

@@ -262,11 +262,85 @@ def test_scanner_replay_needs_a_sweep_first(client, configured, monkeypatch):
     assert "sweep" in r.json()["detail"].lower()
 
 
-def test_scanner_replay_rejects_crypto(client, configured):
+def test_scanner_replay_crypto_needs_a_crypto_sweep_first(client, configured, monkeypatch):
+    """An empty crypto cache explains itself and names the crypto sweep."""
+    eng = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    barcache.CacheBase.metadata.create_all(eng)
+    monkeypatch.setattr(barcache, "_engine", eng)
+    monkeypatch.setattr(barcache, "_Session", sessionmaker(bind=eng, expire_on_commit=False))
     sid = _make(client, "crypto")
     r = client.post("/api/backtest", json={"strategy_id": sid, "scanner_replay": True, "days": 30})
     assert r.status_code == 422
-    assert "stocks-only" in r.json()["detail"].lower()
+    detail = r.json()["detail"].lower()
+    assert "crypto" in detail and "sweep" in detail
+
+
+def test_scanner_replay_crypto_gates_to_cached_movers_by_utc_day(client, configured, monkeypatch):
+    """End-to-end crypto replay: reads the CRYPTO tables, buckets by UTC day, and
+    gates entries to that day's cached movers — BTC traded, ETH gated out."""
+    eng = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    barcache.CacheBase.metadata.create_all(eng)
+    Sess = sessionmaker(bind=eng, expire_on_commit=False)
+    monkeypatch.setattr(barcache, "_engine", eng)
+    monkeypatch.setattr(barcache, "_Session", Sess)
+    d0 = (datetime.now(timezone.utc) - timedelta(days=6)).strftime("%Y-%m-%d")
+    d1 = (datetime.now(timezone.utc) - timedelta(days=5)).strftime("%Y-%m-%d")
+    with Sess() as s:
+        # Crypto daily bars are UTC-aligned (00:00Z). D1 rises +5% for both pairs.
+        for sym in ("BTC/USD", "ETH/USD"):
+            barcache.save_daily_bars(s, sym, [
+                {"t": f"{d0}T00:00:00Z", "o": 100, "h": 100, "l": 100, "c": 100, "v": 1e6, "vw": 100},
+                {"t": f"{d1}T00:00:00Z", "o": 105, "h": 105, "l": 105, "c": 105, "v": 1e6, "vw": 105},
+            ], model=barcache.CryptoDailyBar)
+        # Only BTC made the top-N on D1 → ETH must be gated out.
+        barcache.store_movers(s, d1, [("BTC/USD", 5.0, 105.0, 1e8)], model=barcache.CryptoDailyMover)
+        s.commit()
+
+    sid = _make(client, "crypto")
+    fetch = AsyncMock(side_effect=Exception("no benchmark in test"))
+    with patch.object(AlpacaClient, "historical_bars", new=fetch):
+        body = client.post("/api/backtest", json={
+            "strategy_id": sid, "scanner_replay": True, "days": 30,
+            "starting_cash": 5000, "spread_pct": 0}).json()
+    assert body["scanner_replay"] is True
+    assert body["universe_size"] == 1        # one unique crypto mover
+    assert body["days_replayed"] == 1
+    assert body["timeframe"] == "1Day"
+    assert body["trades"] == 1               # BTC entered; ETH gated out
+    assert body["trade_list"][0]["symbol"] == "BTC/USD"
+    assert body["trade_list"][0]["entry_day"] == d1   # UTC-day bucket, not ET
+
+
+def test_scanner_replay_crypto_prefers_intraday_bars(client, configured, monkeypatch):
+    """Crypto replay uses cached 15-min bars (UTC-day bucketed) when present."""
+    eng = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    barcache.CacheBase.metadata.create_all(eng)
+    Sess = sessionmaker(bind=eng, expire_on_commit=False)
+    monkeypatch.setattr(barcache, "_engine", eng)
+    monkeypatch.setattr(barcache, "_Session", Sess)
+    d0 = (datetime.now(timezone.utc) - timedelta(days=6)).strftime("%Y-%m-%d")
+    d1 = (datetime.now(timezone.utc) - timedelta(days=5)).strftime("%Y-%m-%d")
+
+    def ib(ts, c):
+        return {"t": ts, "o": c, "h": c, "l": c, "c": c, "v": 1e5, "vw": c}
+
+    with Sess() as s:
+        barcache.save_intraday_bars(s, "BTC/USD", [
+            ib(f"{d0}T12:00:00Z", 100), ib(f"{d0}T18:00:00Z", 100),
+            ib(f"{d1}T12:00:00Z", 104), ib(f"{d1}T18:00:00Z", 106),
+        ], model=barcache.CryptoIntradayBar)
+        barcache.store_movers(s, d1, [("BTC/USD", 6.0, 106.0, 1e8)], model=barcache.CryptoDailyMover)
+        s.commit()
+
+    sid = _make(client, "crypto")
+    fetch = AsyncMock(side_effect=Exception("no benchmark"))
+    with patch.object(AlpacaClient, "historical_bars", new=fetch):
+        body = client.post("/api/backtest", json={
+            "strategy_id": sid, "scanner_replay": True, "days": 30,
+            "starting_cash": 5000, "spread_pct": 0}).json()
+    assert body["replay_intraday"] is True
+    assert body["timeframe"] == "15Min"
+    assert body["trades"] == 1
 
 
 def test_market_benchmark_kept_for_a_basket_including_it(client, configured):

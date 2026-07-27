@@ -63,3 +63,53 @@ def test_daily_sweep_updates_a_populated_cache(monkeypatch):
     assert called.get("ran") is True
     # Uses the live stock scanner's floors, and stores the generous wide set.
     assert called["min_change_pct"] == 2.0 and called["min_price"] == 1.0
+
+
+def test_daily_sweep_does_not_touch_crypto_without_a_crypto_cache(monkeypatch):
+    """A stock-only cache maintains stocks but never bootstraps a crypto cache."""
+    Sess = _mem_cache(monkeypatch)
+    _wire(monkeypatch)
+    with Sess() as s:
+        barcache.save_daily_bars(s, "AAA", [
+            {"t": "2026-06-01T14:00:00Z", "o": 10, "h": 10, "l": 10, "c": 10, "v": 1e6, "vw": 10},
+        ])
+        s.commit()
+
+    async def _stock_noop(client, sess, **kwargs):
+        return {"symbols_saved": 0, "days_reconstructed": 0}
+
+    async def _crypto_boom(*a, **k):
+        raise AssertionError("crypto update ran against an un-bootstrapped crypto cache")
+
+    monkeypatch.setattr(barsweep, "daily_movers_update", _stock_noop)
+    monkeypatch.setattr(barsweep, "crypto_daily_movers_update", _crypto_boom)
+    asyncio.run(jobs.daily_movers_sweep())  # returns cleanly, no crypto update
+
+
+def test_daily_sweep_maintains_a_populated_crypto_cache(monkeypatch):
+    """When a crypto cache exists, it's maintained with the crypto scanner floors."""
+    Sess = _mem_cache(monkeypatch)
+    _wire(monkeypatch)
+    with Sess() as s:  # only a crypto bar — the stock side stays a no-op
+        barcache.save_daily_bars(s, "BTC/USD", [
+            {"t": "2026-06-01T00:00:00Z", "o": 100, "h": 100, "l": 100, "c": 100, "v": 1e6, "vw": 100},
+        ], model=barcache.CryptoDailyBar)
+        s.commit()
+
+    called = {}
+
+    async def _stock_boom(*a, **k):
+        raise AssertionError("stock update ran against an empty stock cache")
+
+    async def _crypto_spy(client, sess, **kwargs):
+        called.update(kwargs)
+        called["ran"] = True
+        return {"symbols_saved": 0, "days_reconstructed": 0}
+
+    monkeypatch.setattr(barsweep, "daily_movers_update", _stock_boom)
+    monkeypatch.setattr(barsweep, "crypto_daily_movers_update", _crypto_spy)
+    asyncio.run(jobs.daily_movers_sweep())
+    assert called.get("ran") is True
+    # Uses the crypto scanner's floors (1% change, $1M volume, no $1 price floor).
+    assert called["min_change_pct"] == 1.0 and called["min_price"] == 0.0
+    assert called["min_dollar_volume"] == 1_000_000

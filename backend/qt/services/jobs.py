@@ -88,15 +88,30 @@ async def daily_movers_sweep() -> None:
                 return
             sess = barcache.session()
             try:
-                if sess.query(barcache.DailyBar).first() is None:
-                    return  # no historical cache yet — nothing to maintain
-                f = scanner.STOCK_DEFAULTS
-                summary = await barsweep.daily_movers_update(
-                    client, sess,
-                    min_change_pct=f["min_change_pct"], min_price=f["min_price"],
-                    max_price=f["max_price"], min_dollar_volume=f["min_dollar_volume"],
-                )
-                log.info("daily movers sweep done: %s", summary)
+                # STOCK cache — maintain only if it already exists.
+                if sess.query(barcache.DailyBar).first() is not None:
+                    f = scanner.STOCK_DEFAULTS
+                    summary = await barsweep.daily_movers_update(
+                        client, sess,
+                        min_change_pct=f["min_change_pct"], min_price=f["min_price"],
+                        max_price=f["max_price"], min_dollar_volume=f["min_dollar_volume"],
+                    )
+                    log.info("daily movers sweep done: %s", summary)
+
+                # CRYPTO cache — independently maintained on the same rule: never
+                # bootstrap, only keep a cache the user already built current.
+                # This runs on US trading days (the calendar gate above). Crypto
+                # is 24/7, but the update's overlap_days window re-pulls the last
+                # several days, so a skipped weekend/holiday is caught on the next
+                # trading day rather than lost.
+                if sess.query(barcache.CryptoDailyBar).first() is not None:
+                    cf = scanner.CRYPTO_DEFAULTS
+                    crypto_summary = await barsweep.crypto_daily_movers_update(
+                        client, sess,
+                        min_change_pct=cf["min_change_pct"], min_price=cf["min_price"],
+                        max_price=cf["max_price"], min_dollar_volume=cf["min_dollar_volume"],
+                    )
+                    log.info("crypto daily movers sweep done: %s", crypto_summary)
             finally:
                 sess.close()
     except Exception:

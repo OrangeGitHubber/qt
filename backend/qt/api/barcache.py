@@ -31,6 +31,7 @@ router = APIRouter(prefix="/api/barcache", tags=["barcache"])
 class SweepProgress:
     running: bool = False
     kind: str = "daily"  # daily | reconstruct | intraday — what the current/last run was
+    market: str = "stock"  # stock | crypto — which cache the current/last run touched
     started_at: str | None = None
     last_run_at: str | None = None
     phase: str = ""  # reconstruct sub-phase: "loading bars" | "ranking days"
@@ -93,6 +94,31 @@ def _reconstruct_blocking() -> int:
     sess = barcache.session()
     try:
         return _reconstruct(sess)
+    finally:
+        sess.close()
+
+
+def _reconstruct_crypto(sess) -> int:
+    """Re-rank every cached crypto day's movers with the live crypto scanner's
+    filters (CRYPTO_DEFAULTS), storing a generous set so the backtest picks its
+    own riser count at read time."""
+    f = scanner.CRYPTO_DEFAULTS
+    return barsweep.reconstruct_crypto_movers(
+        sess,
+        top_n=barsweep.SWEEP_STORE_TOP_N,
+        min_change_pct=f["min_change_pct"],
+        min_price=f["min_price"],
+        max_price=f["max_price"],
+        min_dollar_volume=f["min_dollar_volume"],
+        progress=_reconstruct_progress,
+    )
+
+
+def _reconstruct_crypto_blocking() -> int:
+    """reconstruct crypto movers in a worker thread (see _reconstruct_blocking)."""
+    sess = barcache.session()
+    try:
+        return _reconstruct_crypto(sess)
     finally:
         sess.close()
 
@@ -164,6 +190,59 @@ async def _run_intraday_sweep(client: AlpacaClient) -> None:
         _progress.last_run_at = datetime.now(timezone.utc).isoformat()
 
 
+async def _run_crypto_sweep(client: AlpacaClient, days: int) -> None:
+    """Background worker: sweep the whole crypto USD-pair universe (daily), then
+    reconstruct crypto movers using the live crypto scanner's filters."""
+    sess = barcache.session()
+    try:
+        def on_progress(done: int, total: int, saved: int) -> None:
+            _progress.batches_done = done
+            _progress.batches_total = total
+            _progress.symbols_saved = saved
+
+        summary = await barsweep.sweep_crypto_daily_bars(client, sess, days=days, progress=on_progress)
+        _progress.symbols_total = summary["symbols_total"]
+        _progress.symbols_saved = summary["symbols_saved"]
+        _progress.batches_total = summary["batches"]
+        _progress.batches_done = summary["batches"]
+        _progress.errors = summary["errors"]
+
+        _progress.days_reconstructed = await asyncio.to_thread(_reconstruct_crypto_blocking)
+    except Exception as exc:  # noqa: BLE001
+        log.exception("crypto bar sweep failed")
+        _progress.last_error = str(exc)
+    finally:
+        sess.close()
+        _progress.running = False
+        _progress.last_run_at = datetime.now(timezone.utc).isoformat()
+
+
+async def _run_crypto_intraday_sweep(client: AlpacaClient) -> None:
+    """Background worker: pull 15-min bars for every crypto mover-day so crypto
+    scanner replay can run on real intraday data."""
+    sess = barcache.session()
+    try:
+        def on_progress(done: int, total: int, saved: int, bars: int) -> None:
+            _progress.batches_done = done
+            _progress.batches_total = total
+            _progress.symbols_saved = saved
+            _progress.intraday_bars = bars
+
+        summary = await barsweep.sweep_crypto_intraday(client, sess, progress=on_progress)
+        _progress.batches_total = summary["days"]
+        _progress.batches_done = summary["days"]
+        _progress.symbols_saved = summary["symbols_saved"]
+        _progress.intraday_bars = summary["bars_saved"]
+        _progress.errors = summary["errors"]
+    except Exception as exc:  # noqa: BLE001
+        log.exception("crypto intraday sweep failed")
+        _progress.last_error = str(exc)
+    finally:
+        sess.close()
+        _progress.running = False
+        _progress.last_run_at = datetime.now(timezone.utc).isoformat()
+
+
 @router.post("/sweep")
 async def trigger_sweep(
     days: int = Query(default=365, ge=7, le=1825),
@@ -184,6 +263,7 @@ async def trigger_sweep(
 
     _progress.running = True
     _progress.kind = "daily"
+    _progress.market = "stock"
     _progress.started_at = datetime.now(timezone.utc).isoformat()
     _progress.batches_done = 0
     _progress.batches_total = 0
@@ -210,6 +290,7 @@ async def trigger_reconstruct() -> dict:
 
     _progress.running = True
     _progress.kind = "reconstruct"
+    _progress.market = "stock"
     _progress.phase = "loading bars"
     _progress.started_at = datetime.now(timezone.utc).isoformat()
     _progress.batches_done = 0
@@ -238,6 +319,7 @@ async def trigger_intraday_sweep(
 
     _progress.running = True
     _progress.kind = "intraday"
+    _progress.market = "stock"
     _progress.started_at = datetime.now(timezone.utc).isoformat()
     _progress.batches_done = 0
     _progress.batches_total = 0
@@ -249,22 +331,93 @@ async def trigger_intraday_sweep(
     return {"ok": True, "started": True, "intraday": True, "backend": _backend_info()}
 
 
+@router.post("/sweep-crypto")
+async def trigger_crypto_sweep(
+    days: int = Query(default=365, ge=7, le=1825),
+    client: AlpacaClient = Depends(require_client),
+) -> dict:
+    """Kick off the crypto USD-pair sweep + crypto movers reconstruction as a
+    background task. The crypto universe is tiny, so this pulls EVERY pair's
+    daily bars (not just movers) and ranks each UTC day's risers. Returns
+    immediately; poll /status."""
+    global _task
+    if _progress.running:
+        raise HTTPException(status_code=409, detail="A sweep is already running.")
+    try:
+        barcache.init_cache()
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=f"Could not open the bar cache DB: {exc}")
+
+    _progress.running = True
+    _progress.kind = "daily"
+    _progress.market = "crypto"
+    _progress.started_at = datetime.now(timezone.utc).isoformat()
+    _progress.batches_done = 0
+    _progress.batches_total = 0
+    _progress.days_reconstructed = 0
+    _progress.last_error = None
+    _task = asyncio.create_task(_run_crypto_sweep(client, days))
+    return {"ok": True, "started": True, "crypto": True, "days": days, "backend": _backend_info()}
+
+
+@router.post("/sweep-crypto-intraday")
+async def trigger_crypto_intraday_sweep(
+    client: AlpacaClient = Depends(require_client),
+) -> dict:
+    """Pull 15-min bars for the reconstructed crypto movers so crypto scanner
+    replay can judge an intraday strategy on how each day actually traded. Run a
+    crypto sweep first so there are movers to fetch. Returns immediately; poll
+    /status."""
+    global _task
+    if _progress.running:
+        raise HTTPException(status_code=409, detail="A sweep or reconstruct is already running.")
+    try:
+        barcache.init_cache()
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=f"Could not open the bar cache DB: {exc}")
+
+    _progress.running = True
+    _progress.kind = "intraday"
+    _progress.market = "crypto"
+    _progress.started_at = datetime.now(timezone.utc).isoformat()
+    _progress.batches_done = 0
+    _progress.batches_total = 0
+    _progress.symbols_saved = 0
+    _progress.symbols_total = 0
+    _progress.intraday_bars = 0
+    _progress.last_error = None
+    _task = asyncio.create_task(_run_crypto_intraday_sweep(client))
+    return {"ok": True, "started": True, "crypto": True, "intraday": True, "backend": _backend_info()}
+
+
 @router.get("/status")
 def sweep_status() -> dict:
     has_intraday = False
+    crypto_has_intraday = False
     cache = None
+    crypto_cache = None
     try:
         sess = barcache.session()
         try:
             has_intraday = barcache.has_intraday(sess)
+            crypto_has_intraday = barcache.has_intraday(sess, model=barcache.CryptoIntradayBar)
             # Persisted totals — the real state of the (durable) cache, so a
             # redeploy shows what's there, not zeros. Skipped mid-sweep: the live
             # in-memory counters cover that, and count(*) would hammer the DB
             # every poll.
             if not _progress.running:
                 cache = barcache.cache_stats(sess)
+                crypto_cache = barcache.crypto_cache_stats(sess)
         finally:
             sess.close()
     except Exception:  # noqa: BLE001 — a bad/unbuilt cache just means "nothing cached yet"
         has_intraday = False
-    return {**asdict(_progress), "has_intraday": has_intraday, "cache": cache, "backend": _backend_info()}
+        crypto_has_intraday = False
+    return {
+        **asdict(_progress),
+        "has_intraday": has_intraday,
+        "crypto_has_intraday": crypto_has_intraday,
+        "cache": cache,
+        "crypto_cache": crypto_cache,
+        "backend": _backend_info(),
+    }

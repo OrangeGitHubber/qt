@@ -118,16 +118,27 @@ async def _scanner_replay(
     for each past day, only that day's cached top-N movers are eligible to
     enter. Prefers cached INTRADAY bars (so intraday exits — flatten-before-
     close, VWAP, the entry window — behave for real); falls back to daily bars
-    when no intraday sweep has been run. Fully offline. Stocks only for now."""
-    if strategy.asset_class != "stock":
-        raise HTTPException(status_code=422, detail="Scanner replay is stocks-only for now.")
-
+    when no intraday sweep has been run. Fully offline. Works for stocks (ET
+    session days) and crypto (UTC calendar days) off their SEPARATE caches."""
     from qt.services import barcache
 
+    crypto = strategy.asset_class == "crypto"
+    # Which cache to read: stocks use the ET-day tables + 14:00Z daily stamp;
+    # crypto uses the UTC-day tables + 12:00Z stamp, and buckets the backtest by
+    # UTC day (market="crypto"). The eligible-by-day keys and the bar day-buckets
+    # must agree, which they do because both come from the same-market cache.
+    daily_model = barcache.CryptoDailyBar if crypto else barcache.DailyBar
+    mover_model = barcache.CryptoDailyMover if crypto else barcache.DailyMover
+    intraday_model = barcache.CryptoIntradayBar if crypto else barcache.IntradayBar
+    daily_stamp = "T12:00:00Z" if crypto else "T14:00:00Z"
+    market = "crypto" if crypto else "stock"
+    benchmark_class = "crypto" if crypto else "stock"
+    benchmark_symbol = "BTC/USD" if crypto else "SPY"
+
     # Ensure the cache schema exists before reading. A cache built by an earlier
-    # version won't have the newer `intraday_bars` table; init_cache is idempotent
-    # (creates only missing tables), so this heals an older cache in place instead
-    # of erroring on a missing relation.
+    # version won't have the newer tables; init_cache is idempotent (creates only
+    # missing tables), so this heals an older cache in place instead of erroring
+    # on a missing relation.
     try:
         barcache.init_cache()
     except Exception as exc:  # noqa: BLE001 — surface a bad cache DSN clearly
@@ -136,22 +147,24 @@ async def _scanner_replay(
     start_day = (datetime.now(timezone.utc) - timedelta(days=body.days)).strftime("%Y-%m-%d")
     cache = barcache.session()
     try:
-        movers = barcache.movers_between(cache, start_day, top_n=body.replay_top_n)
+        movers = barcache.movers_between(cache, start_day, top_n=body.replay_top_n, model=mover_model)
         if not movers:
+            asset = "crypto" if crypto else "stock"
             raise HTTPException(
                 status_code=422,
-                detail="No cached movers yet — run a sweep first (Settings → Historical bar cache).",
+                detail=f"No cached {asset} movers yet — run a {'crypto ' if crypto else ''}sweep first "
+                       "(Settings → Historical bar cache).",
             )
         eligible_by_day = {day: set(syms) for day, syms in movers.items()}
         union = sorted({s for syms in movers.values() for s in syms})
         # Stage 2: intraday bars for the movers if we have them, else daily.
-        intraday_bars = barcache.cached_intraday_bars(cache, union, start_day)
+        intraday_bars = barcache.cached_intraday_bars(cache, union, start_day, model=intraday_model)
         used_intraday = any(intraday_bars.values())
         if used_intraday:
             bars = intraday_bars
             timeframe = "15Min"
         else:
-            bars = barcache.cached_daily_bars(cache, union, start_day)
+            bars = barcache.cached_daily_bars(cache, union, start_day, model=daily_model, stamp=daily_stamp)
             timeframe = "1Day"
     finally:
         cache.close()
@@ -159,20 +172,22 @@ async def _scanner_replay(
     result = backtest.run_backtest(
         strategy_dict, bars, get_risk(session),
         starting_cash=body.starting_cash, spread_pct=body.spread_pct,
-        eligible_by_day=eligible_by_day,
+        eligible_by_day=eligible_by_day, market=market,
     )
     if "error" in result:
         raise HTTPException(status_code=422, detail=result["error"])
 
-    # Broad-market benchmark (SPY), best-effort — the tested-symbols hold
-    # benchmark is meaningless here (hundreds of names), so drop it.
+    # Broad-market benchmark (SPY for stocks, BTC/USD for crypto), best-effort —
+    # the tested-symbols hold benchmark is meaningless here (many names), so drop it.
     result["hold_benchmark"] = None
     result["hold_benchmark_label"] = None
     result["benchmark"] = None
     result["benchmark_symbol"] = None
     try:
-        result["benchmark"] = await backtest.fetch_benchmark(client, "stock", start_day, result["equity_days"])
-        result["benchmark_symbol"] = "SPY"
+        result["benchmark"] = await backtest.fetch_benchmark(
+            client, benchmark_class, start_day, result["equity_days"], market=market
+        )
+        result["benchmark_symbol"] = benchmark_symbol
     except Exception:
         pass
 
