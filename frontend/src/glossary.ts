@@ -40,7 +40,7 @@ export const GLOSSARY: Record<string, GlossaryEntry> = {
   replay_top_n: {
     term: "Risers per day (top N)",
     explain:
-      "In scanner replay, how many of each past day's biggest movers are eligible to enter that day — top 3, top 10, top 20. The cache stores a wide set (50) of risers per day, so this is a read-time filter: dial it up or down and the backtest re-runs instantly, no re-sweep. Fewer names = only the very strongest movers (more concentrated, more survivorship-flattering); more names = closer to what a broad scanner would surface.",
+      "In scanner replay, how many of each past day's biggest movers are eligible to enter that day — top 3, top 10, top 20. The cache stores a wide set (100) of risers per day, so this is a read-time filter: dial it up or down and the backtest re-runs instantly, no re-sweep. Fewer names = only the very strongest movers (more concentrated, more survivorship-flattering); more names = closer to what a broad scanner would surface.",
     url: "https://www.investopedia.com/terms/b/backtesting.asp",
   },
   share_price_band: {

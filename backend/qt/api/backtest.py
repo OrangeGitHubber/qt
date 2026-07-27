@@ -23,7 +23,7 @@ class BacktestBody(BaseModel):
     strategy_id: int
     symbols: list[str] = []  # empty = use the watchlist for the strategy's asset class
     scanner_replay: bool = False  # replay the cached historical daily top-N risers instead
-    replay_top_n: int = Field(default=10, ge=1, le=50)  # how many of each day's risers are eligible
+    replay_top_n: int = Field(default=10, ge=1, le=100)  # how many of each day's risers are eligible
     days: int = Field(default=90, ge=7, le=730)
     timeframe: str = Field(default="1Hour", pattern="^(15Min|1Hour|1Day)$")
     starting_cash: float = Field(default=5000, ge=100, le=10_000_000)

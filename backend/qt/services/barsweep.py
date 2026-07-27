@@ -31,7 +31,7 @@ log = logging.getLogger("qt.barsweep")
 # The backtest narrows to its chosen top-N at read time (barcache.movers_between),
 # so widening/narrowing the replay's riser count never needs a re-sweep — the
 # expensive part (downloading bars) is decoupled from the cheap ranking knob.
-SWEEP_STORE_TOP_N = 50
+SWEEP_STORE_TOP_N = 100
 
 # Real exchanges we keep. Alpaca us_equity `exchange` values are things like
 # NYSE, NASDAQ, ARCA, AMEX, BATS, OTC (and occasionally blank). Momentum movers

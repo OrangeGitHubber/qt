@@ -260,7 +260,7 @@ export default function Backtest() {
                 <span className="field-cap">
                   Risers per day (top N) <InfoTip k="replay_top_n" />
                 </span>
-                <NumberField min={1} max={50} step={1} value={replayTopN} onChange={setReplayTopN} />
+                <NumberField min={1} max={100} step={1} value={replayTopN} onChange={setReplayTopN} />
               </label>
               <p className="hint">
                 Each day, only that day's <strong>top {replayTopN}</strong> risers are eligible to enter; your

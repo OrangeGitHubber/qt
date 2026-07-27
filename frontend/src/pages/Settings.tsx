@@ -252,7 +252,7 @@ export default function Settings() {
       <div className="card">
         <h3>Historical bar cache</h3>
         <p className="hint">
-          Caches daily bars across the market and reconstructs each past day's top risers (a generous set of 50) — the
+          Caches daily bars across the market and reconstructs each past day's top risers (a generous set of 100) — the
           data a "scanner replay" backtest needs; the backtest then picks how many risers per day to use. Runs against{" "}
           {bars ? (
             <strong>
