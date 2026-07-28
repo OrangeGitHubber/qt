@@ -16,9 +16,40 @@ from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from qt.broker.alpaca import AlpacaClient
+from qt.services import stats
 from qt.services.engine import Candidate, RailContext, check_rails, evaluate_entry, evaluate_exit
 
 ET = ZoneInfo("America/New_York")
+
+
+def _macd_on(params: dict) -> bool:
+    """Whether either MACD toggle (entry filter or exit signal) is set."""
+    return bool(
+        params.get("entry", {}).get("require_macd_bullish")
+        or params.get("exit", {}).get("exit_on_macd_bearish")
+    )
+
+
+def _annotate_macd(prepared: dict[str, list[dict]], params: dict) -> None:
+    """Attach `macd_bullish` to each prepared bar, in place, when the strategy
+    opts into MACD. The value at bar i is computed from the replayed closes up to
+    and INCLUDING the prior completed bar (closes[:i]) — never the current bar,
+    so there is NO look-ahead. No-op when MACD is off, keeping non-MACD backtests
+    byte-identical.
+
+    NUANCE: the LIVE engine always computes MACD from DAILY bars, whereas here we
+    use the backtest's OWN timeframe bars. For the intended daily/swing use
+    (1Day, or 1Hour where a daily MACD and an hourly replay track closely enough)
+    this matches the live behaviour; on much finer timeframes the two would
+    diverge, which is why MACD is documented as a daily/swing signal."""
+    if not _macd_on(params):
+        return
+    m = params.get("macd") or {}
+    fast, slow, signal = int(m.get("fast", 12)), int(m.get("slow", 26)), int(m.get("signal", 9))
+    for series in prepared.values():
+        closes = [b["close"] for b in series]
+        for i, bar in enumerate(series):
+            bar["macd_bullish"] = stats.macd_bullish(closes[:i], fast, slow, signal)
 
 
 @dataclass
@@ -173,6 +204,7 @@ def run_backtest(
     day_of = _day_fn(market)
 
     prepared = {s: _prepare(b, day_of) for s, b in bars_by_symbol.items() if b}
+    _annotate_macd(prepared, params)  # no-op unless the strategy opts into MACD
     # chronological event stream across all symbols
     events: dict[datetime, dict[str, dict]] = {}
     for symbol, series in prepared.items():
@@ -214,6 +246,7 @@ def run_backtest(
             should_exit, reason = evaluate_exit(
                 params, swing, trade.entry_price, trade.entry_at,
                 trade.high_water, price, bar["vwap"], ts, bar.get("last_of_day", False),
+                macd_bullish=bar.get("macd_bullish"),
             )
             if not should_exit:
                 continue
@@ -258,6 +291,7 @@ def run_backtest(
             cand = Candidate(
                 symbol=symbol, asset_class=strategy["asset_class"],
                 price=bar["close"], change_pct=bar["change_pct"], vwap=bar["vwap"],
+                macd_bullish=bar.get("macd_bullish"),
             )
             ok, entry_reason = evaluate_entry(params, cand, ts.astimezone(ET))
             if not ok:
@@ -472,6 +506,9 @@ def run_portfolio_backtest(
         sid: {s: _prepare(b, day_of) for s, b in (bars_by_strategy.get(sid) or {}).items() if b}
         for sid in strat_by_id
     }
+    # Each strategy carries its own MACD periods/toggles; annotate its own bars.
+    for sid, prepared in prepared_by_strategy.items():
+        _annotate_macd(prepared, strat_by_id[sid]["params"])
     events: dict[datetime, list[tuple[int, str, dict]]] = {}
     for sid, series_map in prepared_by_strategy.items():
         for symbol, series in series_map.items():
@@ -512,6 +549,7 @@ def run_portfolio_backtest(
             should_exit, reason = evaluate_exit(
                 strat["params"], strat["swing_mode"], trade.entry_price, trade.entry_at,
                 trade.high_water, price, bar["vwap"], ts, bar.get("last_of_day", False),
+                macd_bullish=bar.get("macd_bullish"),
             )
             if not should_exit:
                 continue
@@ -547,6 +585,7 @@ def run_portfolio_backtest(
             cand = Candidate(
                 symbol=symbol, asset_class=strat["asset_class"],
                 price=bar["close"], change_pct=bar["change_pct"], vwap=bar["vwap"],
+                macd_bullish=bar.get("macd_bullish"),
             )
             ok, entry_reason = evaluate_entry(params, cand, ts.astimezone(ET))
             if not ok:

@@ -25,6 +25,12 @@ export const GLOSSARY: Record<string, GlossaryEntry> = {
     explain: "A target: once the trade is up X%, sell and bank the gain. 0 disables it.",
     url: "https://www.investopedia.com/terms/t/take-profitorder.asp",
   },
+  macd: {
+    term: "MACD",
+    explain:
+      "Moving Average Convergence Divergence — a momentum gauge built from two moving averages of price. The MACD LINE is the fast average minus the slow one (default 12 vs 26 days); the SIGNAL line is a smoothed version of that (default 9 days); the HISTOGRAM is the gap between them. When the line crosses ABOVE its signal it's a bullish signal (momentum turning up); crossing BELOW is bearish. QT computes it from COMPLETED daily bars only — never today's unfinished bar — and leaves it OFF by default: turn it on to only enter while momentum is bullish, and/or to exit when it turns bearish.",
+    url: "https://www.investopedia.com/terms/m/macd.asp",
+  },
   vwap: {
     term: "VWAP",
     explain:

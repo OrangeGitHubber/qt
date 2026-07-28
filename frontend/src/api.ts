@@ -35,6 +35,7 @@ export interface StrategyParams {
     min_price: number;
     max_price: number;
     require_above_vwap: boolean;
+    require_macd_bullish?: boolean; // optional daily-MACD entry filter (off by default)
     entry_window_start: string | null;
     entry_window_end: string | null;
     entry_slippage_pct: number;
@@ -46,10 +47,14 @@ export interface StrategyParams {
     max_holding_hours: number;
     flatten_before_close: boolean;
     exit_below_vwap: boolean;
+    exit_on_macd_bearish?: boolean; // optional daily-MACD exit signal (off by default)
     rotate_on_rank_dropout?: boolean; // basket rotation: sell when it leaves the top-N
     exit_slippage_pct: number;
     exit_slippage_max_pct: number;
   };
+  // Shared MACD periods for the optional entry/exit MACD signals. Absent = the
+  // 12/26/9 defaults; only meaningful when a MACD toggle above is on.
+  macd?: { fast: number; slow: number; signal: number };
   // Present only on a DCA baseline sleeve: buy the fixed symbol list every
   // interval_days as independent lots. Absent or <= 0 = not a DCA strategy.
   dca?: { interval_days: number };

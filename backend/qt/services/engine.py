@@ -24,7 +24,7 @@ from qt.broker.alpaca import AlpacaClient, AlpacaError
 from qt.broker.factory import get_client
 from qt.db import session_scope
 from qt.models import AuditLog, Strategy, StrategyConfigVersion, Trade
-from qt.services import notify, persistence, regime, scanner
+from qt.services import notify, persistence, regime, scanner, stats
 from qt.settings_service import get_setting, set_setting
 
 log = logging.getLogger("qt.engine")
@@ -65,6 +65,11 @@ class Candidate:
     price: float
     change_pct: float
     vwap: float | None = None
+    # Daily-MACD momentum, computed from COMPLETED daily bars only (the adapter
+    # excludes today's in-progress bar). True = bullish (line > signal), False =
+    # bearish, None = not enough history to decide. Only set when a strategy opts
+    # into the MACD entry filter; otherwise stays None and is ignored.
+    macd_bullish: bool | None = None
 
 
 @dataclass
@@ -109,9 +114,15 @@ def evaluate_entry(params: dict, candidate: Candidate, now_et: datetime) -> tupl
         hhmm = now_et.strftime("%H:%M")
         if not (start <= hhmm <= end):
             return False, f"outside entry window {start}–{end} ET (now {hhmm})"
+    # Optional daily-MACD entry filter (off by default). Fail-closed: block on
+    # both bearish (False) AND insufficient history (None) — an unproven momentum
+    # signal is not a green light.
+    if entry.get("require_macd_bullish") and candidate.macd_bullish is not True:
+        detail = "not enough daily history" if candidate.macd_bullish is None else "line ≤ signal (bearish)"
+        return False, f"MACD not bullish — {detail}"
     return True, f"up {candidate.change_pct:.2f}% today" + (
         f", above VWAP" if entry.get("require_above_vwap") else ""
-    )
+    ) + (", MACD bullish" if entry.get("require_macd_bullish") else "")
 
 
 def check_rails(strategy_cfg: dict, sizing_usd: float, ctx: RailContext) -> tuple[bool, str]:
@@ -163,9 +174,14 @@ def evaluate_exit(
     vwap: float | None,
     now_utc: datetime,
     market_closes_soon: bool,
+    macd_bullish: bool | None = None,
 ) -> tuple[bool, str]:
     """Return (should_exit, reason). Stops always apply; in swing mode the
-    softer exits (take-profit, VWAP, time) wait until the day after entry."""
+    softer exits (take-profit, VWAP, time, MACD) wait until the day after entry.
+
+    `macd_bullish` is the daily-MACD momentum for this symbol (True/False/None),
+    supplied by the caller only when the strategy opts into the MACD exit signal;
+    default None so existing callers are unaffected."""
     exit_rules = params.get("exit", {})
     change_from_entry = (price / entry_price - 1) * 100
     drop_from_high = (1 - price / high_water) * 100 if high_water else 0.0
@@ -188,6 +204,11 @@ def evaluate_exit(
 
     if exit_rules.get("exit_below_vwap") and vwap is not None and price < vwap:
         return True, f"price {price:.4f} fell below VWAP {vwap:.4f}"
+
+    # Optional daily-MACD exit: only act on a CONFIRMED bearish cross (False).
+    # None means we can't tell right now — never force an exit on that.
+    if exit_rules.get("exit_on_macd_bearish") and macd_bullish is False:
+        return True, "MACD turned bearish"
 
     max_hold = exit_rules.get("max_holding_hours", 0)
     if max_hold:
@@ -252,6 +273,124 @@ def _price_from_snapshot(snap: dict) -> tuple[float | None, float | None]:
     price = (snap.get("latestTrade") or {}).get("p") or (snap.get("dailyBar") or {}).get("c")
     vwap = (snap.get("dailyBar") or {}).get("vw")
     return (float(price) if price else None, float(vwap) if vwap else None)
+
+
+# --------------------------------------------------------------------------
+# MACD adapter (optional, off-by-default per-strategy signal)
+#
+# The pure MACD math lives in qt.services.stats and is look-ahead-safe as long
+# as the caller passes only COMPLETED closes. In the LIVE engine that means
+# daily bars with TODAY's in-progress bar excluded — that's the whole job of
+# these helpers. Only strategies that opt into require_macd_bullish (entry) or
+# exit_on_macd_bearish (exit) trigger any of this; everyone else does zero extra
+# work.
+# --------------------------------------------------------------------------
+
+MACD_LOOKBACK_DAYS = 120  # ~120 daily bars: comfortably above the 12/26/9 warm-up
+
+
+def _macd_periods(params: dict) -> tuple[int, int, int]:
+    m = params.get("macd") or {}
+    return int(m.get("fast", 12)), int(m.get("slow", 26)), int(m.get("signal", 9))
+
+
+def _completed_daily_closes(bars: list[dict], asset_class: str) -> list[float]:
+    """Closes (oldest-first) of only the COMPLETED daily bars — today's
+    in-progress bar is dropped so MACD never peeks at an unfinished day. Stocks
+    bucket by the ET session day, crypto by the UTC calendar day (matching the
+    backtester's day bucketing and the crypto movers cache)."""
+    if not bars:
+        return []
+    tz = timezone.utc if asset_class == "crypto" else ET
+    today = datetime.now(tz).date()
+    closes: list[float] = []
+    for b in bars:
+        ts = datetime.fromisoformat(b["t"].replace("Z", "+00:00"))
+        if ts.astimezone(tz).date() >= today:
+            continue  # today's (or a future) in-progress bar — exclude
+        closes.append(float(b["c"]))
+    return closes
+
+
+async def _apply_macd_entry_filter(
+    client: AlpacaClient, strategy: Strategy, params: dict, candidates: list[Candidate]
+) -> None:
+    """Set candidate.macd_bullish for a strategy that opted into the MACD entry
+    filter, via ONE batched daily-bars call for the candidate symbols. No-op when
+    the flag is off or there are no candidates.
+
+    (Basket ranking may itself fetch daily bars, but over different windows
+    — 60/320 days keyed to the metric. A dedicated 120-day fetch keeps the MACD
+    input correct and independent of whatever the ranking happened to pull.)"""
+    if not candidates or not params.get("entry", {}).get("require_macd_bullish"):
+        return
+    fast, slow, signal = _macd_periods(params)
+    symbols = sorted({c.symbol for c in candidates})
+    start = (datetime.now(timezone.utc) - timedelta(days=MACD_LOOKBACK_DAYS)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    try:
+        bars_by_symbol = await client.historical_bars(symbols, strategy.asset_class, "1Day", start)
+    except AlpacaError as exc:
+        # Fail-closed: leave macd_bullish=None so evaluate_entry blocks entries
+        # rather than trading blind on a missing signal.
+        log.warning("MACD entry filter for '%s' — daily bars fetch failed: %s", strategy.name, exc)
+        return
+    flags = {
+        sym: stats.macd_bullish(
+            _completed_daily_closes(bars_by_symbol.get(sym) or [], strategy.asset_class),
+            fast, slow, signal,
+        )
+        for sym in symbols
+    }
+    for cand in candidates:
+        cand.macd_bullish = flags.get(cand.symbol)
+
+
+async def _macd_exit_flags(
+    session: Session, client: AlpacaClient, open_trades: list[Trade]
+) -> dict[int, bool | None]:
+    """For every open trade whose strategy opted into exit_on_macd_bearish,
+    return {trade_id: macd_bullish}. Computed once up front — mirroring
+    _rotation_dropout_reasons — with one batched daily-bars call per opted-in
+    strategy (its held symbols share an asset class and MACD periods). Strategies
+    without the flag are skipped entirely, so they cost nothing."""
+    grouped: dict[int, tuple[Strategy, dict, set[str]]] = {}
+    for t in open_trades:
+        if t.strategy_id in grouped:
+            grouped[t.strategy_id][2].add(t.symbol)
+            continue
+        s = session.get(Strategy, t.strategy_id)
+        if s is None:
+            continue
+        try:
+            params = json.loads(s.params)
+        except (TypeError, ValueError):
+            params = {}
+        if not params.get("exit", {}).get("exit_on_macd_bearish"):
+            continue
+        grouped[t.strategy_id] = (s, params, {t.symbol})
+
+    flags: dict[int, bool | None] = {}
+    for sid, (s, params, symbols) in grouped.items():
+        fast, slow, signal = _macd_periods(params)
+        start = (datetime.now(timezone.utc) - timedelta(days=MACD_LOOKBACK_DAYS)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        try:
+            bars_by_symbol = await client.historical_bars(sorted(symbols), s.asset_class, "1Day", start)
+        except AlpacaError as exc:
+            # Can't tell → leave these trades at None; evaluate_exit won't force
+            # an exit on None, so a fetch blip never sells a position blindly.
+            log.warning("MACD exit check for '%s' — daily bars fetch failed: %s", s.name, exc)
+            continue
+        sym_flag = {
+            sym: stats.macd_bullish(
+                _completed_daily_closes(bars_by_symbol.get(sym) or [], s.asset_class),
+                fast, slow, signal,
+            )
+            for sym in symbols
+        }
+        for t in open_trades:
+            if t.strategy_id == sid:
+                flags[t.id] = sym_flag.get(t.symbol)
+    return flags
 
 
 async def tick(leverage_unlocked: bool = False) -> None:
@@ -355,6 +494,9 @@ async def _manage_exits(
     # dropouts; the per-trade loop below turns them into exits (still respecting
     # market hours). A ranking we can't compute leaves holdings untouched.
     rotation_reason = await _rotation_dropout_reasons(session, client, open_trades)
+    # Daily-MACD exit signal, also computed once up front for the strategies that
+    # opted in (one batched daily-bars call each). {} when nobody opted in.
+    macd_exit_flags = await _macd_exit_flags(session, client, open_trades)
 
     for trade in open_trades:
         if trade.asset_class == "stock" and not market_open:
@@ -387,6 +529,7 @@ async def _manage_exits(
                 # and closes_soon is derived from the stock clock. Never let it
                 # flatten a 24/7 crypto position.
                 closes_soon and trade.asset_class == "stock",
+                macd_bullish=macd_exit_flags.get(trade.id),
             )
         if not should_exit:
             continue
@@ -478,6 +621,10 @@ async def _consider_entries(
         if candidates is None:
             continue
         candidates, scan_result = candidates
+
+        # Optional daily-MACD entry filter: one batched daily-bars call, then set
+        # each candidate's macd_bullish before evaluate_entry reads it.
+        await _apply_macd_entry_filter(client, strategy, params, candidates)
 
         for cand in candidates:
             entry_ok, entry_reason = evaluate_entry(params, cand, now_et)

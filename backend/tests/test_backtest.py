@@ -1,6 +1,7 @@
 """Backtester tests on synthetic bars — deterministic price paths whose
 correct trades are known by construction."""
 
+import copy
 from datetime import datetime, timedelta
 
 import pytest
@@ -263,3 +264,35 @@ def test_equity_curve_daily_and_metrics_shape():
     assert len(result["equity_days"]) == len(result["equity"]) == 2
     for key in ("win_rate", "profit_factor", "avg_win", "avg_loss", "max_drawdown_pct"):
         assert key in result
+
+
+# ---- optional MACD entry filter, replayed by the backtester ----
+
+def test_macd_entry_filter_off_is_byte_identical():
+    # With no MACD flag, the run is unchanged (proves the annotation is a no-op).
+    series = _spread_day([100, 100, 100], [104, 107, 110, 102.5, 102.5])
+    result = run_backtest(STRATEGY, {"TEST": series}, RISK, starting_cash=5000, spread_pct=0)
+    assert result["trades"] == 1
+
+
+def test_macd_entry_filter_fail_closed_when_history_too_short():
+    # require_macd_bullish with the default 12/26/9 periods needs ~35 completed
+    # closes; this tiny series can never form the signal, so MACD is None and the
+    # fail-closed rule blocks every entry.
+    series = _spread_day([100, 100, 100], [104, 107, 110, 102.5, 102.5])
+    strat = copy.deepcopy(STRATEGY)
+    strat["params"]["entry"]["require_macd_bullish"] = True
+    gated = run_backtest(strat, {"TEST": series}, RISK, starting_cash=5000, spread_pct=0)
+    assert gated["trades"] == 0
+
+
+def test_macd_entry_filter_allows_entry_when_bullish():
+    # Short periods (2/3/2) + a rising run so the MACD line leads its signal by
+    # the entry bar; the +4% day-gain bar then passes the filter and trades once.
+    strat = copy.deepcopy(STRATEGY)
+    strat["params"]["entry"]["require_macd_bullish"] = True
+    strat["params"]["macd"] = {"fast": 2, "slow": 3, "signal": 2}
+    series = _spread_day([90, 92, 94, 96, 100], [104, 104])  # day1 rising, day2 +4%
+    result = run_backtest(strat, {"TEST": series}, RISK, starting_cash=5000, spread_pct=0)
+    assert result["trades"] == 1
+    assert "MACD bullish" in result["trade_list"][0]["entry_reason"]

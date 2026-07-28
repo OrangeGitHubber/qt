@@ -3,6 +3,34 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## MACD momentum signal — optional entry filter & exit (2026-07-27)
+
+A strategy can now use **MACD** (Moving Average Convergence Divergence, the
+classic 12/26/9 momentum gauge) as **two independent, opt-in switches** — both
+**off by default**:
+
+- **"Require bullish MACD to enter"** — only open a position while the MACD line
+  is above its signal line. It's **fail-closed**: if MACD is bearish *or* there
+  isn't enough history to decide, the entry is blocked. An unproven signal is
+  never a green light.
+- **"Exit when MACD turns bearish"** — sell when the line crosses back below its
+  signal. It sits with the *soft* exits: a confirmed bearish cross triggers it,
+  an unknown reading never forces a sale, and (in swing mode) it waits until the
+  day after entry — while your **hard stop-loss always keeps priority**.
+- **Configurable periods** under an advanced disclosure (fast / slow / signal,
+  default 12 / 26 / 9), shared by both switches.
+
+It's a **deliberate, explainable toggle you set — not something the optimizer
+auto-tunes.** MACD is deliberately kept out of the parameter search.
+
+**A nuance worth stating plainly:** the **live engine always computes MACD from
+DAILY bars** (excluding today's still-forming bar, so there's no look-ahead),
+whereas a **backtest computes it from whatever timeframe the backtest itself is
+replaying** (up to and including the prior completed bar). For the intended
+daily/swing use (1Day, or 1Hour tracking a daily signal closely enough) these
+line up; on much finer bars they would drift — which is why MACD is documented
+as a daily/swing signal.
+
 ## Strategy optimizer — a parameter search (2026-07-27)
 
 Instead of guessing a strategy's numbers (min gain, trailing stop, stop-loss,

@@ -132,6 +132,17 @@ function Editor({
   function setExit(key: string, value: unknown) {
     setS((cur) => ({ ...cur, params: { ...cur.params!, exit: { ...cur.params!.exit, [key]: value } } }));
   }
+  // MACD periods are optional; seed the 12/26/9 defaults the first time one is
+  // edited so all three are stored together.
+  function setMacd(key: "fast" | "slow" | "signal", value: number) {
+    setS((cur) => ({
+      ...cur,
+      params: {
+        ...cur.params!,
+        macd: { fast: 12, slow: 26, signal: 9, ...(cur.params!.macd ?? {}), [key]: value },
+      },
+    }));
+  }
 
   // Swing vs intraday are opposites (hold overnight vs flatten before the close),
   // so they're one choice, not two independent checkboxes. Intraday implies
@@ -164,6 +175,9 @@ function Editor({
   }
 
   const p = s.params!;
+  // The MACD period fields appear only when at least one MACD toggle is on.
+  const macdOn = !!(p.entry.require_macd_bullish || p.exit.exit_on_macd_bearish);
+  const macd = p.macd ?? { fast: 12, slow: 26, signal: 9 };
   return (
     <form className="card editor" onSubmit={save}>
       <h3>{s.id ? `Edit: ${s.name}` : "New strategy"}</h3>
@@ -331,6 +345,11 @@ function Editor({
           Require price above VWAP <InfoTip k="vwap" />
         </label>
         <label className="check">
+          <input type="checkbox" checked={!!p.entry.require_macd_bullish}
+            onChange={(e) => setEntry("require_macd_bullish", e.target.checked)} />
+          Require bullish MACD to enter <InfoTip k="macd" />
+        </label>
+        <label className="check">
           <input
             type="checkbox"
             checked={!!(p.entry.entry_window_start && p.entry.entry_window_end)}
@@ -396,6 +415,11 @@ function Editor({
             onChange={(e) => setExit("exit_below_vwap", e.target.checked)} />
           Exit if price falls below VWAP <InfoTip k="vwap" />
         </label>
+        <label className="check">
+          <input type="checkbox" checked={!!p.exit.exit_on_macd_bearish}
+            onChange={(e) => setExit("exit_on_macd_bearish", e.target.checked)} />
+          Exit when MACD turns bearish <InfoTip k="macd" />
+        </label>
         {s.universe === "basket" && (
           <label className="check">
             <input type="checkbox" checked={!!p.exit.rotate_on_rank_dropout}
@@ -404,6 +428,33 @@ function Editor({
           </label>
         )}
       </div>
+
+      {macdOn && (
+        <details className="macd-advanced">
+          <summary>
+            Advanced — MACD periods <InfoTip k="macd" />
+          </summary>
+          <div className="filter-grid">
+            <label>
+              MACD fast
+              <NumberField step="1" min="1" value={macd.fast} onChange={(n) => setMacd("fast", n)} />
+            </label>
+            <label>
+              MACD slow
+              <NumberField step="1" min="2" value={macd.slow} onChange={(n) => setMacd("slow", n)} />
+            </label>
+            <label>
+              MACD signal
+              <NumberField step="1" min="1" value={macd.signal} onChange={(n) => setMacd("signal", n)} />
+            </label>
+          </div>
+          <p className="hint">
+            Standard MACD is <strong>12 / 26 / 9</strong> (fast / slow / signal). Fast must be below slow. QT computes it
+            from <strong>completed daily bars only</strong> — never today's in-progress bar — so the signal is
+            look-ahead-safe.
+          </p>
+        </details>
+      )}
 
       <h4>Sizing & safety</h4>
       <div className="filter-grid">

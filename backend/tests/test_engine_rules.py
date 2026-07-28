@@ -283,3 +283,77 @@ def test_exit_flatten_before_close():
 def test_no_exit_when_healthy():
     should, _ = evaluate_exit(params(), True, 100.0, YESTERDAY, 105.0, 104.5, None, NOW, False)
     assert not should
+
+
+# ---- optional MACD entry filter (off by default) ----
+
+def test_entry_macd_off_ignores_signal_even_when_bearish():
+    # Flag absent → MACD is never consulted, so a bearish/unknown signal is moot.
+    ok, _ = evaluate_entry(params(), cand(macd_bullish=False), NOON_ET)
+    assert ok
+
+
+def test_entry_macd_required_passes_when_bullish():
+    p = params(entry={"require_macd_bullish": True})
+    ok, reason = evaluate_entry(p, cand(macd_bullish=True), NOON_ET)
+    assert ok and "MACD bullish" in reason
+
+
+def test_entry_macd_required_blocks_when_bearish():
+    p = params(entry={"require_macd_bullish": True})
+    ok, reason = evaluate_entry(p, cand(macd_bullish=False), NOON_ET)
+    assert not ok and "MACD not bullish" in reason and "bearish" in reason
+
+
+def test_entry_macd_required_blocks_when_unknown_fail_closed():
+    # None (not enough history) must fail CLOSED — an unproven signal is not a go.
+    p = params(entry={"require_macd_bullish": True})
+    ok, reason = evaluate_entry(p, cand(macd_bullish=None), NOON_ET)
+    assert not ok and "MACD not bullish" in reason and "history" in reason
+
+
+# ---- optional MACD exit signal (off by default) ----
+
+def test_exit_macd_off_never_fires():
+    # Flag absent → a bearish MACD does nothing on its own.
+    should, _ = evaluate_exit(
+        params(), True, 100.0, YESTERDAY, 105.0, 104.5, None, NOW, False, macd_bullish=False
+    )
+    assert not should
+
+
+def test_exit_macd_bearish_triggers_exit():
+    p = params(exit={"exit_on_macd_bearish": True})
+    should, reason = evaluate_exit(
+        p, True, 100.0, YESTERDAY, 105.0, 104.5, None, NOW, False, macd_bullish=False
+    )
+    assert should and reason == "MACD turned bearish"
+
+
+def test_exit_macd_bullish_or_unknown_does_not_exit():
+    p = params(exit={"exit_on_macd_bearish": True})
+    for flag in (True, None):
+        should, _ = evaluate_exit(
+            p, True, 100.0, YESTERDAY, 105.0, 104.5, None, NOW, False, macd_bullish=flag
+        )
+        assert not should
+
+
+def test_exit_macd_suppressed_same_day_in_swing_mode():
+    # Soft exits (incl. MACD) wait until the day after entry when swinging.
+    same_day_entry = NOW - timedelta(hours=2)
+    p = params(exit={"exit_on_macd_bearish": True})
+    should, _ = evaluate_exit(
+        p, True, 100.0, same_day_entry, 101.0, 100.5, None, NOW, False, macd_bullish=False
+    )
+    assert not should
+
+
+def test_hard_stop_wins_over_macd_exit():
+    # Price gapped through the stop AND MACD is bearish — the hard stop takes
+    # priority and names the reason.
+    p = params(exit={"exit_on_macd_bearish": True})
+    should, reason = evaluate_exit(
+        p, True, 100.0, NOW - timedelta(hours=1), 100.0, 95.9, None, NOW, False, macd_bullish=False
+    )
+    assert should and "stop-loss" in reason
