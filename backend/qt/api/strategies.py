@@ -21,6 +21,7 @@ class EntryRules(BaseModel):
     min_price: float = Field(default=0, ge=0)  # $/share floor for this strategy; 0 = any
     max_price: float = Field(default=0, ge=0)  # $/share cap; 0 = none (e.g. only movers under $10)
     require_above_vwap: bool = True
+    require_macd_bullish: bool = False  # optional daily-MACD entry filter (off by default)
     entry_window_start: str | None = None  # "HH:MM" US/Eastern; None = any time
     entry_window_end: str | None = None
     # Advanced execution: how far THROUGH the market to price the marketable buy
@@ -40,6 +41,8 @@ class ExitRules(BaseModel):
     max_holding_hours: float = Field(default=0, ge=0, le=2400)  # 0 = disabled
     flatten_before_close: bool = False
     exit_below_vwap: bool = False
+    exit_on_macd_bearish: bool = False  # optional daily-MACD exit signal (off by default)
+    rotate_on_rank_dropout: bool = False  # basket rotation: sell when it leaves the top-N
     # Advanced execution: how far BELOW the market to price the marketable sell
     # limit (1% = default). exit_slippage_max_pct >= exit_slippage_pct enables an
     # escalating chase — each time an exit misses the fill, the buffer widens by
@@ -81,9 +84,25 @@ class ATRConfig(BaseModel):
     risk_usd: float = Field(default=0, ge=0, le=100_000)  # 0 = off (use fixed sizing_usd)
 
 
+class MACDConfig(BaseModel):
+    """Periods for the optional MACD entry/exit signals. Declared explicitly
+    (like DCAConfig/ATRConfig) so pydantic doesn't drop the block on save."""
+
+    fast: int = Field(default=12, ge=1, le=100)
+    slow: int = Field(default=26, ge=2, le=200)
+    signal: int = Field(default=9, ge=1, le=100)
+
+    @model_validator(mode="after")
+    def _fast_below_slow(self) -> "MACDConfig":
+        if self.fast >= self.slow:
+            raise ValueError("MACD fast period must be less than the slow period.")
+        return self
+
+
 class StrategyParams(BaseModel):
     entry: EntryRules = EntryRules()
     exit: ExitRules = ExitRules()
+    macd: MACDConfig | None = None  # present only when a MACD entry/exit toggle is on
     dca: DCAConfig | None = None  # present only for DCA sleeve strategies
     atr: ATRConfig | None = None  # present only when ATR stops/sizing are configured
 

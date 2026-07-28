@@ -36,6 +36,35 @@ def test_atr_block_persists_through_save(client):
     assert mine["params"]["atr"]["stop_mult"] == 2.5
 
 
+def test_macd_flags_and_periods_persist_through_save(client):
+    # Regression: the MACD entry/exit flags + periods block were dropped on save
+    # because they weren't declared in the pydantic models.
+    body = _body()
+    body["params"]["entry"]["require_macd_bullish"] = True
+    body["params"]["exit"]["exit_on_macd_bearish"] = True
+    body["params"]["macd"] = {"fast": 8, "slow": 21, "signal": 5}
+    resp = client.post("/api/strategies", json=body)
+    assert resp.status_code == 200
+    saved = resp.json()["params"]
+    assert saved["entry"]["require_macd_bullish"] is True
+    assert saved["exit"]["exit_on_macd_bearish"] is True
+    assert saved["macd"] == {"fast": 8, "slow": 21, "signal": 5}
+    # fast must be < slow
+    bad = _body()
+    bad["params"]["macd"] = {"fast": 30, "slow": 26, "signal": 9}
+    assert client.post("/api/strategies", json=bad).status_code == 422
+
+
+def test_rotate_on_rank_dropout_persists_through_save(client):
+    # Regression: the sector-rotation exit flag was dropped on save.
+    bid = client.post("/api/baskets", json={"name": "RotPersist"}).json()["id"]
+    body = _body(universe="basket", basket_id=bid, rank_by="relative_strength", top_n=3)
+    body["params"]["exit"]["rotate_on_rank_dropout"] = True
+    resp = client.post("/api/strategies", json=body)
+    assert resp.status_code == 200
+    assert resp.json()["params"]["exit"]["rotate_on_rank_dropout"] is True
+
+
 def test_presets_available(client):
     presets = client.get("/api/strategies/presets").json()
     assert "momentum_swing_stocks" in presets

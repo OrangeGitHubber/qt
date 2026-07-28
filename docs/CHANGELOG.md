@@ -3,6 +3,16 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Fix: MACD and rotation settings were silently dropped on save (2026-07-27)
+
+The MACD entry/exit toggles (and their periods) and the sector-rotation
+"rotate out of the top-N" exit weren't actually being saved — the strategy's
+validation model didn't know about those fields, so it discarded them every time
+you saved a strategy. In practice that meant turning MACD on, or building a
+rotation strategy, did nothing: the flags never reached the engine. Now those
+fields are declared (with a guard that MACD's fast period stays below its slow
+period), so they persist and take effect. Two regression tests lock it in.
+
 ## ATR-based stops & position sizing — optional, off by default (2026-07-27)
 
 A strategy can now size its **stop** and its **position** to each symbol's real
