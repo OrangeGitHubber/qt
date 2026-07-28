@@ -3,6 +3,31 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Optimizer can now search against the scanner's historical risers (2026-07-28)
+
+The parameter search used to fall back to your watchlist whenever the strategy's
+universe was the **scanner** — you couldn't tune a "today's risers" strategy
+against the thing it actually trades. Now it can **replay the scanner**, exactly
+like the backtest already does: for each past day, only that day's **top-N
+risers** (read offline from the bar cache) are eligible to enter, and the search
+optimizes the entry/exit knobs against that real, day-varying universe.
+
+- Turn it on with a **"Scanner replay"** checkbox on the Optimizer (it's on by
+  default when the selected strategy's universe is the scanner). A **risers per
+  day (top N)** control sets how many of each day's movers are eligible.
+- The symbol picker, the 25-symbol cap, and the bar-size selector don't apply in
+  this mode — the universe is however many names made a top-N list, and the bar
+  size comes from the cache (15-minute if you've run an intraday sweep, else
+  daily). Needs a completed sweep first (Settings → Historical bar cache).
+- The out-of-sample discipline is unchanged: the same top-N eligibility map is
+  applied to both the in-sample (first ~70%) and out-of-sample (last ~30%)
+  slices, so a symbol can still only be entered on the days it actually rose, and
+  only the out-of-sample number is treated as real.
+
+Under the hood the cache-reading logic is now shared by the backtest and the
+optimizer (one `load_scanner_replay_dataset` helper), so both build the universe
+identically. Fixed-list and basket searches are unchanged.
+
 ## Watchlist "Trend" sparkline now shows the 30-day daily trend (2026-07-28)
 
 The little trend line next to each watchlist symbol used to be built from

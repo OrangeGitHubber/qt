@@ -507,6 +507,11 @@ export interface OptimizerResult {
   strategy_name?: string;
   timeframe?: string;
   days?: number;
+  scanner_replay?: boolean;
+  replay_intraday?: boolean;
+  replay_top_n?: number;
+  universe_size?: number;
+  days_replayed?: number;
 }
 
 export interface OptimizerStatus {
@@ -524,12 +529,14 @@ export interface OptimizerStatus {
 export const startOptimizer = (body: {
   strategy_id: number;
   symbols: string[];
+  scanner_replay?: boolean;
+  replay_top_n?: number;
   days: number;
   timeframe: string;
   iterations: number;
   starting_cash: number;
   spread_pct: number;
-}) => fetch("/api/optimizer", json(body)).then((r) => handle<{ ok: boolean; started: boolean; symbols: string[]; iterations: number }>(r));
+}) => fetch("/api/optimizer", json(body)).then((r) => handle<{ ok: boolean; started: boolean; symbols: string[]; iterations: number; scanner_replay: boolean }>(r));
 
 export const getOptimizerStatus = () =>
   fetch("/api/optimizer/status").then((r) => handle<OptimizerStatus>(r));

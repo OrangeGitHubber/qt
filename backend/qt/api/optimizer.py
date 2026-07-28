@@ -55,6 +55,8 @@ _task: asyncio.Task | None = None  # keep a ref so the task isn't GC'd mid-run
 class OptimizeBody(BaseModel):
     strategy_id: int
     symbols: list[str] = []  # empty = the strategy's own universe / its asset-class watchlist
+    scanner_replay: bool = False  # search against the cached historical daily top-N risers
+    replay_top_n: int = Field(default=10, ge=1, le=100)  # how many of each day's risers are eligible
     days: int = Field(default=180, ge=30, le=730)
     timeframe: str = Field(default="1Day", pattern="^(15Min|1Hour|1Day)$")
     iterations: int = Field(default=40, ge=5, le=200)
@@ -104,16 +106,28 @@ async def _run_search(
     iterations: int,
     starting_cash: float,
     spread_pct: float,
+    prebuilt_bars: dict | None = None,
+    eligible_by_day: dict | None = None,
+    replay_extra: dict | None = None,
 ) -> None:
-    """Background worker: download the bars once, then run the search in a worker
+    """Background worker: get the bars once, then run the search in a worker
     thread (it is CPU-heavy — dozens of full backtests — so it must not block the
-    event loop) with a progress callback the status endpoint reads."""
+    event loop) with a progress callback the status endpoint reads.
+
+    Fixed-universe mode downloads the bars from Alpaca. Scanner-replay mode
+    passes `prebuilt_bars` (read offline from the cache) + `eligible_by_day` (each
+    day's top-N risers) so every backtest can only ENTER a symbol on the days it
+    actually rose — the search then optimizes the strategy against its real
+    universe, not a stand-in watchlist."""
     try:
-        _progress.phase = "downloading bars"
-        start = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%SZ")
-        bars = await client.historical_bars(symbols, asset_class, timeframe, start)
-        if not any(bars.get(s) for s in symbols):
-            raise ValueError("No historical bars for those symbols/timeframe.")
+        if prebuilt_bars is not None:
+            bars = prebuilt_bars
+        else:
+            _progress.phase = "downloading bars"
+            start = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%SZ")
+            bars = await client.historical_bars(symbols, asset_class, timeframe, start)
+            if not any(bars.get(s) for s in symbols):
+                raise ValueError("No historical bars for those symbols/timeframe.")
 
         _progress.phase = "searching"
 
@@ -131,11 +145,14 @@ async def _run_search(
             starting_cash=starting_cash,
             spread_pct=spread_pct,
             market=market,
+            eligible_by_day=eligible_by_day,
             progress=on_progress,
         )
         result["strategy_name"] = _progress.strategy_name
         result["timeframe"] = timeframe
         result["days"] = days
+        if replay_extra:
+            result.update(replay_extra)
         _progress.result = result
         _progress.combos_done = result["tested_combinations"]
         _progress.combos_total = result["tested_combinations"]
@@ -167,14 +184,37 @@ async def start_optimize(
     if not strategy:
         raise HTTPException(status_code=404, detail="Strategy not found.")
 
-    symbols = _resolve_symbols(session, strategy, body.symbols)
-    if not symbols:
-        raise HTTPException(
-            status_code=422,
-            detail="No symbols to search over — pass some, or add symbols to the watchlist for this asset class.",
-        )
-    if len(symbols) > 25:
-        raise HTTPException(status_code=422, detail="Max 25 symbols per search (rate limits).")
+    # Scanner-replay mode reads its universe (each past day's top-N risers) +
+    # their bars OFFLINE from the bar cache; the fixed-universe mode resolves a
+    # symbol list and downloads bars from Alpaca in the background task.
+    prebuilt_bars: dict | None = None
+    eligible_by_day: dict | None = None
+    replay_extra: dict | None = None
+    timeframe = body.timeframe
+    if body.scanner_replay:
+        from qt.api.backtest import load_scanner_replay_dataset
+
+        ds = load_scanner_replay_dataset(strategy.asset_class, body.days, body.replay_top_n)
+        prebuilt_bars = ds.bars
+        eligible_by_day = ds.eligible_by_day
+        timeframe = ds.timeframe  # 15Min if intraday cached, else 1Day — from the cache
+        symbols = ds.union  # the deduped set of names that made a top-N list (offline: no 25 cap)
+        replay_extra = {
+            "scanner_replay": True,
+            "replay_intraday": ds.used_intraday,
+            "replay_top_n": body.replay_top_n,
+            "universe_size": len(ds.union),
+            "days_replayed": ds.days_replayed,
+        }
+    else:
+        symbols = _resolve_symbols(session, strategy, body.symbols)
+        if not symbols:
+            raise HTTPException(
+                status_code=422,
+                detail="No symbols to search over — pass some, or add symbols to the watchlist for this asset class.",
+            )
+        if len(symbols) > 25:
+            raise HTTPException(status_code=422, detail="Max 25 symbols per search (rate limits).")
 
     # Read everything the (session-less) background task needs NOW, while the
     # request's DB session is open — pass plain dicts/lists into the task.
@@ -200,10 +240,14 @@ async def start_optimize(
     _task = asyncio.create_task(
         _run_search(
             client, strategy_dict, risk, symbols, strategy.asset_class,
-            body.timeframe, body.days, body.iterations, body.starting_cash, body.spread_pct,
+            timeframe, body.days, body.iterations, body.starting_cash, body.spread_pct,
+            prebuilt_bars=prebuilt_bars, eligible_by_day=eligible_by_day, replay_extra=replay_extra,
         )
     )
-    return {"ok": True, "started": True, "symbols": symbols, "iterations": body.iterations}
+    return {
+        "ok": True, "started": True, "symbols": symbols, "iterations": body.iterations,
+        "scanner_replay": body.scanner_replay,
+    }
 
 
 @router.get("/status")

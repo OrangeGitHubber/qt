@@ -35,8 +35,16 @@ function universeExplain(
   strategy: StrategyRow | undefined,
   symbols: string[],
   baskets: Basket[],
+  scannerReplay: boolean,
+  replayTopN: number,
 ): { warn: boolean; text: string } | null {
   if (!strategy) return null;
+  if (scannerReplay) {
+    return {
+      warn: false,
+      text: `the historical scanner risers — each past day, only that day's top ${replayTopN} movers are eligible to enter, read offline from the bar cache. This tunes the strategy against its REAL, day-varying universe (needs a completed sweep in Settings → Historical bar cache).`,
+    };
+  }
   if (symbols.length > 0) {
     const shown = symbols.slice(0, 12).join(", ");
     return { warn: false, text: `your ${symbols.length} picked symbol${symbols.length === 1 ? "" : "s"}: ${shown}${symbols.length > 12 ? " …" : ""}` };
@@ -101,6 +109,8 @@ export default function Optimizer() {
   const [strategyId, setStrategyId] = useState<number | null>(null);
   const [baskets, setBaskets] = useState<Basket[]>([]);
   const [symbols, setSymbols] = useState<string[]>([]);
+  const [scannerReplay, setScannerReplay] = useState(false);
+  const [replayTopN, setReplayTopN] = useState(10);
   const [days, setDays] = useState(180);
   const [timeframe, setTimeframe] = useState("1Day");
   const [iterations, setIterations] = useState(40);
@@ -140,6 +150,12 @@ export default function Optimizer() {
     if (strat) {
       setCash(Math.max(strat.sleeve_usd || 5000, 100));
       setSymbols(strat.universe === "custom" ? (strat.symbols ?? []).slice(0, 25) : []);
+      // A scanner strategy defaults to replaying its REAL universe (each day's
+      // top-N risers) rather than a stand-in watchlist — the whole point of the
+      // scanner-replay optimizer. Any other universe keeps its fixed symbol set.
+      const isScanner = strat.universe === "scanner";
+      setScannerReplay(isScanner);
+      if (isScanner) setReplayTopN(strat.top_n || 10);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [strategyId, strategies]);
@@ -177,6 +193,8 @@ export default function Optimizer() {
       await startOptimizer({
         strategy_id: strategyId,
         symbols,
+        scanner_replay: scannerReplay,
+        replay_top_n: replayTopN,
         days,
         timeframe,
         iterations,
@@ -282,11 +300,39 @@ export default function Optimizer() {
               <span className="field-cap">
                 Symbols to validate across (leave empty to use the strategy's own universe){" "}
               </span>
-              <SymbolPicker assetClass={strategy?.asset_class} value={symbols} onChange={setSymbols} multi />
+              <SymbolPicker
+                assetClass={strategy?.asset_class}
+                value={symbols}
+                onChange={setSymbols}
+                multi
+                disabled={scannerReplay}
+              />
             </div>
           </div>
+          <label className="check">
+            <input type="checkbox" checked={scannerReplay} onChange={(e) => setScannerReplay(e.target.checked)} />
+            Scanner replay — optimize against the historical <strong>top risers each day</strong> (the strategy's real
+            universe), not a fixed list <InfoTip k="scanner_replay" />
+          </label>
+          {scannerReplay && (
+            <>
+              <label style={{ display: "block", marginTop: 8 }}>
+                <span className="field-cap">
+                  Risers per day (top N) <InfoTip k="replay_top_n" />
+                </span>
+                <NumberField min={1} max={100} step={1} value={replayTopN} onChange={setReplayTopN} />
+              </label>
+              <p className="hint">
+                Each day of history, only that day's <strong>top {replayTopN}</strong> risers are eligible to enter; the
+                searched entry/exit knobs then decide. Read offline from the bar cache, so it needs a completed sweep
+                first (Settings → Historical bar cache), and the <strong>bar size below is ignored</strong> — replay uses
+                15-minute bars if you've run an intraday sweep (so intraday exits behave), else daily. The symbol picker
+                and the 25-symbol cap don't apply — the universe is however many names made a top-N list.
+              </p>
+            </>
+          )}
           {(() => {
-            const u = universeExplain(strategy, symbols, baskets);
+            const u = universeExplain(strategy, symbols, baskets, scannerReplay, replayTopN);
             if (!u) return null;
             return (
               <p className={`hint ${u.warn ? "warn" : ""}`}>
@@ -309,7 +355,12 @@ export default function Optimizer() {
               <span className="field-cap">
                 Bar size <InfoTip k="bar" />
               </span>
-              <select value={timeframe} onChange={(e) => setTimeframe(e.target.value)}>
+              <select
+                value={timeframe}
+                onChange={(e) => setTimeframe(e.target.value)}
+                disabled={scannerReplay}
+                title={scannerReplay ? "Ignored in scanner replay — the cache decides (15-min if swept, else daily)" : undefined}
+              >
                 <option value="1Day">1 day (fast — recommended for a search)</option>
                 <option value="1Hour">1 hour (slower)</option>
                 <option value="15Min">15 minutes (slowest, precise)</option>
@@ -368,9 +419,17 @@ export default function Optimizer() {
               <strong>{result.tested_combinations.toLocaleString()} combinations</strong> · {result.symbols.length}{" "}
               symbol{result.symbols.length === 1 ? "" : "s"} · last {result.days} days ({result.timeframe})
             </h3>
-            <p className="hint">
-              Tested on: <strong>{result.symbols.join(", ")}</strong>
-            </p>
+            {result.scanner_replay ? (
+              <p className="hint">
+                Tested by <strong>scanner replay</strong>: each day's top {result.replay_top_n} risers over{" "}
+                {result.days_replayed ?? "—"} days — a universe of <strong>{result.universe_size ?? result.symbols.length}</strong>{" "}
+                distinct names, using {result.replay_intraday ? "15-minute (intraday)" : "daily"} bars from the cache.
+              </p>
+            ) : (
+              <p className="hint">
+                Tested on: <strong>{result.symbols.join(", ")}</strong>
+              </p>
+            )}
             <p className="hint">
               <strong>Out-of-sample is the real result.</strong> The search optimized on{" "}
               {result.in_sample_window.days} days ({result.in_sample_window.start.slice(0, 10)} →{" "}

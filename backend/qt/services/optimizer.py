@@ -149,6 +149,7 @@ def optimize(
     min_trades: int = 3,
     top_n_validate: int = 6,
     seed: int | None = None,
+    eligible_by_day: dict[str, set[str]] | None = None,
     backtest_fn: BacktestFn = run_backtest,
     progress: ProgressFn | None = None,
 ) -> dict:
@@ -174,11 +175,17 @@ def optimize(
         bars_by_symbol, in_sample_frac
     )
 
+    # In scanner-replay mode a symbol may only ENTER on the days it was a top-N
+    # riser. The same eligible-by-day map is passed to both slices: run_backtest
+    # only ever looks up the days present in the bars it's given, so the early
+    # (in-sample) and late (out-of-sample) slices each see just their own days —
+    # no need to split the map. None = the normal fixed-universe search.
     def run_in_sample(combo: dict) -> dict:
         strat = _apply_combo(base_strategy, combo)
         return backtest_fn(
             strat, in_sample, risk,
             starting_cash=starting_cash, spread_pct=spread_pct, market=market,
+            eligible_by_day=eligible_by_day,
         )
 
     def run_out_of_sample(combo: dict) -> dict:
@@ -186,6 +193,7 @@ def optimize(
         return backtest_fn(
             strat, out_sample, risk,
             starting_cash=starting_cash, spread_pct=spread_pct, market=market,
+            eligible_by_day=eligible_by_day,
         )
 
     # ---- 1 & 2: random search over the coarse grid (in-sample only) ----

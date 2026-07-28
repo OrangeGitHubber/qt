@@ -54,8 +54,13 @@ class RecordingFake:
     def __init__(self):
         self.windows: set[tuple[str, str]] = set()
         self.combos_seen: list[tuple] = []
+        self.eligible_seen: list = []
 
-    def __call__(self, strategy, bars_by_symbol, risk, *, starting_cash=5000.0, spread_pct=0.1, market="stock"):
+    def __call__(
+        self, strategy, bars_by_symbol, risk, *,
+        starting_cash=5000.0, spread_pct=0.1, market="stock", eligible_by_day=None,
+    ):
+        self.eligible_seen.append(eligible_by_day)
         ts = sorted(b["t"] for series in bars_by_symbol.values() for b in series)
         window = (ts[0], ts[-1])
         self.windows.add(window)
@@ -161,3 +166,16 @@ def test_single_symbol_warns_about_generalization():
         BASE_STRATEGY, {"AAA": _bars(100)}, {}, iterations=10, seed=1, backtest_fn=fake
     )
     assert any("one symbol" in w for w in result["warnings"])
+
+
+def test_eligible_by_day_is_threaded_to_every_backtest():
+    # Scanner-replay mode: the same eligible-by-day map (each day's top-N risers)
+    # must reach EVERY backtest call — in-sample and out-of-sample alike — so the
+    # search optimizes against the strategy's real, day-varying universe.
+    eligible = {"2026-01-05": {"AAA"}, "2026-01-06": {"BBB"}}
+    result, fake = _run(eligible_by_day=eligible)
+    assert fake.eligible_seen, "the fake was never called"
+    assert all(e is eligible for e in fake.eligible_seen)
+    # And the plain (fixed-universe) path passes None, unchanged.
+    _, fake2 = _run()
+    assert all(e is None for e in fake2.eligible_seen)

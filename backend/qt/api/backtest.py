@@ -1,6 +1,7 @@
 """Backtest endpoint: replay a saved strategy over history."""
 
 import json
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -17,6 +18,77 @@ from qt.services.engine import get_risk
 router = APIRouter(prefix="/api/backtest", tags=["backtest"])
 
 TIMEFRAMES = ("15Min", "1Hour", "1Day")
+
+
+@dataclass
+class ScannerReplayDataset:
+    """The offline scanner-replay dataset read from the bar cache: for each past
+    day, only that day's cached top-N movers are eligible to enter. Shared by the
+    single-strategy scanner-replay backtest and the scanner-replay optimizer so
+    both build the universe the exact same way."""
+    bars: dict[str, list[dict]]
+    eligible_by_day: dict[str, set[str]]
+    timeframe: str
+    used_intraday: bool
+    union: list[str]
+    market: str
+    benchmark_class: str
+    benchmark_symbol: str
+    start_day: str
+    days_replayed: int
+
+
+def load_scanner_replay_dataset(asset_class: str, days: int, replay_top_n: int) -> ScannerReplayDataset:
+    """Read the cached historical top-N risers + their bars for `days` back.
+    Prefers cached INTRADAY bars (so intraday exits behave); falls back to daily
+    when no intraday sweep has been run. Fully offline. Raises HTTPException 422
+    when the cache is empty and 502 on a bad cache DSN — both API-shaped because
+    both callers are FastAPI routes."""
+    from qt.services import barcache
+
+    crypto = asset_class == "crypto"
+    daily_model = barcache.CryptoDailyBar if crypto else barcache.DailyBar
+    mover_model = barcache.CryptoDailyMover if crypto else barcache.DailyMover
+    intraday_model = barcache.CryptoIntradayBar if crypto else barcache.IntradayBar
+    daily_stamp = "T12:00:00Z" if crypto else "T14:00:00Z"
+    market = "crypto" if crypto else "stock"
+    benchmark_symbol = "BTC/USD" if crypto else "SPY"
+
+    try:
+        barcache.init_cache()
+    except Exception as exc:  # noqa: BLE001 — surface a bad cache DSN clearly
+        raise HTTPException(status_code=502, detail=f"Could not open the bar cache DB: {exc}")
+
+    start_day = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%d")
+    cache = barcache.session()
+    try:
+        movers = barcache.movers_between(cache, start_day, top_n=replay_top_n, model=mover_model)
+        if not movers:
+            asset = "crypto" if crypto else "stock"
+            raise HTTPException(
+                status_code=422,
+                detail=f"No cached {asset} movers yet — run a {'crypto ' if crypto else ''}sweep first "
+                       "(Settings → Historical bar cache).",
+            )
+        eligible_by_day = {day: set(syms) for day, syms in movers.items()}
+        union = sorted({s for syms in movers.values() for s in syms})
+        intraday_bars = barcache.cached_intraday_bars(cache, union, start_day, model=intraday_model)
+        used_intraday = any(intraday_bars.values())
+        if used_intraday:
+            bars = intraday_bars
+            timeframe = "15Min"
+        else:
+            bars = barcache.cached_daily_bars(cache, union, start_day, model=daily_model, stamp=daily_stamp)
+            timeframe = "1Day"
+    finally:
+        cache.close()
+
+    return ScannerReplayDataset(
+        bars=bars, eligible_by_day=eligible_by_day, timeframe=timeframe,
+        used_intraday=used_intraday, union=union, market=market,
+        benchmark_class=market, benchmark_symbol=benchmark_symbol,
+        start_day=start_day, days_replayed=len(movers),
+    )
 
 
 class BacktestBody(BaseModel):
@@ -241,59 +313,12 @@ async def _scanner_replay(
     close, VWAP, the entry window — behave for real); falls back to daily bars
     when no intraday sweep has been run. Fully offline. Works for stocks (ET
     session days) and crypto (UTC calendar days) off their SEPARATE caches."""
-    from qt.services import barcache
-
-    crypto = strategy.asset_class == "crypto"
-    # Which cache to read: stocks use the ET-day tables + 14:00Z daily stamp;
-    # crypto uses the UTC-day tables + 12:00Z stamp, and buckets the backtest by
-    # UTC day (market="crypto"). The eligible-by-day keys and the bar day-buckets
-    # must agree, which they do because both come from the same-market cache.
-    daily_model = barcache.CryptoDailyBar if crypto else barcache.DailyBar
-    mover_model = barcache.CryptoDailyMover if crypto else barcache.DailyMover
-    intraday_model = barcache.CryptoIntradayBar if crypto else barcache.IntradayBar
-    daily_stamp = "T12:00:00Z" if crypto else "T14:00:00Z"
-    market = "crypto" if crypto else "stock"
-    benchmark_class = "crypto" if crypto else "stock"
-    benchmark_symbol = "BTC/USD" if crypto else "SPY"
-
-    # Ensure the cache schema exists before reading. A cache built by an earlier
-    # version won't have the newer tables; init_cache is idempotent (creates only
-    # missing tables), so this heals an older cache in place instead of erroring
-    # on a missing relation.
-    try:
-        barcache.init_cache()
-    except Exception as exc:  # noqa: BLE001 — surface a bad cache DSN clearly
-        raise HTTPException(status_code=502, detail=f"Could not open the bar cache DB: {exc}")
-
-    start_day = (datetime.now(timezone.utc) - timedelta(days=body.days)).strftime("%Y-%m-%d")
-    cache = barcache.session()
-    try:
-        movers = barcache.movers_between(cache, start_day, top_n=body.replay_top_n, model=mover_model)
-        if not movers:
-            asset = "crypto" if crypto else "stock"
-            raise HTTPException(
-                status_code=422,
-                detail=f"No cached {asset} movers yet — run a {'crypto ' if crypto else ''}sweep first "
-                       "(Settings → Historical bar cache).",
-            )
-        eligible_by_day = {day: set(syms) for day, syms in movers.items()}
-        union = sorted({s for syms in movers.values() for s in syms})
-        # Stage 2: intraday bars for the movers if we have them, else daily.
-        intraday_bars = barcache.cached_intraday_bars(cache, union, start_day, model=intraday_model)
-        used_intraday = any(intraday_bars.values())
-        if used_intraday:
-            bars = intraday_bars
-            timeframe = "15Min"
-        else:
-            bars = barcache.cached_daily_bars(cache, union, start_day, model=daily_model, stamp=daily_stamp)
-            timeframe = "1Day"
-    finally:
-        cache.close()
+    ds = load_scanner_replay_dataset(strategy.asset_class, body.days, body.replay_top_n)
 
     result = backtest.run_backtest(
-        strategy_dict, bars, get_risk(session),
+        strategy_dict, ds.bars, get_risk(session),
         starting_cash=body.starting_cash, spread_pct=body.spread_pct,
-        eligible_by_day=eligible_by_day, market=market,
+        eligible_by_day=ds.eligible_by_day, market=ds.market,
     )
     if "error" in result:
         raise HTTPException(status_code=422, detail=result["error"])
@@ -306,18 +331,19 @@ async def _scanner_replay(
     result["benchmark_symbol"] = None
     try:
         result["benchmark"] = await backtest.fetch_benchmark(
-            client, benchmark_class, start_day, result["equity_days"], market=market
+            client, ds.benchmark_class, ds.start_day, result["equity_days"], market=ds.market
         )
-        result["benchmark_symbol"] = benchmark_symbol
+        result["benchmark_symbol"] = ds.benchmark_symbol
     except Exception:
         pass
 
     result["strategy_name"] = strategy.name
     result["scanner_replay"] = True
-    result["replay_intraday"] = used_intraday
+    result["replay_intraday"] = ds.used_intraday
     result["replay_top_n"] = body.replay_top_n
-    result["universe_size"] = len(union)
-    result["days_replayed"] = len(movers)
+    result["universe_size"] = len(ds.union)
+    result["days_replayed"] = ds.days_replayed
+    timeframe = ds.timeframe
     result["symbols"] = []  # too many to list; summarized by universe_size
     result["timeframe"] = timeframe
     result["days"] = body.days
