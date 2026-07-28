@@ -3,6 +3,25 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Strategy builder shows the symbols in play — editable inline (2026-07-28)
+
+Pick a universe and the builder now shows **exactly which symbols the strategy
+will consider**, right there, editable on the spot:
+
+- **Basket** → the basket's members as chips you can remove, plus a search box to
+  add more. A clear ⚠ note says editing changes that **shared basket everywhere**
+  it's used (and that the strategy still trades only the top-ranked few).
+- **Specific symbols** → your own list (as before), now labelled "…in play (N)".
+- **Watchlist / Scanner + watchlist** → your watchlist for this asset class, add
+  and remove inline (it updates the Watchlist everywhere).
+- **Scanner** → explained plainly: it's dynamic (each day's top risers), so there's
+  no fixed list to edit — add names to your Watchlist and use "Scanner + watchlist"
+  to always include them.
+
+Also clarified the **entry-window** help: the window restricts *buying* only, and
+only within regular US market hours — selling (exits, trailing stops, stop-losses)
+is never blocked by it, and for stocks nothing trades pre-/after-hours anyway.
+
 ## Strategy builder redesigned — grouped sections, compact fields (2026-07-28)
 
 The strategy builder had grown into one long scroll where every new option was

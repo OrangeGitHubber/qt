@@ -15,7 +15,7 @@ import {
 } from "../api";
 import InfoTip from "../components/InfoTip";
 import NumberField from "../components/NumberField";
-import SymbolPicker from "../components/SymbolPicker";
+import UniverseSymbols from "../components/UniverseSymbols";
 
 const RANK_LABELS: Record<RankBy, string> = {
   momentum_today: "Today's % move (momentum)",
@@ -122,6 +122,7 @@ function Editor({
   equity,
   onSaved,
   onCancel,
+  onBasketsChanged,
 }: {
   initial: Partial<StrategyRow>;
   presets: Record<string, Preset>;
@@ -130,6 +131,7 @@ function Editor({
   equity: number | null;
   onSaved: () => void;
   onCancel: () => void;
+  onBasketsChanged: () => void;
 }) {
   const [s, setS] = useState<Partial<StrategyRow>>(JSON.parse(JSON.stringify(initial)));
   const [error, setError] = useState<string | null>(null);
@@ -370,20 +372,17 @@ function Editor({
             </Param>
           </div>
         )}
-        {s.universe === "custom" && (
-          <div className="field" style={{ marginTop: "0.6rem" }}>
-            <span className="field-cap">
-              {s.asset_class === "crypto" ? "Crypto pairs" : "Stocks"} to trade <InfoTip k="custom_symbols" />
-            </span>
-            <SymbolPicker
-              assetClass={s.asset_class}
-              value={s.symbols ?? []}
-              onChange={(syms) => setS({ ...s, symbols: syms })}
-              multi
-              placeholder={s.asset_class === "crypto" ? "Search: bitcoin or BTC/USD" : "Search: SPCX or a company name"}
-            />
-          </div>
-        )}
+        <div style={{ marginTop: "0.6rem" }}>
+          <UniverseSymbols
+            universe={s.universe!}
+            assetClass={s.asset_class as "stock" | "crypto"}
+            basketId={s.basket_id ?? null}
+            baskets={baskets}
+            onBasketsChanged={onBasketsChanged}
+            customSymbols={s.symbols ?? []}
+            onCustomChange={(syms) => setS({ ...s, symbols: syms })}
+          />
+        </div>
       </section>
 
       {/* 3 — ENTRY: when to buy */}
@@ -639,6 +638,10 @@ export default function Strategies() {
     getStrategies().then(setRows).catch((e: Error) => setNote(e.message));
   }, []);
 
+  const refreshBaskets = useCallback(() => {
+    getBaskets().then(setBaskets).catch(() => {});
+  }, []);
+
   useEffect(() => {
     refresh();
     getPresets().then(setPresets);
@@ -749,6 +752,7 @@ export default function Strategies() {
             refresh();
           }}
           onCancel={() => setEditing(null)}
+          onBasketsChanged={refreshBaskets}
         />
       )}
       {!rows ? (
