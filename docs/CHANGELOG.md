@@ -21,6 +21,25 @@ the Baskets screen. A handful of energy/materials names in the sector lists have
 since been acquired or merged away (Pioneer/PXD, Marathon Oil/MRO, WestRock/WRK) —
 they're included as given but may not trade on Alpaca, so prune them if you like.
 
+## Strategies: see the holdings each strategy currently owns (2026-07-28)
+
+Every strategy card now has an expandable **Holdings (N)** section (shown when it
+has open positions) listing exactly what that strategy is holding right now:
+symbol, quantity, entry price, current price, and **unrealized P&L** (with a live
+total). Prices are best-effort from Alpaca and degrade gracefully to entry data
+if the broker is momentarily unreachable. Backed by a new
+`GET /api/strategies/{id}/holdings`.
+
+## Liquidate: closing orphans is now opt-in (2026-07-28)
+
+The "Liquidate holdings" action now defaults to closing **only the positions QT
+tracks** — matched to the broker by the same normalization reconciliation uses,
+and by QT's *own* quantity, so a co-existing bot's shares in the same symbol are
+never touched. A separate checkbox, **"Also close positions QT doesn't track
+(orphans)"** (off by default, with a clear warning), does the whole-account
+flatten. Orphans should never exist, and if another bot trades the same Alpaca
+account, QT must not close its positions.
+
 ## Settings → Broker connection: switch accounts & liquidate everything (2026-07-28)
 
 You can now manage the Alpaca connection AFTER first-run, from **Settings →

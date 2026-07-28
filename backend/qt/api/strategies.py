@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from qt.broker.factory import get_client
 from qt.db import get_session
 from qt.models import AuditLog, Strategy, StrategyConfigVersion, Trade
 from qt.services.presets import PRESETS
@@ -328,3 +329,75 @@ def delete_strategy(strategy_id: int, session: Session = Depends(get_session)) -
     session.add(AuditLog(category="strategy", message=f"Deleted strategy '{strategy.name}' (no trades)"))
     session.delete(strategy)
     return {"ok": True}
+
+
+def _snapshot_price(snap: dict) -> float | None:
+    """Best current price from an Alpaca snapshot: last trade, else today's bar."""
+    price = (snap.get("latestTrade") or {}).get("p") or (snap.get("dailyBar") or {}).get("c")
+    try:
+        return float(price) if price else None
+    except (TypeError, ValueError):
+        return None
+
+
+@router.get("/{strategy_id}/holdings")
+async def strategy_holdings(strategy_id: int, session: Session = Depends(get_session)) -> dict:
+    """The open positions this strategy currently holds, with best-effort live
+    prices for unrealized P&L. Degrades gracefully to entry data when the broker
+    is unreachable (current_price stays null)."""
+    strategy = session.get(Strategy, strategy_id)
+    if not strategy:
+        raise HTTPException(status_code=404, detail="Strategy not found.")
+
+    trades = (
+        session.query(Trade)
+        .filter(Trade.strategy_id == strategy_id, Trade.status == "open")
+        .order_by(Trade.entry_at)
+        .all()
+    )
+    rows = [
+        {
+            "symbol": t.symbol,
+            "asset_class": t.asset_class,
+            "mode": t.mode,
+            "qty": t.qty,
+            "entry_price": t.entry_price,
+            "notional": t.notional,
+            "entry_at": t.entry_at.isoformat() if t.entry_at else None,
+            "current_price": None,
+            "market_value": None,
+            "unrealized_pnl": None,
+            "unrealized_pct": None,
+        }
+        for t in trades
+    ]
+
+    # Live prices for unrealized P&L — best effort. A strategy is single
+    # asset-class, so one batched snapshot call covers all its symbols.
+    if rows:
+        client = get_client(session)
+        if client is not None:
+            symbols = sorted({r["symbol"] for r in rows})
+            is_stock = strategy.asset_class == "stock"
+            try:
+                snaps = await (client.stock_snapshots(symbols) if is_stock else client.crypto_snapshots(symbols))
+            except Exception:  # noqa: BLE001 — never fail the holdings view on a price hiccup
+                snaps = {}
+            for r in rows:
+                price = _snapshot_price(snaps.get(r["symbol"]) or {})
+                if price and r["entry_price"]:
+                    r["current_price"] = price
+                    r["market_value"] = round(price * r["qty"], 2)
+                    r["unrealized_pnl"] = round((price - r["entry_price"]) * r["qty"], 2)
+                    r["unrealized_pct"] = round((price / r["entry_price"] - 1) * 100, 2)
+
+    total_cost = sum((r["notional"] or 0) for r in rows)
+    total_value = sum((r["market_value"] or 0) for r in rows if r["market_value"] is not None)
+    total_pnl = sum((r["unrealized_pnl"] or 0) for r in rows if r["unrealized_pnl"] is not None)
+    return {
+        "strategy_id": strategy_id,
+        "holdings": rows,
+        "total_cost": round(total_cost, 2),
+        "total_value": round(total_value, 2),
+        "total_unrealized_pnl": round(total_pnl, 2),
+    }

@@ -157,6 +157,31 @@ const json = (body: unknown): RequestInit => ({
 });
 
 export const getStrategies = () => fetch("/api/strategies").then((r) => handle<StrategyRow[]>(r));
+
+export interface Holding {
+  symbol: string;
+  asset_class: string;
+  mode: string;
+  qty: number;
+  entry_price: number | null;
+  notional: number;
+  entry_at: string | null;
+  current_price: number | null;
+  market_value: number | null;
+  unrealized_pnl: number | null;
+  unrealized_pct: number | null;
+}
+
+export interface StrategyHoldings {
+  strategy_id: number;
+  holdings: Holding[];
+  total_cost: number;
+  total_value: number;
+  total_unrealized_pnl: number;
+}
+
+export const getStrategyHoldings = (id: number) =>
+  fetch(`/api/strategies/${id}/holdings`).then((r) => handle<StrategyHoldings>(r));
 export const getPresets = () => fetch("/api/strategies/presets").then((r) => handle<Record<string, Preset>>(r));
 export const createStrategy = (b: Partial<StrategyRow>) =>
   fetch("/api/strategies", json(b)).then((r) => handle<StrategyRow>(r));

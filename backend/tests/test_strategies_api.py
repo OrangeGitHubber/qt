@@ -100,6 +100,48 @@ def test_rank_enabled_opts_in_for_watchlist_and_custom(client):
     client.delete(f"/api/baskets/{bid}")
 
 
+def test_strategy_holdings_lists_open_positions(client):
+    from unittest.mock import AsyncMock, patch
+
+    from qt.broker.alpaca import AlpacaClient
+    from qt.db import session_scope
+    from qt.models import Trade
+
+    sid = client.post("/api/strategies", json=_body()).json()["id"]
+    with session_scope() as s:
+        s.add(Trade(strategy_id=sid, mode="paper", symbol="AAPL", asset_class="stock",
+                    status="open", qty=2, notional=200, entry_price=100.0))
+        s.add(Trade(strategy_id=sid, mode="paper", symbol="MSFT", asset_class="stock",
+                    status="closed", qty=1, notional=50, entry_price=50.0))  # closed — excluded
+        s.commit()
+
+    snaps = {"AAPL": {"latestTrade": {"p": 150.0}}}
+    with patch.object(AlpacaClient, "stock_snapshots", new=AsyncMock(return_value=snaps)):
+        # Needs keys for get_client to build a client; set them inline.
+        from qt import security
+        from qt.broker.alpaca import SECRET_KEY_ID, SECRET_KEY_SECRET
+        with session_scope() as s:
+            security.set_secret(s, SECRET_KEY_ID, "k")
+            security.set_secret(s, SECRET_KEY_SECRET, "s")
+        body = client.get(f"/api/strategies/{sid}/holdings").json()
+
+    assert len(body["holdings"]) == 1  # only the open AAPL trade
+    h = body["holdings"][0]
+    assert h["symbol"] == "AAPL"
+    assert h["current_price"] == 150.0
+    assert h["unrealized_pnl"] == 100.0  # (150-100)*2
+    assert body["total_unrealized_pnl"] == 100.0
+
+    with session_scope() as s:
+        from qt import security
+        from qt.broker.alpaca import SECRET_KEY_ID, SECRET_KEY_SECRET
+        s.query(Trade).filter(Trade.strategy_id == sid).delete()
+        security.delete_secret(s, SECRET_KEY_ID)
+        security.delete_secret(s, SECRET_KEY_SECRET)
+        s.commit()
+    client.delete(f"/api/strategies/{sid}")
+
+
 def test_presets_available(client):
     presets = client.get("/api/strategies/presets").json()
     assert "momentum_swing_stocks" in presets

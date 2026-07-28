@@ -1255,6 +1255,51 @@ details.adv[open] > summary::before {
   content: "▾ ";
 }
 
+/* Per-strategy holdings: an expandable list of the positions a strategy owns. */
+details.holdings {
+  margin: 0.4rem 0 0.6rem;
+  border-top: 1px solid var(--border);
+  padding-top: 0.4rem;
+}
+details.holdings > summary {
+  cursor: pointer;
+  color: var(--accent);
+  font-size: 0.85rem;
+  font-weight: 500;
+  list-style: none;
+  user-select: none;
+}
+details.holdings > summary::-webkit-details-marker {
+  display: none;
+}
+details.holdings > summary::before {
+  content: "▸ ";
+}
+details.holdings[open] > summary::before {
+  content: "▾ ";
+}
+.holdings-table {
+  width: 100%;
+  margin-top: 0.4rem;
+  font-size: 0.82rem;
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+}
+.holdings-table th {
+  text-align: left;
+  color: var(--muted);
+  font-weight: 500;
+  padding: 0.2rem 0.5rem 0.2rem 0;
+}
+.holdings-table td {
+  padding: 0.2rem 0.5rem 0.2rem 0;
+  border-top: 1px solid var(--border);
+}
+.holdings-table th:not(:first-child),
+.holdings-table td:not(:first-child) {
+  text-align: right;
+}
+
 /* Chart overlay toggles — compact, pill-shaped checkboxes that light up when on. */
 .overlay-toggles {
   display: flex;

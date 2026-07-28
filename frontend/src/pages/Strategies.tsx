@@ -7,8 +7,10 @@ import {
   getPresets,
   getStatus,
   getStrategies,
+  getStrategyHoldings,
   Preset,
   RankBy,
+  StrategyHoldings,
   StrategyRow,
   toggleStrategy,
   updateStrategy,
@@ -112,6 +114,77 @@ function Segmented<T extends string>({
         </button>
       ))}
     </div>
+  );
+}
+
+// Expandable per-strategy holdings: the open positions this strategy owns right
+// now, with best-effort live unrealized P&L. Lazy-loads on first expand.
+function HoldingsView({ strategyId, count }: { strategyId: number; count: number }) {
+  const [data, setData] = useState<StrategyHoldings | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  function load() {
+    if (data || loading) return;
+    setLoading(true);
+    setErr(null);
+    getStrategyHoldings(strategyId)
+      .then(setData)
+      .catch((e: Error) => setErr(e.message))
+      .finally(() => setLoading(false));
+  }
+
+  const money = (n: number) => `${n < 0 ? "−" : ""}$${Math.abs(n).toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
+
+  return (
+    <details
+      className="holdings"
+      onToggle={(e) => {
+        if ((e.target as HTMLDetailsElement).open) load();
+      }}
+    >
+      <summary>Holdings ({count})</summary>
+      {loading && <p className="hint">Loading positions…</p>}
+      {err && <div className="error">{err}</div>}
+      {data && data.holdings.length === 0 && <p className="hint">No open positions right now.</p>}
+      {data && data.holdings.length > 0 && (
+        <>
+          <div className="table-scroll">
+            <table className="holdings-table">
+              <thead>
+                <tr>
+                  <th>Symbol</th>
+                  <th>Qty</th>
+                  <th>Entry</th>
+                  <th>Now</th>
+                  <th>Unreal. P&amp;L</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.holdings.map((h, i) => (
+                  <tr key={i}>
+                    <td>{h.symbol}</td>
+                    <td>{h.qty.toLocaleString(undefined, { maximumFractionDigits: 6 })}</td>
+                    <td>{h.entry_price != null ? money(h.entry_price) : "—"}</td>
+                    <td>{h.current_price != null ? money(h.current_price) : "—"}</td>
+                    <td className={(h.unrealized_pnl ?? 0) >= 0 ? "up" : "down"}>
+                      {h.unrealized_pnl != null ? `${money(h.unrealized_pnl)} (${h.unrealized_pct}%)` : "—"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {data.total_value > 0 && (
+            <p className="hint">
+              Value {money(data.total_value)} · unrealized{" "}
+              <span className={data.total_unrealized_pnl >= 0 ? "up" : "down"}>{money(data.total_unrealized_pnl)}</span>
+              {" "}(prices may lag a little)
+            </p>
+          )}
+        </>
+      )}
+    </details>
   );
 }
 
@@ -725,6 +798,7 @@ export default function Strategies() {
             v{r.version} · {r.open_trades ?? 0} open trade(s)
           </dd>
         </dl>
+        {(r.open_trades ?? 0) > 0 && <HoldingsView strategyId={r.id} count={r.open_trades ?? 0} />}
         <div className="card-actions">
           <button
             className={`small ${r.enabled ? "btn-pause" : "btn-enable"}`}
