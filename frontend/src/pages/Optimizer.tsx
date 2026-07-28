@@ -124,6 +124,10 @@ export default function Optimizer() {
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const strategy = strategies.find((s) => s.id === strategyId);
+  const stratNeedsIntraday = !!(
+    strategy?.params?.entry?.require_above_vwap ||
+    (strategy?.params?.entry?.entry_window_start && strategy?.params?.entry?.entry_window_end)
+  );
   const running = status?.running ?? false;
   const result: OptimizerResult | null = status && !status.running ? status.result : null;
 
@@ -156,6 +160,13 @@ export default function Optimizer() {
       const isScanner = strat.universe === "scanner";
       setScannerReplay(isScanner);
       if (isScanner) setReplayTopN(strat.top_n || 10);
+      // VWAP and an entry-time window are INTRADAY rules — they can't be evaluated
+      // on daily bars (every entry gets rejected, so the whole search returns 0
+      // trades). Default such strategies to 15-minute bars so the search is valid;
+      // otherwise daily (fast) is the sensible default.
+      const e = strat.params?.entry;
+      const needsIntraday = !!(e?.require_above_vwap || (e?.entry_window_start && e?.entry_window_end));
+      setTimeframe(needsIntraday ? "15Min" : "1Day");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [strategyId, strategies]);
@@ -366,6 +377,12 @@ export default function Optimizer() {
                 <option value="1Hour">1 hour (slower)</option>
                 <option value="15Min">15 minutes (slowest, precise)</option>
               </select>
+              {stratNeedsIntraday && !scannerReplay && (
+                <span className="field-help">
+                  This strategy uses VWAP / an entry window (intraday rules), so daily bars would reject every entry —
+                  defaulted to intraday. Switch to 1 day only if you also turn those rules off.
+                </span>
+              )}
             </label>
             <label>
               <span className="field-cap">Combinations to try</span>
