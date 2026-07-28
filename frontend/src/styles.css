@@ -1151,6 +1151,88 @@ td.detail p {
   color: #fff;
 }
 
+/* Strategy builder — outlined sections + compact numeric params so the form
+   reads as grouped stages, not one long stack of full-width text boxes. */
+.builder-sec {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 0.9rem 1.1rem 1.1rem;
+  margin-top: 1rem;
+}
+.builder-sec .builder-head {
+  margin: 0 0 0.15rem;
+  color: var(--text);
+  text-transform: uppercase;
+  font-size: 0.82rem;
+  letter-spacing: 0.06em;
+}
+.builder-sec .sec-sub {
+  margin: 0 0 0.6rem;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+/* A row of compact value-sized fields — an "x%" gets a small box, not a slab. */
+.param-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1.1rem;
+  margin-top: 0.3rem;
+}
+.param {
+  display: flex;
+  flex-direction: column;
+}
+.param-cap {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.3rem;
+  min-height: 2.3em; /* reserve two lines so inputs align across the row */
+  line-height: 1.2;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+.param input {
+  width: 7.5rem;
+  margin-top: 0.25rem;
+}
+
+/* Checkboxes grouped into a wrapping row within a section. */
+.check-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 1.4rem;
+  margin-top: 0.85rem;
+}
+.check-row label.check {
+  margin-top: 0;
+}
+
+/* Progressive disclosure: the rarer/expert knobs per section. */
+details.adv {
+  margin-top: 0.9rem;
+  border-top: 1px dashed var(--border);
+  padding-top: 0.5rem;
+}
+details.adv > summary {
+  cursor: pointer;
+  color: var(--accent);
+  font-size: 0.84rem;
+  font-weight: 500;
+  list-style: none;
+  padding: 0.2rem 0;
+  user-select: none;
+}
+details.adv > summary::-webkit-details-marker {
+  display: none;
+}
+details.adv > summary::before {
+  content: "▸ ";
+}
+details.adv[open] > summary::before {
+  content: "▾ ";
+}
+
 /* Chart overlay toggles — compact, pill-shaped checkboxes that light up when on. */
 .overlay-toggles {
   display: flex;

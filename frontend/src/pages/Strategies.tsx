@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { ReactNode, useCallback, useEffect, useState } from "react";
 import {
   Basket,
   createStrategy,
@@ -61,6 +61,58 @@ const EMPTY: Partial<StrategyRow> = {
     },
   },
 };
+
+// One compact numeric/labelled control: a caption (+ optional ? tooltip) above a
+// value-sized input. Grouped in a .param-grid so a strategy's numbers read as a
+// related set rather than a stack of full-width text boxes.
+function Param({
+  label,
+  tip,
+  children,
+}: {
+  label: ReactNode;
+  tip?: Parameters<typeof InfoTip>[0]["k"];
+  children: ReactNode;
+}) {
+  return (
+    <div className="param">
+      <span className="param-cap">
+        {label}
+        {tip && <InfoTip k={tip} />}
+      </span>
+      {children}
+    </div>
+  );
+}
+
+// A two-option segmented "slider" (used for Asset class and Trading style).
+function Segmented<T extends string>({
+  value,
+  onChange,
+  options,
+  ariaLabel,
+}: {
+  value: T;
+  onChange: (v: T) => void;
+  options: { value: T; label: string }[];
+  ariaLabel: string;
+}) {
+  return (
+    <div className="segmented" role="group" aria-label={ariaLabel}>
+      {options.map((o) => (
+        <button
+          key={o.value}
+          type="button"
+          className={value === o.value ? "seg-on" : ""}
+          aria-pressed={value === o.value}
+          onClick={() => onChange(o.value)}
+        >
+          {o.label}
+        </button>
+      ))}
+    </div>
+  );
+}
 
 function Editor({
   initial,
@@ -191,110 +243,136 @@ function Editor({
   const macdOn = !!(p.entry.require_macd_bullish || p.exit.exit_on_macd_bearish);
   const macd = p.macd ?? { fast: 12, slow: 26, signal: 9 };
   const atr = p.atr ?? { period: 14, stop_mult: 0, risk_usd: 0 };
-  // The advanced ATR period field appears only once an ATR feature is turned on.
-  const atrOn = atr.stop_mult > 0 || atr.risk_usd > 0;
+  const windowOn = !!(p.entry.entry_window_start && p.entry.entry_window_end);
   return (
     <form className="card editor" onSubmit={save}>
       <h3>{s.id ? `Edit: ${s.name}` : "New strategy"}</h3>
-      <div className="filter-grid">
-        <label>
-          Start from preset
-          <select value={s.preset} onChange={(e) => applyPreset(e.target.value)}>
-            <option value="custom">Custom</option>
-            {Object.entries(presets).map(([k, v]) => (
-              <option key={k} value={k}>
-                {v.label}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label>
-          Name
-          <input value={s.name ?? ""} onChange={(e) => setS({ ...s, name: e.target.value })} required />
-        </label>
-        <div className="field">
-          <span className="field-cap">Asset class</span>
-          <div className="segmented" role="group" aria-label="Asset class">
-            <button
-              type="button"
-              className={s.asset_class === "stock" ? "seg-on" : ""}
-              aria-pressed={s.asset_class === "stock"}
-              onClick={() => setS({ ...s, asset_class: "stock" })}
-            >
-              Stocks
-            </button>
-            <button
-              type="button"
-              className={s.asset_class === "crypto" ? "seg-on" : ""}
-              aria-pressed={s.asset_class === "crypto"}
-              onClick={() => setS({ ...s, asset_class: "crypto" })}
-            >
-              Crypto
-            </button>
+
+      {/* 1 — BASICS: what am I building, and how does it hold? */}
+      <section className="builder-sec">
+        <h4 className="builder-head">Start here</h4>
+        <div className="filter-grid">
+          <label>
+            Start from preset
+            <select value={s.preset} onChange={(e) => applyPreset(e.target.value)}>
+              <option value="custom">Custom</option>
+              {Object.entries(presets).map(([k, v]) => (
+                <option key={k} value={k}>
+                  {v.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Name
+            <input value={s.name ?? ""} onChange={(e) => setS({ ...s, name: e.target.value })} required />
+          </label>
+          <div className="field">
+            <span className="field-cap">Asset class</span>
+            <Segmented
+              value={s.asset_class as "stock" | "crypto"}
+              ariaLabel="Asset class"
+              onChange={(v) => setS({ ...s, asset_class: v })}
+              options={[
+                { value: "stock", label: "Stocks" },
+                { value: "crypto", label: "Crypto" },
+              ]}
+            />
+          </div>
+          <div className="field">
+            <span className="field-cap">
+              Trading style <InfoTip k="swing_mode" />
+            </span>
+            <Segmented
+              value={tradingStyle}
+              ariaLabel="Trading style"
+              onChange={setStyle}
+              options={[
+                { value: "swing", label: "Swing (overnight)" },
+                { value: "intraday", label: "Intraday" },
+              ]}
+            />
           </div>
         </div>
-        <label>
-          Universe <InfoTip k="universe" />
-          <select value={s.universe} onChange={(e) => setS({ ...s, universe: e.target.value as StrategyRow["universe"] })}>
-            <option value="scanner">Scanner (today's risers)</option>
-            <option value="watchlist">Watchlist only</option>
-            <option value="both">Scanner + watchlist</option>
-            <option value="basket">Basket (sector/theme)</option>
-            <option value="custom">Specific symbols (pick your own)</option>
-          </select>
-        </label>
-      </div>
-      {s.preset !== "custom" && presets[s.preset!] && <p className="hint">{presets[s.preset!].description}</p>}
+        {s.preset !== "custom" && presets[s.preset!] && <p className="sec-sub">{presets[s.preset!].description}</p>}
+      </section>
 
-      {s.universe === "basket" && (
-        <>
-          <h4>
-            Basket ranking <InfoTip k="rank_by" />
-          </h4>
-          <div className="filter-grid">
-            <label>
-              Basket
-              <select
-                value={s.basket_id ?? ""}
-                onChange={(e) => setS({ ...s, basket_id: e.target.value ? Number(e.target.value) : null })}
-                required
-              >
-                <option value="">— pick a basket —</option>
-                {baskets.map((b) => (
-                  <option key={b.id} value={b.id}>
-                    {b.name} ({b.count})
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label>
-              Rank by {s.rank_by === "rs_vs_spy" && <InfoTip k="rs_vs_spy" />}
-              <select value={s.rank_by} onChange={(e) => setS({ ...s, rank_by: e.target.value as RankBy })}>
-                {(Object.keys(RANK_LABELS) as RankBy[])
-                  // rs_vs_spy is benchmark-relative to SPY — a stock-only ranking.
-                  .filter((k) => k !== "rs_vs_spy" || s.asset_class === "stock")
-                  .map((k) => (
-                    <option key={k} value={k}>
-                      {RANK_LABELS[k]}
+      {/* 2 — UNIVERSE: where candidates come from */}
+      <section className="builder-sec">
+        <h4 className="builder-head">
+          Universe <InfoTip k="universe" />
+        </h4>
+        <p className="sec-sub">Where this strategy looks for things to buy.</p>
+        <div className="filter-grid">
+          <label>
+            Look in
+            <select
+              value={s.universe}
+              onChange={(e) => setS({ ...s, universe: e.target.value as StrategyRow["universe"] })}
+            >
+              <option value="scanner">Scanner (today's risers)</option>
+              <option value="watchlist">Watchlist only</option>
+              <option value="both">Scanner + watchlist</option>
+              <option value="basket">Basket (sector/theme)</option>
+              <option value="custom">Specific symbols (pick your own)</option>
+            </select>
+          </label>
+          {s.universe === "basket" && (
+            <>
+              <label>
+                Basket
+                <select
+                  value={s.basket_id ?? ""}
+                  onChange={(e) => setS({ ...s, basket_id: e.target.value ? Number(e.target.value) : null })}
+                  required
+                >
+                  <option value="">— pick a basket —</option>
+                  {baskets.map((b) => (
+                    <option key={b.id} value={b.id}>
+                      {b.name} ({b.count})
                     </option>
                   ))}
-              </select>
-            </label>
+                </select>
+              </label>
+              <label>
+                Rank by {s.rank_by === "rs_vs_spy" && <InfoTip k="rs_vs_spy" />}
+                <select value={s.rank_by} onChange={(e) => setS({ ...s, rank_by: e.target.value as RankBy })}>
+                  {(Object.keys(RANK_LABELS) as RankBy[])
+                    // rs_vs_spy is benchmark-relative to SPY — a stock-only ranking.
+                    .filter((k) => k !== "rs_vs_spy" || s.asset_class === "stock")
+                    .map((k) => (
+                      <option key={k} value={k}>
+                        {RANK_LABELS[k]}
+                      </option>
+                    ))}
+                </select>
+              </label>
+            </>
+          )}
+          {p.dca && (
             <label>
-              Take top N
-              <NumberField step="1" min="1" max="50" value={s.top_n!} onChange={(n) => setS({ ...s, top_n: n })} />
+              Buy every N days <InfoTip k="dca" />
+              <NumberField
+                step="1"
+                min="1"
+                value={p.dca.interval_days}
+                onChange={(n) => setS((cur) => ({ ...cur, params: { ...cur.params!, dca: { interval_days: n } } }))}
+              />
             </label>
+          )}
+        </div>
+        {s.universe === "basket" && (
+          <div className="param-grid" style={{ marginTop: "0.6rem" }}>
+            <Param label="Take top N" tip="rank_by">
+              <NumberField step="1" min="1" max="50" value={s.top_n!} onChange={(n) => setS({ ...s, top_n: n })} />
+            </Param>
           </div>
-        </>
-      )}
-
-      {s.universe === "custom" && (
-        <>
-          <h4>
-            Specific symbols <InfoTip k="custom_symbols" />
-          </h4>
-          <div className="field">
-            {s.asset_class === "crypto" ? "Crypto pairs" : "Stocks"} to trade
+        )}
+        {s.universe === "custom" && (
+          <div className="field" style={{ marginTop: "0.6rem" }}>
+            <span className="field-cap">
+              {s.asset_class === "crypto" ? "Crypto pairs" : "Stocks"} to trade <InfoTip k="custom_symbols" />
+            </span>
             <SymbolPicker
               assetClass={s.asset_class}
               value={s.symbols ?? []}
@@ -303,246 +381,197 @@ function Editor({
               placeholder={s.asset_class === "crypto" ? "Search: bitcoin or BTC/USD" : "Search: SPCX or a company name"}
             />
           </div>
-        </>
-      )}
-
-      {p.dca && (
-        <>
-          <h4>
-            DCA schedule <InfoTip k="dca" />
-          </h4>
-          <div className="filter-grid">
-            <label>
-              Buy every N days
-              <NumberField
-                step="1"
-                min="1"
-                value={p.dca.interval_days}
-                onChange={(n) =>
-                  setS((cur) => ({ ...cur, params: { ...cur.params!, dca: { interval_days: n } } }))
-                }
-              />
-            </label>
-          </div>
-        </>
-      )}
-
-      <h4>Entry rules</h4>
-      <div className="filter-grid">
-        <label>
-          Min gain today (%) <InfoTip k="min_day_gain" />
-          <NumberField step="0.1" min="0" value={p.entry.min_day_gain_pct}
-            onChange={(n) => setEntry("min_day_gain_pct", n)} />
-        </label>
-        <label>
-          Max gain today (%, 0 = off) <InfoTip k="max_day_gain" />
-          <NumberField step="0.1" min="0" value={p.entry.max_day_gain_pct ?? 0}
-            onChange={(n) => setEntry("max_day_gain_pct", n)} />
-        </label>
-        <label>
-          Min share price ($, 0 = any) <InfoTip k="share_price_band" />
-          <NumberField step="any" min="0" value={p.entry.min_price ?? 0}
-            onChange={(n) => setEntry("min_price", n)} />
-        </label>
-        <label>
-          Max share price ($, 0 = none) <InfoTip k="share_price_band" />
-          <NumberField step="any" min="0" value={p.entry.max_price ?? 0}
-            onChange={(n) => setEntry("max_price", n)} />
-        </label>
-        <label className="check">
-          <input type="checkbox" checked={p.entry.require_above_vwap}
-            onChange={(e) => setEntry("require_above_vwap", e.target.checked)} />
-          Require price above VWAP <InfoTip k="vwap" />
-        </label>
-        <label className="check">
-          <input type="checkbox" checked={!!p.entry.require_macd_bullish}
-            onChange={(e) => setEntry("require_macd_bullish", e.target.checked)} />
-          Require bullish MACD to enter <InfoTip k="macd" />
-        </label>
-        <label className="check">
-          <input
-            type="checkbox"
-            checked={!!(p.entry.entry_window_start && p.entry.entry_window_end)}
-            onChange={(e) => {
-              if (e.target.checked) {
-                setEntry("entry_window_start", "09:30");
-                setEntry("entry_window_end", "15:30");
-              } else {
-                setEntry("entry_window_start", null);
-                setEntry("entry_window_end", null);
-              }
-            }}
-          />
-          Limit entries to a time window (ET) <InfoTip k="entry_window" />
-        </label>
-        {p.entry.entry_window_start && p.entry.entry_window_end && (
-          <>
-            <label>
-              Entry window start (ET)
-              <input type="time" value={p.entry.entry_window_start}
-                onChange={(e) => setEntry("entry_window_start", e.target.value || null)} />
-            </label>
-            <label>
-              Entry window end (ET)
-              <input type="time" value={p.entry.entry_window_end}
-                onChange={(e) => setEntry("entry_window_end", e.target.value || null)} />
-            </label>
-          </>
         )}
-      </div>
+      </section>
 
-      <h4>Exit rules — "the configurable downturn"</h4>
-      <div className="filter-grid">
-        <label>
-          Trailing stop (%) <InfoTip k="trailing_stop" />
-          <NumberField step="0.1" min="0.5" value={p.exit.trailing_stop_pct}
-            onChange={(n) => setExit("trailing_stop_pct", n)} />
-        </label>
-        <label>
-          Stop-loss (%) — required <InfoTip k="stop_loss" />
-          <NumberField step="0.1" min="0.1" value={p.exit.stop_loss_pct}
-            onChange={(n) => setExit("stop_loss_pct", n)} />
-        </label>
-        <label>
-          Take-profit (%, 0 = off) <InfoTip k="take_profit" />
-          <NumberField step="0.1" min="0" value={p.exit.take_profit_pct}
-            onChange={(n) => setExit("take_profit_pct", n)} />
-        </label>
-        <label>
-          Max holding time (hours, 0 = off) <InfoTip k="max_holding" />
-          <NumberField step="1" min="0" value={p.exit.max_holding_hours}
-            onChange={(n) => setExit("max_holding_hours", n)} />
-        </label>
-        <label className="check">
-          <input type="checkbox" checked={p.exit.exit_below_vwap}
-            onChange={(e) => setExit("exit_below_vwap", e.target.checked)} />
-          Exit if price falls below VWAP <InfoTip k="vwap" />
-        </label>
-        <label className="check">
-          <input type="checkbox" checked={!!p.exit.exit_on_macd_bearish}
-            onChange={(e) => setExit("exit_on_macd_bearish", e.target.checked)} />
-          Exit when MACD turns bearish <InfoTip k="macd" />
-        </label>
-        {s.universe === "basket" && (
+      {/* 3 — ENTRY: when to buy */}
+      <section className="builder-sec">
+        <h4 className="builder-head">Entry criteria</h4>
+        <p className="sec-sub">When the strategy is allowed to buy.</p>
+        <div className="param-grid">
+          <Param label="Min gain today (%)" tip="min_day_gain">
+            <NumberField step="0.1" min="0" value={p.entry.min_day_gain_pct}
+              onChange={(n) => setEntry("min_day_gain_pct", n)} />
+          </Param>
+        </div>
+        <div className="check-row">
           <label className="check">
-            <input type="checkbox" checked={!!p.exit.rotate_on_rank_dropout}
-              onChange={(e) => setExit("rotate_on_rank_dropout", e.target.checked)} />
-            Rotate out when it leaves the top {s.top_n} <InfoTip k="rotate_on_rank_dropout" />
+            <input type="checkbox" checked={p.entry.require_above_vwap}
+              onChange={(e) => setEntry("require_above_vwap", e.target.checked)} />
+            Require price above VWAP <InfoTip k="vwap" />
           </label>
-        )}
-      </div>
-
-      {macdOn && (
-        <details className="macd-advanced">
-          <summary>
-            Advanced — MACD periods <InfoTip k="macd" />
-          </summary>
-          <div className="filter-grid">
-            <label>
-              MACD fast
-              <NumberField step="1" min="1" value={macd.fast} onChange={(n) => setMacd("fast", n)} />
-            </label>
-            <label>
-              MACD slow
-              <NumberField step="1" min="2" value={macd.slow} onChange={(n) => setMacd("slow", n)} />
-            </label>
-            <label>
-              MACD signal
-              <NumberField step="1" min="1" value={macd.signal} onChange={(n) => setMacd("signal", n)} />
-            </label>
-          </div>
-        </details>
-      )}
-
-      <h4>Sizing & safety</h4>
-      <div className="filter-grid">
-        <label>
-          $ per trade <InfoTip k="sizing" />
-          <NumberField step="any" min="10" value={s.sizing_usd!}
-            onChange={(n) => setS({ ...s, sizing_usd: n })} />
-        </label>
-        <label>
-          Sleeve budget ($) <InfoTip k="sleeve" />
-          <NumberField step="any" min="10" value={s.sleeve_usd!}
-            onChange={(n) => setS({ ...s, sleeve_usd: n })} />
-        </label>
-        <label>
-          Max positions (this strategy) <InfoTip k="max_positions" />
-          <NumberField step="1" min="1" max="25" value={s.max_positions!}
-            onChange={(n) => setS({ ...s, max_positions: n })} />
-        </label>
-        <label>
-          Trading style <InfoTip k="swing_mode" />
-          <select value={tradingStyle} onChange={(e) => setStyle(e.target.value as "swing" | "intraday")}>
-            <option value="swing">Swing — hold overnight, exit over days</option>
-            <option value="intraday">
-              Intraday — {s.asset_class === "stock" ? "flatten before the close, " : ""}no overnight hold
-            </option>
-          </select>
-        </label>
-        {/* The regime filter is a stocks-only gate (S&P 500 vs its 200-day MA),
-            so this toggle does nothing for a crypto strategy — hide it there. */}
-        {s.asset_class === "stock" && (
           <label className="check">
-            <input type="checkbox" checked={s.ignore_regime}
-              onChange={(e) => setS({ ...s, ignore_regime: e.target.checked })} />
-            Ignore regime filter (not recommended) <InfoTip k="regime_filter" />
-          </label>
-        )}
-      </div>
-
-      <div className="atr-section">
-        <h5>
-          Volatility-based stops &amp; sizing (ATR) <InfoTip k="atr" />
-        </h5>
-        <div className="filter-grid">
-          <label>
-            ATR stop (× ATR, 0 = off) <InfoTip k="atr_stop" />
-            <NumberField step="0.1" min="0" max="20" value={atr.stop_mult}
-              onChange={(n) => setAtr("stop_mult", n)} />
-          </label>
-          <label>
-            Risk $ per trade (ATR sizing, 0 = off) <InfoTip k="atr_risk" />
-            <NumberField step="any" min="0" value={atr.risk_usd}
-              onChange={(n) => setAtr("risk_usd", n)} />
+            <input type="checkbox" checked={!!p.entry.require_macd_bullish}
+              onChange={(e) => setEntry("require_macd_bullish", e.target.checked)} />
+            Require bullish MACD <InfoTip k="macd" />
           </label>
         </div>
-        {atrOn && (
-          <details className="macd-advanced">
-            <summary>
-              Advanced — ATR period <InfoTip k="atr_period" />
-            </summary>
-            <div className="filter-grid">
-              <label>
-                ATR period (days)
-                <NumberField step="1" min="2" max="100" value={atr.period}
-                  onChange={(n) => setAtr("period", n)} />
+
+        <details className="adv">
+          <summary>Advanced entry options</summary>
+          <div className="param-grid">
+            <Param label="Max gain today (%, 0 = off)" tip="max_day_gain">
+              <NumberField step="0.1" min="0" value={p.entry.max_day_gain_pct ?? 0}
+                onChange={(n) => setEntry("max_day_gain_pct", n)} />
+            </Param>
+            <Param label="Min share price ($, 0 = any)" tip="share_price_band">
+              <NumberField step="any" min="0" value={p.entry.min_price ?? 0}
+                onChange={(n) => setEntry("min_price", n)} />
+            </Param>
+            <Param label="Max share price ($, 0 = none)" tip="share_price_band">
+              <NumberField step="any" min="0" value={p.entry.max_price ?? 0}
+                onChange={(n) => setEntry("max_price", n)} />
+            </Param>
+            <Param label="Entry slippage (%)" tip="entry_slippage">
+              <NumberField step="0.1" min="0" max="5" value={p.entry.entry_slippage_pct ?? 0.5}
+                onChange={(n) => setEntry("entry_slippage_pct", n)} />
+            </Param>
+          </div>
+          <div className="check-row">
+            <label className="check">
+              <input
+                type="checkbox"
+                checked={windowOn}
+                onChange={(e) => {
+                  if (e.target.checked) {
+                    setEntry("entry_window_start", "09:30");
+                    setEntry("entry_window_end", "15:30");
+                  } else {
+                    setEntry("entry_window_start", null);
+                    setEntry("entry_window_end", null);
+                  }
+                }}
+              />
+              Limit entries to a time window (ET) <InfoTip k="entry_window" />
+            </label>
+          </div>
+          {windowOn && (
+            <div className="param-grid">
+              <Param label="Window start (ET)">
+                <input type="time" value={p.entry.entry_window_start!}
+                  onChange={(e) => setEntry("entry_window_start", e.target.value || null)} />
+              </Param>
+              <Param label="Window end (ET)">
+                <input type="time" value={p.entry.entry_window_end!}
+                  onChange={(e) => setEntry("entry_window_end", e.target.value || null)} />
+              </Param>
+            </div>
+          )}
+          {macdOn && (
+            <div className="param-grid">
+              <Param label="MACD fast" tip="macd">
+                <NumberField step="1" min="1" value={macd.fast} onChange={(n) => setMacd("fast", n)} />
+              </Param>
+              <Param label="MACD slow" tip="macd">
+                <NumberField step="1" min="2" value={macd.slow} onChange={(n) => setMacd("slow", n)} />
+              </Param>
+              <Param label="MACD signal" tip="macd">
+                <NumberField step="1" min="1" value={macd.signal} onChange={(n) => setMacd("signal", n)} />
+              </Param>
+            </div>
+          )}
+        </details>
+      </section>
+
+      {/* 4 — EXIT: when to sell */}
+      <section className="builder-sec">
+        <h4 className="builder-head">Exit criteria</h4>
+        <p className="sec-sub">When to sell — "the configurable downturn".</p>
+        <div className="param-grid">
+          <Param label="Trailing stop (%)" tip="trailing_stop">
+            <NumberField step="0.1" min="0.5" value={p.exit.trailing_stop_pct}
+              onChange={(n) => setExit("trailing_stop_pct", n)} />
+          </Param>
+          <Param label="Stop-loss (%) — required" tip="stop_loss">
+            <NumberField step="0.1" min="0.1" value={p.exit.stop_loss_pct}
+              onChange={(n) => setExit("stop_loss_pct", n)} />
+          </Param>
+          <Param label="Take-profit (%, 0 = off)" tip="take_profit">
+            <NumberField step="0.1" min="0" value={p.exit.take_profit_pct}
+              onChange={(n) => setExit("take_profit_pct", n)} />
+          </Param>
+        </div>
+
+        <details className="adv">
+          <summary>Advanced exit options</summary>
+          <div className="param-grid">
+            <Param label="Max holding time (hrs, 0 = off)" tip="max_holding">
+              <NumberField step="1" min="0" value={p.exit.max_holding_hours}
+                onChange={(n) => setExit("max_holding_hours", n)} />
+            </Param>
+            <Param label="Exit slippage (%)" tip="exit_slippage">
+              <NumberField step="0.1" min="0" max="10" value={p.exit.exit_slippage_pct ?? 1}
+                onChange={(n) => setExit("exit_slippage_pct", n)} />
+            </Param>
+            <Param label="Max exit slippage (%)" tip="exit_slippage">
+              <NumberField step="0.1" min="0" max="20" value={p.exit.exit_slippage_max_pct ?? 1}
+                onChange={(n) => setExit("exit_slippage_max_pct", n)} />
+            </Param>
+          </div>
+          <div className="check-row">
+            <label className="check">
+              <input type="checkbox" checked={p.exit.exit_below_vwap}
+                onChange={(e) => setExit("exit_below_vwap", e.target.checked)} />
+              Exit if price falls below VWAP <InfoTip k="vwap" />
+            </label>
+            <label className="check">
+              <input type="checkbox" checked={!!p.exit.exit_on_macd_bearish}
+                onChange={(e) => setExit("exit_on_macd_bearish", e.target.checked)} />
+              Exit when MACD turns bearish <InfoTip k="macd" />
+            </label>
+            {s.universe === "basket" && (
+              <label className="check">
+                <input type="checkbox" checked={!!p.exit.rotate_on_rank_dropout}
+                  onChange={(e) => setExit("rotate_on_rank_dropout", e.target.checked)} />
+                Rotate out when it leaves the top {s.top_n} <InfoTip k="rotate_on_rank_dropout" />
+              </label>
+            )}
+          </div>
+        </details>
+      </section>
+
+      {/* 5 — SIZING & RISK: how much, and the safety knobs */}
+      <section className="builder-sec">
+        <h4 className="builder-head">Sizing &amp; risk</h4>
+        <p className="sec-sub">How much to commit, and the safety rails.</p>
+        <div className="param-grid">
+          <Param label="$ per trade" tip="sizing">
+            <NumberField step="any" min="10" value={s.sizing_usd!} onChange={(n) => setS({ ...s, sizing_usd: n })} />
+          </Param>
+          <Param label="Sleeve budget ($)" tip="sleeve">
+            <NumberField step="any" min="10" value={s.sleeve_usd!} onChange={(n) => setS({ ...s, sleeve_usd: n })} />
+          </Param>
+          <Param label="Max positions" tip="max_positions">
+            <NumberField step="1" min="1" max="25" value={s.max_positions!}
+              onChange={(n) => setS({ ...s, max_positions: n })} />
+          </Param>
+        </div>
+
+        <details className="adv">
+          <summary>Advanced — volatility stops &amp; sizing (ATR)</summary>
+          <div className="param-grid">
+            <Param label="ATR stop (× ATR, 0 = off)" tip="atr_stop">
+              <NumberField step="0.1" min="0" max="20" value={atr.stop_mult}
+                onChange={(n) => setAtr("stop_mult", n)} />
+            </Param>
+            <Param label="Risk $ per trade (0 = off)" tip="atr_risk">
+              <NumberField step="any" min="0" value={atr.risk_usd} onChange={(n) => setAtr("risk_usd", n)} />
+            </Param>
+            <Param label="ATR period (days)" tip="atr_period">
+              <NumberField step="1" min="2" max="100" value={atr.period} onChange={(n) => setAtr("period", n)} />
+            </Param>
+          </div>
+          {s.asset_class === "stock" && (
+            <div className="check-row">
+              <label className="check">
+                <input type="checkbox" checked={s.ignore_regime}
+                  onChange={(e) => setS({ ...s, ignore_regime: e.target.checked })} />
+                Ignore regime filter (not recommended) <InfoTip k="regime_filter" />
               </label>
             </div>
-          </details>
-        )}
-      </div>
-
-      <h4>
-        Advanced — order fills <InfoTip k="order_fills" />
-      </h4>
-      <div className="filter-grid">
-        <label>
-          Entry slippage (%) <InfoTip k="entry_slippage" />
-          <NumberField step="0.1" min="0" max="5" value={p.entry.entry_slippage_pct ?? 0.5}
-            onChange={(n) => setEntry("entry_slippage_pct", n)} />
-        </label>
-        <label>
-          Exit slippage (%) <InfoTip k="exit_slippage" />
-          <NumberField step="0.1" min="0" max="10" value={p.exit.exit_slippage_pct ?? 1}
-            onChange={(n) => setExit("exit_slippage_pct", n)} />
-        </label>
-        <label>
-          Max exit slippage (%) <InfoTip k="exit_slippage" />
-          <NumberField step="0.1" min="0" max="20" value={p.exit.exit_slippage_max_pct ?? 1}
-            onChange={(n) => setExit("exit_slippage_max_pct", n)} />
-        </label>
-      </div>
+          )}
+        </details>
+      </section>
 
       <p className={`sleeve-readout${overAllocated ? " over" : ""}`}>
         All strategy sleeves total <strong>{money(totalSleeves)}</strong>

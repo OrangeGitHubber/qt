@@ -3,6 +3,28 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Strategy builder redesigned — grouped sections, compact fields (2026-07-28)
+
+The strategy builder had grown into one long scroll where every new option was
+bolted on at the bottom, each explanation sat as a wall of text, and a single
+"3%" value got a text box as wide as the screen. It's been rebuilt around how you
+actually think about a strategy:
+
+- **Five clear sections**, each an outlined card with a one-line subtitle:
+  **Start here** (preset, name, asset class, trading style) → **Universe** →
+  **Entry criteria** → **Exit criteria** → **Sizing & risk**.
+- **Common controls first, rarer knobs tucked away.** Each of Entry, Exit and
+  Sizing has an **Advanced** drop-down: advanced entry (max gain, price band,
+  entry window, entry slippage, MACD periods), advanced exit (max holding, exit
+  slippage, VWAP/MACD/rotation exits), and advanced sizing (the ATR volatility
+  stops & sizing plus the regime override).
+- **Value-sized inputs.** A percentage now gets a small box, and related numbers
+  sit side by side as a set instead of a stack of full-width slabs.
+- **Asset class and trading style are sliders**, not dropdowns.
+- The explanatory text is all still there — now in the **?** bubbles next to each
+  field, so the form stays scannable and a newcomer isn't hit with a wall of
+  prose before they've started.
+
 ## Symbol chart: toggleable review overlays (MACD, RS, markers, and more) (2026-07-28)
 
 Click any symbol (watchlist, scanner, backtest) and the detail chart now has a
