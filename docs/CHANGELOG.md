@@ -3,6 +3,19 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Watchlist "Trend" sparkline now shows the 30-day daily trend (2026-07-28)
+
+The little trend line next to each watchlist symbol used to be built from
+15-minute **intraday** bars. On the free IEX data feed those bars are thin —
+empty outside market hours and sparse for many stocks — so most rows just said
+"no data", and the few that had a line often looked flat. Crypto (which trades
+24/7) was fine; stocks were the problem.
+
+It now draws the **last ~30 daily closes** instead — daily bars exist for every
+tradable symbol and don't depend on the intraday feed, so every row gets a real
+trend line regardless of the time of day. The column is relabelled **"Trend
+(30d)"**. Green means the period ended higher than it started, red lower.
+
 ## Fix: MACD and rotation settings were silently dropped on save (2026-07-27)
 
 The MACD entry/exit toggles (and their periods) and the sector-rotation

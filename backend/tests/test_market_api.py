@@ -87,9 +87,11 @@ def test_watchlist_add_trusts_local_directory_without_api_call(client, configure
 
 
 def test_bars_endpoint(client, configured):
-    bars = {"AAPL": [{"t": "2026-07-11T15:00:00Z", "c": 202.0, "v": 10}, {"t": "2026-07-11T14:45:00Z", "c": 201.0, "v": 12}]}
-    with patch.object(AlpacaClient, "stock_bars", new=AsyncMock(return_value=bars)):
+    # The sparkline now uses daily bars (historical_bars, oldest-first) rather
+    # than the thin intraday feed, so most stocks actually get a trend line.
+    bars = {"AAPL": [{"t": "2026-07-10T00:00:00Z", "c": 201.0}, {"t": "2026-07-11T00:00:00Z", "c": 202.0}]}
+    with patch.object(AlpacaClient, "historical_bars", new=AsyncMock(return_value=bars)):
         body = client.get("/api/market/bars", params={"symbol": "aapl"}).json()
     assert body["symbol"] == "AAPL"
-    # flipped to oldest-first for charting
+    # oldest-first, as returned
     assert [b["c"] for b in body["bars"]] == [201.0, 202.0]

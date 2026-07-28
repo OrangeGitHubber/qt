@@ -226,14 +226,19 @@ async def bars(
     asset_class: str = "stock",
     client: AlpacaClient = Depends(require_client),
 ) -> dict:
+    """Recent trend for the watchlist sparkline: the last ~30 DAILY closes.
+
+    Daily bars exist for every tradable symbol and don't depend on the thin
+    free intraday (IEX) feed, which is empty off-hours and sparse for many
+    stocks — that gap is what made the old 15-min sparkline show "no data".
+    We over-fetch ~50 calendar days (weekends/holidays have no bars) and keep
+    the last 30 sessions."""
     symbol = symbol.upper()
+    start = (datetime.now(timezone.utc) - timedelta(days=50)).strftime("%Y-%m-%dT%H:%M:%SZ")
     try:
-        if asset_class == "crypto":
-            data = await client.crypto_bars([symbol])
-        else:
-            data = await client.stock_bars([symbol])
+        data = await client.historical_bars([symbol], asset_class, "1Day", start)
     except AlpacaError as exc:
         raise HTTPException(status_code=502, detail=f"Bar fetch failed ({exc.status_code}): {exc}")
-    # Bars arrive newest-first (sort=desc); flip for charting.
-    series = list(reversed(data.get(symbol, [])))
-    return {"symbol": symbol, "bars": [{"t": b["t"], "c": b["c"]} for b in series]}
+    # historical_bars returns oldest-first; keep the last 30 sessions.
+    series = (data.get(symbol) or [])[-30:]
+    return {"symbol": symbol, "bars": [{"t": b["t"], "c": float(b["c"])} for b in series]}

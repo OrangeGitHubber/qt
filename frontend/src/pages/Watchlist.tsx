@@ -152,7 +152,7 @@ export default function Watchlist() {
                     <SortHead k="vs_sma200_pct" label="vs 200d avg" tip="sma200" />
                   </>
                 )}
-                <th>Trend (15m bars)</th>
+                <th title="Last ~30 daily closes">Trend (30d)</th>
                 <th></th>
               </tr>
             </thead>
