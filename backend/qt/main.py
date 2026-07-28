@@ -16,6 +16,7 @@ from qt.api import (
     backtest,
     barcache as barcache_api,
     baskets,
+    broker as broker_api,
     engine as engine_api,
     market,
     optimizer as optimizer_api,
@@ -236,6 +237,7 @@ app.include_router(status.router)  # /api/health public; /api/status gated in-mo
 app.include_router(market.router, dependencies=[Depends(require_user)])
 app.include_router(strategies.router, dependencies=[Depends(require_user)])
 app.include_router(engine_api.router, dependencies=[Depends(require_user)])
+app.include_router(broker_api.router, dependencies=[Depends(require_user)])
 app.include_router(backtest.router, dependencies=[Depends(require_user)])
 app.include_router(assets_api.router, dependencies=[Depends(require_user)])
 app.include_router(baskets.router, dependencies=[Depends(require_user)])

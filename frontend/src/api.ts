@@ -732,3 +732,9 @@ export function saveAlpacaKeys(keyId: string, keySecret: string) {
     body: JSON.stringify({ key_id: keyId, key_secret: keySecret }),
   }).then((r) => handle<{ ok: boolean; account_number: string; status: string }>(r));
 }
+
+export function liquidateAll() {
+  return fetch("/api/broker/liquidate", { method: "POST" }).then((r) =>
+    handle<{ ok: boolean; positions_closed: number; trades_reconciled: number; orphans_cleared: string[] }>(r),
+  );
+}

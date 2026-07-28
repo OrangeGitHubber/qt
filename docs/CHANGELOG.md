@@ -21,6 +21,26 @@ the Baskets screen. A handful of energy/materials names in the sector lists have
 since been acquired or merged away (Pioneer/PXD, Marathon Oil/MRO, WestRock/WRK) —
 they're included as given but may not trade on Alpaca, so prune them if you like.
 
+## Settings → Broker connection: switch accounts & liquidate everything (2026-07-28)
+
+You can now manage the Alpaca connection AFTER first-run, from **Settings →
+Broker connection** — previously the keys could only be entered once in the setup
+wizard. Two things live here:
+
+- **Change / replace API keys** — paste a different Alpaca paper (or live) key
+  pair to point QT at another account. QT verifies them against Alpaca before
+  saving (same validation as first-run). Use it to move to a fresh paper account.
+- **Liquidate all holdings** (danger zone) — closes **every** position at the
+  broker at market, *including any QT doesn't track* (the "orphan" holdings the
+  reconciliation warnings flag), cancels resting orders, and marks QT's own open
+  trades closed. It's the clean-slate button for starting over. Gated behind
+  typing **LIQUIDATE** to confirm; it fires a Slack alert and an audit entry, and
+  reports how many positions closed and how many were orphans.
+
+The intended "start fresh" flow: pause the engine → liquidate → replace the API
+keys with the new account. (Cashing out at Alpaca itself is done in Alpaca, not
+here.)
+
 ## Symbol chart overlays: clearer colors, ? explainers, and "good zone" shading (2026-07-28)
 
 Polish on the symbol-detail review chart, from testing feedback:

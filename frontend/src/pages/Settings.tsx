@@ -10,8 +10,12 @@ import {
   getBarCacheStatus,
   getEngine,
   getSlackPrefs,
+  getStatus,
+  liquidateAll,
   removeAllowlist,
   RiskConfig,
+  saveAlpacaKeys,
+  StatusResponse,
   runBarSweep,
   runBarReconstruct,
   runIntradaySweep,
@@ -65,6 +69,14 @@ export default function Settings() {
   const [bars, setBars] = useState<BarCacheStatus | null>(null);
   const [showFresh, setShowFresh] = useState(false);
   const [note, setNote] = useState<string | null>(null);
+  // Broker connection: current account + replace-keys form + liquidation.
+  const [status, setStatus] = useState<StatusResponse | null>(null);
+  const [keyId, setKeyId] = useState("");
+  const [keySecret, setKeySecret] = useState("");
+  const [brokerBusy, setBrokerBusy] = useState(false);
+  const [showKeyForm, setShowKeyForm] = useState(false);
+  const [liqConfirm, setLiqConfirm] = useState("");
+  const [liqBusy, setLiqBusy] = useState(false);
 
   // The status endpoint nulls the persisted cache totals while a sweep runs (to
   // avoid counting rows on every 3s poll). Retain the last-known totals so a run
@@ -83,6 +95,7 @@ export default function Settings() {
     getAssetStatus().then(setAssetStatus).catch(() => setAssetStatus(null));
     getBarCacheStatus().then(setBars).catch(() => setBars(null));
     getSlackPrefs().then(setSlackPrefsState).catch(() => setSlackPrefsState(null));
+    getStatus().then(setStatus).catch(() => setStatus(null));
   }, []);
 
   useEffect(refresh, [refresh]);
@@ -93,6 +106,43 @@ export default function Settings() {
     const t = setInterval(() => getBarCacheStatus().then(setBars).catch(() => {}), 3000);
     return () => clearInterval(t);
   }, [bars?.running]);
+
+  async function replaceKeys(e: FormEvent) {
+    e.preventDefault();
+    setNote(null);
+    setBrokerBusy(true);
+    try {
+      const res = await saveAlpacaKeys(keyId.trim(), keySecret.trim());
+      setKeyId("");
+      setKeySecret("");
+      setShowKeyForm(false);
+      await new Promise((r) => setTimeout(r, 150));
+      refresh();
+      setNote(`Connected to Alpaca account ${res.account_number} (${res.status}).`);
+    } catch (err) {
+      setNote((err as Error).message);
+    } finally {
+      setBrokerBusy(false);
+    }
+  }
+
+  async function doLiquidate() {
+    setNote(null);
+    setLiqBusy(true);
+    try {
+      const res = await liquidateAll();
+      setLiqConfirm("");
+      refresh();
+      const orphans = res.orphans_cleared.length ? ` (${res.orphans_cleared.length} were orphans QT didn't track)` : "";
+      setNote(
+        `Liquidated: closed ${res.positions_closed} position(s)${orphans}, reconciled ${res.trades_reconciled} open trade(s).`,
+      );
+    } catch (err) {
+      setNote((err as Error).message);
+    } finally {
+      setLiqBusy(false);
+    }
+  }
 
   async function runSweep() {
     setNote(null);
@@ -209,6 +259,99 @@ export default function Settings() {
           {note}
         </div>
       )}
+
+      <div className="card">
+        <h3>Broker connection</h3>
+        {status?.broker ? (
+          <dl className="cache-metrics">
+            <dt>Account</dt>
+            <dd>
+              {status.broker.account_number} · {status.broker.status}
+            </dd>
+            <dt>Equity</dt>
+            <dd>${Number(status.broker.equity).toLocaleString(undefined, { maximumFractionDigits: 2 })}</dd>
+            <dt>Cash</dt>
+            <dd>${Number(status.broker.cash).toLocaleString(undefined, { maximumFractionDigits: 2 })}</dd>
+            <dt>Mode</dt>
+            <dd>Paper</dd>
+          </dl>
+        ) : (
+          <p className="hint">
+            {status?.alpaca_configured
+              ? "Keys are saved, but the account couldn't be read right now."
+              : "No Alpaca keys saved yet."}
+          </p>
+        )}
+
+        {!showKeyForm ? (
+          <button type="button" className="small" onClick={() => setShowKeyForm(true)}>
+            Change / replace API keys
+          </button>
+        ) : (
+          <form onSubmit={replaceKeys} style={{ marginTop: "0.5rem" }}>
+            <p className="hint">
+              Paste a different Alpaca <strong>paper</strong> (or live) key pair to point QT at another account — QT
+              verifies them against Alpaca before saving. If you're <strong>switching accounts</strong>, pause the
+              engine and liquidate first: your current open trades reference the old account.
+            </p>
+            <label>
+              API key ID
+              <input value={keyId} onChange={(e) => setKeyId(e.target.value)} autoComplete="off" required />
+            </label>
+            <label>
+              API secret
+              <input
+                type="password"
+                value={keySecret}
+                onChange={(e) => setKeySecret(e.target.value)}
+                autoComplete="off"
+                required
+              />
+            </label>
+            <div className="toolbar">
+              <button disabled={brokerBusy}>{brokerBusy ? "Verifying…" : "Verify & save"}</button>
+              <button
+                type="button"
+                className="small btn-ghost"
+                onClick={() => {
+                  setShowKeyForm(false);
+                  setKeyId("");
+                  setKeySecret("");
+                }}
+              >
+                Cancel
+              </button>
+            </div>
+          </form>
+        )}
+
+        <div className="atr-section">
+          <h5>Danger zone — liquidate all holdings</h5>
+          <p className="hint">
+            Closes <strong>every</strong> position at the broker (at market) — including any QT doesn't track
+            (orphans) — cancels resting orders, and marks QT's open trades closed. Use it to start fresh, e.g. before
+            switching accounts. It does <strong>not</strong> touch your cash or the account itself, but the position
+            closes <strong>cannot be undone</strong>. Pause the engine first so it doesn't re-buy.
+          </p>
+          <label>
+            Type <strong>LIQUIDATE</strong> to confirm
+            <input
+              value={liqConfirm}
+              onChange={(e) => setLiqConfirm(e.target.value)}
+              placeholder="LIQUIDATE"
+              autoComplete="off"
+            />
+          </label>
+          <button
+            type="button"
+            className="small danger"
+            disabled={liqBusy || liqConfirm !== "LIQUIDATE"}
+            onClick={doLiquidate}
+          >
+            {liqBusy ? "Liquidating…" : "Liquidate all holdings"}
+          </button>
+        </div>
+      </div>
 
       <form className="card" onSubmit={saveRisk}>
         <h3>Risk rails (apply to every strategy, every mode)</h3>

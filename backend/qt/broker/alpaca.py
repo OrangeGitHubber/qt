@@ -139,6 +139,15 @@ class AlpacaClient:
         """All open positions the broker currently holds."""
         return await self._get("/v2/positions") or []
 
+    async def close_all_positions(self, cancel_orders: bool = True) -> list[dict[str, Any]]:
+        """Liquidate EVERY open position (at market) and, by default, cancel any
+        resting orders — the manual "flatten the whole account" action. This
+        deliberately uses the broker's bulk close (market orders), not our usual
+        marketable-limit path, because the intent is a guaranteed exit / clean
+        slate, not price optimisation. Alpaca returns 207 multi-status; each item
+        is one symbol's {symbol, status, ...} result."""
+        return await self._delete(f"/v2/positions?cancel_orders={'true' if cancel_orders else 'false'}") or []
+
     async def list_orders(self, status: str = "open", limit: int = 500) -> list[dict[str, Any]]:
         """Orders by status ('open' | 'closed' | 'all'). Used for reconciliation."""
         return await self._get("/v2/orders", params={"status": status, "limit": limit}) or []
