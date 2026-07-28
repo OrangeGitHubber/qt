@@ -142,6 +142,33 @@ def test_strategy_holdings_lists_open_positions(client):
     client.delete(f"/api/strategies/{sid}")
 
 
+def test_strategy_last_run_endpoint(client):
+    from qt.services import engine
+
+    sid = client.post("/api/strategies", json=_body()).json()["id"]
+    # Nothing recorded yet.
+    assert client.get(f"/api/strategies/{sid}/last-run").json()["ran"] is False
+
+    # Populate a trace exactly as the engine's entry loop would.
+    engine._last_run[sid] = {
+        "strategy_id": sid, "strategy_name": "x", "ran_at": "2026-07-28T00:00:00Z", "mode": "paper",
+        "universe": "Top 3 of the “IT” basket, ranked by today's % move — only these are evaluated; the other members aren't.",
+        "outcome": "Evaluated 1 candidate(s); bought 0.",
+        "candidates": [
+            {"symbol": "NVDA", "price": 120.0, "change_pct": 4.1, "macd_bullish": False,
+             "decision": "skipped", "reason": "MACD not bullish — line ≤ signal (bearish)"},
+        ],
+    }
+    r = client.get(f"/api/strategies/{sid}/last-run").json()
+    assert r["ran"] is True
+    assert r["outcome"].startswith("Evaluated")
+    assert r["candidates"][0]["decision"] == "skipped"
+    assert "MACD" in r["candidates"][0]["reason"]
+
+    engine._last_run.pop(sid, None)
+    client.delete(f"/api/strategies/{sid}")
+
+
 def test_presets_available(client):
     presets = client.get("/api/strategies/presets").json()
     assert "momentum_swing_stocks" in presets

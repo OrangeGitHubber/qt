@@ -21,6 +21,27 @@ the Baskets screen. A handful of energy/materials names in the sector lists have
 since been acquired or merged away (Pioneer/PXD, Marathon Oil/MRO, WestRock/WRK) —
 they're included as given but may not trade on Alpaca, so prune them if you like.
 
+## Strategies: "Last run" — see exactly why a strategy did (or didn't) buy (2026-07-28)
+
+Every strategy card gains an expandable **"Last run — why it did / didn't buy"**
+section: the engine now records a decision trace each entry cycle, and this shows
+the most recent one. It tells you:
+
+- **When** it last ran and **where it looks** for candidates — including the
+  crucial "top N of the basket, ranked by X — only these are evaluated" line, so
+  it's obvious when a name you expected (e.g. AAPL) wasn't even considered because
+  it's not in the top-N.
+- A one-line **outcome** (e.g. "Regime filter blocked stock entries", "Market
+  closed", "Evaluated 3 candidate(s); bought 0").
+- A per-symbol table: each candidate it evaluated, its day move, the **decision**
+  (bought / skipped / blocked) and the **why** in plain English — "MACD not
+  bullish", "price not above VWAP", "day gain 0.30% < required 0.50%", "wanted to
+  buy but max positions reached", etc.
+
+Backed by a new `GET /api/strategies/{id}/last-run`. The trace is in-memory (it
+resets when the app restarts) and building it never affects trading — the entry
+loop is wrapped so a trace hiccup can't change a decision.
+
 ## Strategies: see the holdings each strategy currently owns (2026-07-28)
 
 Every strategy card now has an expandable **Holdings (N)** section (shown when it

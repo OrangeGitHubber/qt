@@ -8,9 +8,11 @@ import {
   getStatus,
   getStrategies,
   getStrategyHoldings,
+  getStrategyLastRun,
   Preset,
   RankBy,
   StrategyHoldings,
+  StrategyLastRun,
   StrategyRow,
   toggleStrategy,
   updateStrategy,
@@ -181,6 +183,85 @@ function HoldingsView({ strategyId, count }: { strategyId: number; count: number
               <span className={data.total_unrealized_pnl >= 0 ? "up" : "down"}>{money(data.total_unrealized_pnl)}</span>
               {" "}(prices may lag a little)
             </p>
+          )}
+        </>
+      )}
+    </details>
+  );
+}
+
+// "Last run" debug view: the engine's most recent decision trace for a strategy
+// — what it looked at each cycle and why it did (or didn't) buy. Reloads on each
+// expand to show the latest.
+function LastRunView({ strategyId }: { strategyId: number }) {
+  const [data, setData] = useState<StrategyLastRun | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  function load() {
+    if (loading) return;
+    setLoading(true);
+    setErr(null);
+    getStrategyLastRun(strategyId)
+      .then(setData)
+      .catch((e: Error) => setErr(e.message))
+      .finally(() => setLoading(false));
+  }
+
+  const badge = (d: string) =>
+    d === "bought" ? "up" : d === "blocked" ? "down" : "";
+
+  return (
+    <details
+      className="lastrun"
+      onToggle={(e) => {
+        if ((e.target as HTMLDetailsElement).open) load();
+      }}
+    >
+      <summary>Last run — why it did / didn't buy</summary>
+      {loading && <p className="hint">Loading…</p>}
+      {err && <div className="error">{err}</div>}
+      {data && !data.ran && (
+        <p className="hint">
+          Hasn't run yet since the app started. Enable it and turn the engine on, then check back after a cycle
+          (~1 min).
+        </p>
+      )}
+      {data && data.ran && (
+        <>
+          <p className="hint">
+            Ran <strong>{data.ran_at ? new Date(data.ran_at).toLocaleString() : "—"}</strong>
+            {data.universe ? <> · looks in: {data.universe}</> : null}
+          </p>
+          <p className="hint">
+            <strong>{data.outcome}</strong>
+          </p>
+          {data.candidates && data.candidates.length > 0 && (
+            <div className="table-scroll">
+              <table className="holdings-table lastrun-table">
+                <thead>
+                  <tr>
+                    <th>Symbol</th>
+                    <th>Day</th>
+                    <th>Decision</th>
+                    <th className="why">Why</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.candidates.map((c, i) => (
+                    <tr key={i}>
+                      <td>{c.symbol}</td>
+                      <td className={c.change_pct >= 0 ? "up" : "down"}>
+                        {c.change_pct >= 0 ? "+" : ""}
+                        {c.change_pct}%
+                      </td>
+                      <td className={badge(c.decision)}>{c.decision}</td>
+                      <td className="why">{c.reason}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           )}
         </>
       )}
@@ -799,6 +880,7 @@ export default function Strategies() {
           </dd>
         </dl>
         {(r.open_trades ?? 0) > 0 && <HoldingsView strategyId={r.id} count={r.open_trades ?? 0} />}
+        <LastRunView strategyId={r.id} />
         <div className="card-actions">
           <button
             className={`small ${r.enabled ? "btn-pause" : "btn-enable"}`}

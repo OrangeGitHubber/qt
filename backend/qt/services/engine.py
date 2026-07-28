@@ -654,6 +654,54 @@ async def _manage_exits(
 # One-time log guard so the persistence-freeze warning doesn't repeat every tick.
 _entries_frozen_logged = False
 
+# Per-strategy decision trace from the most recent entry cycle — a debugging aid
+# ("last run"): what each strategy looked at and why it did (or didn't) buy.
+# In-memory (engine + API share one process); resets on restart. Keyed by
+# strategy id. Never let building it affect trading (try/finally, no swallowing).
+_last_run: dict[int, dict] = {}
+
+_RANK_LABELS = {
+    "momentum_today": "today's % move",
+    "return_30d": "30-day return",
+    "relative_strength": "relative strength (vs 200-day avg)",
+    "rs_vs_spy": "relative strength vs the S&P 500",
+}
+
+
+def get_last_run(strategy_id: int) -> dict | None:
+    """The most recent entry-cycle decision trace for a strategy, or None if it
+    hasn't been evaluated since startup."""
+    return _last_run.get(strategy_id)
+
+
+def _universe_summary(session: Session, strategy: Strategy) -> str:
+    """Plain-English description of WHERE this strategy's candidates come from —
+    the key to explaining why a name you expected wasn't even considered."""
+    ranked = strategy.rank_enabled or strategy.universe == "basket"
+    rank_txt = _RANK_LABELS.get(strategy.rank_by, strategy.rank_by)
+    if strategy.universe == "basket":
+        from qt.models import Basket
+
+        b = session.get(Basket, strategy.basket_id) if strategy.basket_id else None
+        name = f"“{b.name}”" if b else "basket"
+        return (
+            f"Top {strategy.top_n} of the {name} basket, ranked by {rank_txt} — "
+            f"only these are evaluated; the other members aren't."
+        )
+    if strategy.universe == "custom":
+        return (
+            f"Top {strategy.top_n} of your symbol list, ranked by {rank_txt} (only these are evaluated)."
+            if ranked else "Your symbol list (all of it is evaluated)."
+        )
+    if strategy.universe == "watchlist":
+        return (
+            f"Top {strategy.top_n} of your watchlist, ranked by {rank_txt} (only these are evaluated)."
+            if ranked else "Your watchlist (all of it is evaluated)."
+        )
+    if strategy.universe == "both":
+        return "Today's scanner movers plus your watchlist."
+    return "Today's scanner movers (the day's top risers)."
+
 
 async def _consider_entries(
     session: Session,
@@ -695,86 +743,132 @@ async def _consider_entries(
     scan_result: dict | None = None
 
     for strategy in strategies:
-        if strategy.asset_class == "stock" and not market_open:
-            continue
-
-        params = json.loads(strategy.params)
-
-        # DCA sleeve branch: a strategy whose params carry dca.interval_days > 0
-        # is an always-on dollar-cost-averaging baseline. It buys a FIXED symbol
-        # list on a fixed cadence regardless of momentum, so it takes its own
-        # entry path (independent lots) and skips BOTH the momentum entry rules
-        # and the regime gate — DCA buys through all market conditions by design.
-        dca = params.get("dca") or {}
-        if int(dca.get("interval_days", 0) or 0) > 0:
-            await _consider_dca_entries(
-                session, client, mode, strategy, params, equity, risk,
-                leverage_unlocked, daily_loss, today_start,
-            )
-            continue
-
-        # Regime gate (stocks only, exits unaffected)
-        if strategy.asset_class == "stock" and not strategy.ignore_regime:
-            if get_setting(session, "regime_filter_enabled") is not False:
-                if regime_state is None:
-                    try:
-                        regime_state = await regime.regime_status(client)
-                    except Exception as exc:
-                        regime_state = {"ok": False, "detail": f"regime check failed: {exc}"}
-                if not regime_state["ok"]:
-                    continue
-
-        candidates = await _candidates_for(session, client, strategy, scan_result)
-        if candidates is None:
-            continue
-        candidates, scan_result = candidates
-
-        # Optional daily signals (MACD entry filter and/or ATR sizing): ONE batched
-        # daily-bars call, then set each candidate's macd_bullish / atr_pct before
-        # evaluate_entry and sizing read them.
-        await _apply_daily_signals(client, strategy, params, candidates)
-
-        for cand in candidates:
-            entry_ok, entry_reason = evaluate_entry(params, cand, now_et)
-            if not entry_ok:
+        # A per-strategy decision trace built as we go (the "last run" debug view).
+        # try/finally stores it no matter how the iteration ends; we never swallow
+        # a trading error — it still propagates exactly as before.
+        trace: dict = {
+            "strategy_id": strategy.id,
+            "strategy_name": strategy.name,
+            "ran_at": datetime.now(timezone.utc).isoformat(),
+            "mode": mode,
+            "universe": "",
+            "outcome": "",
+            "candidates": [],
+        }
+        try:
+            if strategy.asset_class == "stock" and not market_open:
+                trace["outcome"] = "Market closed — this stock strategy doesn't trade now."
                 continue
 
-            # ATR sizing (opt-in): size so a stop-out loses ~risk_usd, capped at the
-            # sleeve; falls back to the fixed sizing_usd when off or atr_pct is
-            # unavailable. This size flows through the rails AND into open_trade.
-            entry_sizing = atr_position_size(
-                params, strategy.sizing_usd, strategy.sleeve_usd, cand.atr_pct
-            )
+            params = json.loads(strategy.params)
 
-            ctx = _build_rail_context(
-                session, mode, strategy, cand.symbol, equity, risk,
-                leverage_unlocked, daily_loss, today_start,
-            )
-            rails_ok, rails_reason = check_rails(
-                {"max_positions": strategy.max_positions, "sleeve_usd": strategy.sleeve_usd},
-                entry_sizing,
-                ctx,
-            )
-            version_id = _latest_version_id(session, strategy.id)
-            if not rails_ok:
-                session.add(
-                    Trade(
-                        strategy_id=strategy.id,
-                        config_version_id=version_id,
-                        mode=mode, symbol=cand.symbol, asset_class=cand.asset_class,
-                        qty=0, notional=0, status="rejected",
-                        entry_reason=f"wanted to buy ({entry_reason}) but {rails_reason}",
-                    )
+            # DCA sleeve branch: a strategy whose params carry dca.interval_days > 0
+            # is an always-on dollar-cost-averaging baseline. It buys a FIXED symbol
+            # list on a fixed cadence regardless of momentum, so it takes its own
+            # entry path (independent lots) and skips BOTH the momentum entry rules
+            # and the regime gate — DCA buys through all market conditions by design.
+            dca = params.get("dca") or {}
+            if int(dca.get("interval_days", 0) or 0) > 0:
+                trace["universe"] = "DCA sleeve"
+                trace["outcome"] = "Dollar-cost-averaging sleeve — buys on its own schedule, not on these rules."
+                await _consider_dca_entries(
+                    session, client, mode, strategy, params, equity, risk,
+                    leverage_unlocked, daily_loss, today_start,
                 )
                 continue
 
-            from qt.services import execution
+            # Regime gate (stocks only, exits unaffected)
+            if strategy.asset_class == "stock" and not strategy.ignore_regime:
+                if get_setting(session, "regime_filter_enabled") is not False:
+                    if regime_state is None:
+                        try:
+                            regime_state = await regime.regime_status(client)
+                        except Exception as exc:
+                            regime_state = {"ok": False, "detail": f"regime check failed: {exc}"}
+                    if not regime_state["ok"]:
+                        trace["outcome"] = (
+                            "Regime filter blocked stock entries: "
+                            f"{regime_state.get('detail', 'S&P 500 below its 200-day average')}."
+                        )
+                        continue
 
-            await execution.open_trade(
-                session, client, strategy, version_id, mode, cand,
-                f"{entry_reason}; {rails_reason}",
-                sizing_usd=entry_sizing,
-            )
+            trace["universe"] = _universe_summary(session, strategy)
+            candidates = await _candidates_for(session, client, strategy, scan_result)
+            if candidates is None:
+                trace["outcome"] = "Couldn't read candidates from the broker this cycle (will retry)."
+                continue
+            candidates, scan_result = candidates
+
+            # Optional daily signals (MACD entry filter and/or ATR sizing): ONE batched
+            # daily-bars call, then set each candidate's macd_bullish / atr_pct before
+            # evaluate_entry and sizing read them.
+            await _apply_daily_signals(client, strategy, params, candidates)
+
+            if not candidates:
+                trace["outcome"] = "No candidates in the universe this cycle."
+
+            for cand in candidates:
+                entry_ok, entry_reason = evaluate_entry(params, cand, now_et)
+                row = {
+                    "symbol": cand.symbol,
+                    "price": cand.price,
+                    "change_pct": cand.change_pct,
+                    "macd_bullish": cand.macd_bullish,
+                    "decision": "",
+                    "reason": "",
+                }
+                if not entry_ok:
+                    row["decision"], row["reason"] = "skipped", entry_reason
+                    trace["candidates"].append(row)
+                    continue
+
+                # ATR sizing (opt-in): size so a stop-out loses ~risk_usd, capped at the
+                # sleeve; falls back to the fixed sizing_usd when off or atr_pct is
+                # unavailable. This size flows through the rails AND into open_trade.
+                entry_sizing = atr_position_size(
+                    params, strategy.sizing_usd, strategy.sleeve_usd, cand.atr_pct
+                )
+
+                ctx = _build_rail_context(
+                    session, mode, strategy, cand.symbol, equity, risk,
+                    leverage_unlocked, daily_loss, today_start,
+                )
+                rails_ok, rails_reason = check_rails(
+                    {"max_positions": strategy.max_positions, "sleeve_usd": strategy.sleeve_usd},
+                    entry_sizing,
+                    ctx,
+                )
+                version_id = _latest_version_id(session, strategy.id)
+                if not rails_ok:
+                    row["decision"], row["reason"] = "blocked", f"{entry_reason}, but {rails_reason}"
+                    trace["candidates"].append(row)
+                    session.add(
+                        Trade(
+                            strategy_id=strategy.id,
+                            config_version_id=version_id,
+                            mode=mode, symbol=cand.symbol, asset_class=cand.asset_class,
+                            qty=0, notional=0, status="rejected",
+                            entry_reason=f"wanted to buy ({entry_reason}) but {rails_reason}",
+                        )
+                    )
+                    continue
+
+                row["decision"], row["reason"] = "bought", f"{entry_reason}; {rails_reason}"
+                trace["candidates"].append(row)
+
+                from qt.services import execution
+
+                await execution.open_trade(
+                    session, client, strategy, version_id, mode, cand,
+                    f"{entry_reason}; {rails_reason}",
+                    sizing_usd=entry_sizing,
+                )
+
+            if candidates and not trace["outcome"]:
+                bought = sum(1 for c in trace["candidates"] if c["decision"] == "bought")
+                trace["outcome"] = f"Evaluated {len(candidates)} candidate(s); bought {bought}."
+        finally:
+            _last_run[strategy.id] = trace
 
 
 async def _consider_dca_entries(

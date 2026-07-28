@@ -182,6 +182,28 @@ export interface StrategyHoldings {
 
 export const getStrategyHoldings = (id: number) =>
   fetch(`/api/strategies/${id}/holdings`).then((r) => handle<StrategyHoldings>(r));
+
+export interface LastRunCandidate {
+  symbol: string;
+  price: number;
+  change_pct: number;
+  macd_bullish: boolean | null;
+  decision: string; // bought | skipped | blocked
+  reason: string;
+}
+
+export interface StrategyLastRun {
+  ran: boolean;
+  enabled?: boolean;
+  ran_at?: string;
+  mode?: string;
+  universe?: string;
+  outcome?: string;
+  candidates?: LastRunCandidate[];
+}
+
+export const getStrategyLastRun = (id: number) =>
+  fetch(`/api/strategies/${id}/last-run`).then((r) => handle<StrategyLastRun>(r));
 export const getPresets = () => fetch("/api/strategies/presets").then((r) => handle<Record<string, Preset>>(r));
 export const createStrategy = (b: Partial<StrategyRow>) =>
   fetch("/api/strategies", json(b)).then((r) => handle<StrategyRow>(r));

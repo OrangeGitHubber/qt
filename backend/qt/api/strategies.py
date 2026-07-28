@@ -401,3 +401,19 @@ async def strategy_holdings(strategy_id: int, session: Session = Depends(get_ses
         "total_value": round(total_value, 2),
         "total_unrealized_pnl": round(total_pnl, 2),
     }
+
+
+@router.get("/{strategy_id}/last-run")
+def strategy_last_run(strategy_id: int, session: Session = Depends(get_session)) -> dict:
+    """The engine's most recent entry-cycle decision trace for this strategy — a
+    debug view of what it looked at and why it did (or didn't) buy. In-memory, so
+    it's empty until the engine has run at least one cycle since startup."""
+    strategy = session.get(Strategy, strategy_id)
+    if not strategy:
+        raise HTTPException(status_code=404, detail="Strategy not found.")
+    from qt.services.engine import get_last_run
+
+    trace = get_last_run(strategy_id)
+    if trace is None:
+        return {"ran": False, "enabled": strategy.enabled}
+    return {"ran": True, **trace}

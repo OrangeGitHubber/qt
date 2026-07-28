@@ -1255,13 +1255,15 @@ details.adv[open] > summary::before {
   content: "▾ ";
 }
 
-/* Per-strategy holdings: an expandable list of the positions a strategy owns. */
-details.holdings {
+/* Per-strategy holdings + last-run trace: expandable diagnostics on a card. */
+details.holdings,
+details.lastrun {
   margin: 0.4rem 0 0.6rem;
   border-top: 1px solid var(--border);
   padding-top: 0.4rem;
 }
-details.holdings > summary {
+details.holdings > summary,
+details.lastrun > summary {
   cursor: pointer;
   color: var(--accent);
   font-size: 0.85rem;
@@ -1269,14 +1271,24 @@ details.holdings > summary {
   list-style: none;
   user-select: none;
 }
-details.holdings > summary::-webkit-details-marker {
+details.holdings > summary::-webkit-details-marker,
+details.lastrun > summary::-webkit-details-marker {
   display: none;
 }
-details.holdings > summary::before {
+details.holdings > summary::before,
+details.lastrun > summary::before {
   content: "▸ ";
 }
-details.holdings[open] > summary::before {
+details.holdings[open] > summary::before,
+details.lastrun[open] > summary::before {
   content: "▾ ";
+}
+/* The last-run "Why" column is prose — left-align it and let it wrap. */
+.lastrun-table th.why,
+.lastrun-table td.why {
+  text-align: left;
+  white-space: normal;
+  color: var(--muted);
 }
 .holdings-table {
   width: 100%;
