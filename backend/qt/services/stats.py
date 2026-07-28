@@ -65,6 +65,55 @@ def vs_sma_pct(bars: list[dict], period: int = 200, current_price: float | None 
     return round((price / average - 1) * 100, 2)
 
 
+def _ema_series(values: list[float], period: int) -> list[float | None]:
+    """EMA over `values` (oldest-first), seeded with the SMA of the first
+    `period` points. Returns a list aligned to `values`; entries before the seed
+    are None."""
+    if period <= 0 or len(values) < period:
+        return [None] * len(values)
+    k = 2 / (period + 1)
+    out: list[float | None] = [None] * len(values)
+    prev = sum(values[:period]) / period  # SMA seed
+    out[period - 1] = prev
+    for i in range(period, len(values)):
+        prev = values[i] * k + prev * (1 - k)
+        out[i] = prev
+    return out
+
+
+def macd(closes: list[float], fast: int = 12, slow: int = 26, signal: int = 9) -> tuple[float, float, float] | None:
+    """MACD (line, signal, histogram) at the LAST close.
+
+    `closes` is oldest-first and must contain only COMPLETED bars — the caller
+    excludes any in-progress bar, so there is NO look-ahead. MACD line =
+    EMA(fast) − EMA(slow); signal = EMA(signal) of the MACD line; histogram =
+    line − signal. Returns None when there isn't enough history to form the
+    signal line (needs ≥ slow + signal points; more to stabilise the EMAs)."""
+    if not (0 < fast < slow) or signal <= 0 or len(closes) < slow + signal:
+        return None
+    ema_fast = _ema_series(closes, fast)
+    ema_slow = _ema_series(closes, slow)
+    macd_line = [
+        (f - s) for f, s in zip(ema_fast, ema_slow) if f is not None and s is not None
+    ]
+    if len(macd_line) < signal:
+        return None
+    signal_series = _ema_series(macd_line, signal)
+    last_line, last_sig = macd_line[-1], signal_series[-1]
+    if last_sig is None:
+        return None
+    return round(last_line, 6), round(last_sig, 6), round(last_line - last_sig, 6)
+
+
+def macd_bullish(closes: list[float], fast: int = 12, slow: int = 26, signal: int = 9) -> bool | None:
+    """True when the MACD line is above its signal line (momentum bullish),
+    False when at/below, None when there isn't enough history to decide."""
+    m = macd(closes, fast, slow, signal)
+    if m is None:
+        return None
+    return m[0] > m[1]
+
+
 def compute(bars: list[dict], current_price: float | None = None) -> dict:
     """All watchlist stats for one symbol. Missing history yields None rather
     than a number computed over a shorter window than advertised."""
