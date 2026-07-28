@@ -20,6 +20,22 @@ def _body(**overrides):
     return body
 
 
+def test_atr_block_persists_through_save(client):
+    # pydantic drops keys it doesn't model, so the atr block only survives because
+    # StrategyParams declares an explicit ATRConfig field (mirroring DCAConfig).
+    body = _body()
+    body["params"]["atr"] = {"period": 20, "stop_mult": 2.5, "risk_usd": 75}
+    resp = client.post("/api/strategies", json=body)
+    assert resp.status_code == 200
+    atr = resp.json()["params"]["atr"]
+    assert atr == {"period": 20, "stop_mult": 2.5, "risk_usd": 75.0}
+
+    # And it round-trips on read-back.
+    sid = resp.json()["id"]
+    mine = next(s for s in client.get("/api/strategies").json() if s["id"] == sid)
+    assert mine["params"]["atr"]["stop_mult"] == 2.5
+
+
 def test_presets_available(client):
     presets = client.get("/api/strategies/presets").json()
     assert "momentum_swing_stocks" in presets

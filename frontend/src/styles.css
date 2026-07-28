@@ -491,6 +491,26 @@ tr:last-child td {
   margin-top: 0.4rem;
 }
 
+/* Optional ATR (volatility) sub-section inside "Sizing & safety". */
+.atr-section {
+  margin-top: 1rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--border);
+}
+.atr-section h5 {
+  margin: 0 0 0.25rem;
+  font-size: 0.95rem;
+}
+/* Per-field explanation shown under an ATR input (the user asked for the
+   plain-English help to be visible, not just a tooltip). */
+.field-help {
+  display: block;
+  margin-top: 0.3rem;
+  color: var(--muted);
+  font-size: 0.8rem;
+  line-height: 1.35;
+}
+
 .nowrap {
   white-space: nowrap;
 }

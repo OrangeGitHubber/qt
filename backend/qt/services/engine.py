@@ -70,6 +70,11 @@ class Candidate:
     # bearish, None = not enough history to decide. Only set when a strategy opts
     # into the MACD entry filter; otherwise stays None and is ignored.
     macd_bullish: bool | None = None
+    # Daily ATR as a % of price (the symbol's typical daily move), computed from
+    # COMPLETED daily bars only — same look-ahead-safe fetch as macd_bullish. Only
+    # set when a strategy opts into ATR sizing; otherwise stays None. Drives the
+    # ATR position size at entry (see atr_position_size).
+    atr_pct: float | None = None
 
 
 @dataclass
@@ -175,23 +180,45 @@ def evaluate_exit(
     now_utc: datetime,
     market_closes_soon: bool,
     macd_bullish: bool | None = None,
+    atr_pct: float | None = None,
 ) -> tuple[bool, str]:
     """Return (should_exit, reason). Stops always apply; in swing mode the
     softer exits (take-profit, VWAP, time, MACD) wait until the day after entry.
 
     `macd_bullish` is the daily-MACD momentum for this symbol (True/False/None),
     supplied by the caller only when the strategy opts into the MACD exit signal;
-    default None so existing callers are unaffected."""
+    default None so existing callers are unaffected.
+
+    `atr_pct` is the symbol's daily ATR as a % of price. When the strategy enables
+    the ATR stop (params["atr"]["stop_mult"] > 0) AND atr_pct is available, the
+    effective hard-stop % becomes stop_mult × atr_pct — wider for volatile names,
+    tighter for calm ones — used IN PLACE OF the fixed stop_loss_pct while keeping
+    the hard stop's top priority. It's recomputed from the CURRENT bar's ATR each
+    tick, so the stop is volatility-adaptive: it breathes with the symbol. When
+    atr_pct is unavailable (fetch blip / too little history) it FALLS BACK to the
+    fixed stop_loss_pct — a position is never left stopless. Default None so
+    existing callers are unaffected."""
     exit_rules = params.get("exit", {})
     change_from_entry = (price / entry_price - 1) * 100
     drop_from_high = (1 - price / high_water) * 100 if high_water else 0.0
 
     stop_loss = exit_rules.get("stop_loss_pct", 0)
-    if stop_loss and change_from_entry <= -stop_loss:
+    # ATR stop (opt-in): the effective hard stop = stop_mult × current ATR%. Falls
+    # back to the fixed stop when off or atr_pct is unavailable — never stopless.
+    atr_stop_mult = float((params.get("atr") or {}).get("stop_mult", 0) or 0)
+    effective_stop = stop_loss
+    if atr_stop_mult > 0 and atr_pct is not None and atr_pct > 0:
+        effective_stop = atr_stop_mult * atr_pct
+    if effective_stop and change_from_entry <= -effective_stop:
+        if effective_stop != stop_loss:
+            return True, (
+                f"ATR stop-loss: {change_from_entry:.2f}% ≤ -{effective_stop:.2f}% "
+                f"({atr_stop_mult:g}× ATR {atr_pct:.2f}%)"
+            )
         return True, f"stop-loss: {change_from_entry:.2f}% ≤ -{stop_loss}%"
 
     trailing = exit_rules.get("trailing_stop_pct", 0)
-    if trailing and drop_from_high >= trailing and price > entry_price * (1 - stop_loss / 100):
+    if trailing and drop_from_high >= trailing and price > entry_price * (1 - effective_stop / 100):
         return True, f"trailing stop: {drop_from_high:.2f}% off high {high_water:.4f}"
 
     same_day = entry_at.astimezone(ET).date() == now_utc.astimezone(ET).date()
@@ -294,65 +321,132 @@ def _macd_periods(params: dict) -> tuple[int, int, int]:
     return int(m.get("fast", 12)), int(m.get("slow", 26)), int(m.get("signal", 9))
 
 
-def _completed_daily_closes(bars: list[dict], asset_class: str) -> list[float]:
-    """Closes (oldest-first) of only the COMPLETED daily bars — today's
-    in-progress bar is dropped so MACD never peeks at an unfinished day. Stocks
-    bucket by the ET session day, crypto by the UTC calendar day (matching the
-    backtester's day bucketing and the crypto movers cache)."""
+def _atr_period(params: dict) -> int:
+    return int((params.get("atr") or {}).get("period", 14) or 14)
+
+
+def _atr_stop_enabled(params: dict) -> bool:
+    """ATR stop is on when stop_mult > 0 (it replaces the fixed hard stop)."""
+    return float((params.get("atr") or {}).get("stop_mult", 0) or 0) > 0
+
+
+def _atr_sizing_enabled(params: dict) -> bool:
+    """ATR sizing needs BOTH a risk budget AND a stop multiple — the size is
+    derived from the ATR stop distance, so it's meaningless without the stop."""
+    a = params.get("atr") or {}
+    return float(a.get("risk_usd", 0) or 0) > 0 and float(a.get("stop_mult", 0) or 0) > 0
+
+
+def atr_position_size(
+    params: dict, sizing_usd: float, sleeve_usd: float, atr_pct: float | None
+) -> float:
+    """The $ to commit to a new position. When ATR sizing is on (risk_usd > 0 AND
+    stop_mult > 0) and atr_pct is available, size so a stop-out — a move of
+    stop_mult × atr_pct against entry — loses about risk_usd:
+
+        size = risk_usd / (stop_mult × atr_pct / 100)
+
+    A volatile name (big atr_pct) therefore gets a SMALLER position, a calm one a
+    LARGER position, for the same dollar risk. The result is CAPPED at the
+    strategy's sleeve_usd so a very calm name can't compute a size that blows the
+    sleeve budget, and floored at 0 (a below-minimum size then falls through to
+    execution's existing 'position too small' rejection). Falls back to the fixed
+    sizing_usd when ATR sizing is off or atr_pct is unavailable — sizing is never
+    left undefined."""
+    a = params.get("atr") or {}
+    stop_mult = float(a.get("stop_mult", 0) or 0)
+    risk_usd = float(a.get("risk_usd", 0) or 0)
+    if risk_usd > 0 and stop_mult > 0 and atr_pct and atr_pct > 0:
+        size = risk_usd / (stop_mult * atr_pct / 100)
+        return max(0.0, min(size, sleeve_usd))
+    return sizing_usd
+
+
+def _daily_lookback_days(params: dict, want_atr: bool) -> int:
+    """Calendar-day window for the daily-bars fetch. MACD-only keeps the original
+    120-day window (so MACD-only fetches are unchanged); ATR widens it when its
+    period is large enough to need more than that."""
+    if not want_atr:
+        return MACD_LOOKBACK_DAYS
+    return max(MACD_LOOKBACK_DAYS, _atr_period(params) * 2 + 10)
+
+
+def _completed_daily_bars(bars: list[dict], asset_class: str) -> list[dict]:
+    """The COMPLETED daily bars (oldest-first) — today's in-progress bar is
+    dropped so neither MACD nor ATR peeks at an unfinished day. Stocks bucket by
+    the ET session day, crypto by the UTC calendar day (matching the backtester's
+    day bucketing and the crypto movers cache)."""
     if not bars:
         return []
     tz = timezone.utc if asset_class == "crypto" else ET
     today = datetime.now(tz).date()
-    closes: list[float] = []
+    out: list[dict] = []
     for b in bars:
         ts = datetime.fromisoformat(b["t"].replace("Z", "+00:00"))
         if ts.astimezone(tz).date() >= today:
             continue  # today's (or a future) in-progress bar — exclude
-        closes.append(float(b["c"]))
-    return closes
+        out.append(b)
+    return out
 
 
-async def _apply_macd_entry_filter(
+def _completed_daily_closes(bars: list[dict], asset_class: str) -> list[float]:
+    """Closes of only the COMPLETED daily bars (see _completed_daily_bars)."""
+    return [float(b["c"]) for b in _completed_daily_bars(bars, asset_class)]
+
+
+async def _apply_daily_signals(
     client: AlpacaClient, strategy: Strategy, params: dict, candidates: list[Candidate]
 ) -> None:
-    """Set candidate.macd_bullish for a strategy that opted into the MACD entry
-    filter, via ONE batched daily-bars call for the candidate symbols. No-op when
-    the flag is off or there are no candidates.
+    """Set candidate.macd_bullish and/or candidate.atr_pct for a strategy that
+    opted into the MACD entry filter and/or ATR sizing, via ONE batched daily-bars
+    call for the candidate symbols — daily bars are fetched ONCE and both signals
+    computed from them, never twice. No-op when neither is enabled or there are no
+    candidates.
 
     (Basket ranking may itself fetch daily bars, but over different windows
-    — 60/320 days keyed to the metric. A dedicated 120-day fetch keeps the MACD
-    input correct and independent of whatever the ranking happened to pull.)"""
-    if not candidates or not params.get("entry", {}).get("require_macd_bullish"):
+    — 60/320 days keyed to the metric. A dedicated fetch keeps these inputs
+    correct and independent of whatever the ranking happened to pull.)"""
+    want_macd = bool(params.get("entry", {}).get("require_macd_bullish"))
+    want_atr = _atr_sizing_enabled(params)
+    if not candidates or not (want_macd or want_atr):
         return
     fast, slow, signal = _macd_periods(params)
+    period = _atr_period(params)
     symbols = sorted({c.symbol for c in candidates})
-    start = (datetime.now(timezone.utc) - timedelta(days=MACD_LOOKBACK_DAYS)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    start = (
+        datetime.now(timezone.utc) - timedelta(days=_daily_lookback_days(params, want_atr))
+    ).strftime("%Y-%m-%dT%H:%M:%SZ")
     try:
         bars_by_symbol = await client.historical_bars(symbols, strategy.asset_class, "1Day", start)
     except AlpacaError as exc:
-        # Fail-closed: leave macd_bullish=None so evaluate_entry blocks entries
-        # rather than trading blind on a missing signal.
-        log.warning("MACD entry filter for '%s' — daily bars fetch failed: %s", strategy.name, exc)
+        # Fail-safe: leave macd_bullish=None (evaluate_entry blocks rather than
+        # trading blind) and atr_pct=None (atr_position_size falls back to the
+        # fixed size) rather than trading on a missing signal.
+        log.warning("daily signals for '%s' — daily bars fetch failed: %s", strategy.name, exc)
         return
-    flags = {
-        sym: stats.macd_bullish(
-            _completed_daily_closes(bars_by_symbol.get(sym) or [], strategy.asset_class),
-            fast, slow, signal,
-        )
-        for sym in symbols
-    }
     for cand in candidates:
-        cand.macd_bullish = flags.get(cand.symbol)
+        daily = _completed_daily_bars(bars_by_symbol.get(cand.symbol) or [], strategy.asset_class)
+        if want_macd:
+            cand.macd_bullish = stats.macd_bullish(
+                [float(b["c"]) for b in daily], fast, slow, signal
+            )
+        if want_atr:
+            cand.atr_pct = stats.atr_pct(daily, period, current_price=cand.price)
 
 
-async def _macd_exit_flags(
+async def _daily_exit_signals(
     session: Session, client: AlpacaClient, open_trades: list[Trade]
-) -> dict[int, bool | None]:
-    """For every open trade whose strategy opted into exit_on_macd_bearish,
-    return {trade_id: macd_bullish}. Computed once up front — mirroring
-    _rotation_dropout_reasons — with one batched daily-bars call per opted-in
-    strategy (its held symbols share an asset class and MACD periods). Strategies
-    without the flag are skipped entirely, so they cost nothing."""
+) -> tuple[dict[int, bool | None], dict[int, float | None]]:
+    """For every open trade whose strategy opted into exit_on_macd_bearish and/or
+    the ATR stop, return ({trade_id: macd_bullish}, {trade_id: atr_pct}). Computed
+    once up front — mirroring _rotation_dropout_reasons — with one batched
+    daily-bars call per opted-in strategy (its held symbols share an asset class
+    and periods); the two signals share that single fetch. Strategies wanting
+    neither are skipped entirely, so they cost nothing.
+
+    The ATR% here uses the last completed daily close as the price denominator (no
+    live quote at this point in the tick) — look-ahead-safe and recomputed every
+    tick, so the resulting stop still breathes with the symbol's volatility."""
     grouped: dict[int, tuple[Strategy, dict, set[str]]] = {}
     for t in open_trades:
         if t.strategy_id in grouped:
@@ -365,32 +459,41 @@ async def _macd_exit_flags(
             params = json.loads(s.params)
         except (TypeError, ValueError):
             params = {}
-        if not params.get("exit", {}).get("exit_on_macd_bearish"):
+        want_macd = bool(params.get("exit", {}).get("exit_on_macd_bearish"))
+        want_atr = _atr_stop_enabled(params)
+        if not (want_macd or want_atr):
             continue
         grouped[t.strategy_id] = (s, params, {t.symbol})
 
-    flags: dict[int, bool | None] = {}
+    macd_flags: dict[int, bool | None] = {}
+    atr_pcts: dict[int, float | None] = {}
     for sid, (s, params, symbols) in grouped.items():
         fast, slow, signal = _macd_periods(params)
-        start = (datetime.now(timezone.utc) - timedelta(days=MACD_LOOKBACK_DAYS)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        period = _atr_period(params)
+        want_macd = bool(params.get("exit", {}).get("exit_on_macd_bearish"))
+        want_atr = _atr_stop_enabled(params)
+        start = (
+            datetime.now(timezone.utc) - timedelta(days=_daily_lookback_days(params, want_atr))
+        ).strftime("%Y-%m-%dT%H:%M:%SZ")
         try:
             bars_by_symbol = await client.historical_bars(sorted(symbols), s.asset_class, "1Day", start)
         except AlpacaError as exc:
-            # Can't tell → leave these trades at None; evaluate_exit won't force
-            # an exit on None, so a fetch blip never sells a position blindly.
-            log.warning("MACD exit check for '%s' — daily bars fetch failed: %s", s.name, exc)
+            # Can't tell → leave these trades at None; evaluate_exit won't force a
+            # MACD exit on None, and the ATR stop falls back to the fixed stop, so
+            # a fetch blip never sells (or un-stops) a position blindly.
+            log.warning("daily exit signals for '%s' — daily bars fetch failed: %s", s.name, exc)
             continue
-        sym_flag = {
-            sym: stats.macd_bullish(
-                _completed_daily_closes(bars_by_symbol.get(sym) or [], s.asset_class),
-                fast, slow, signal,
-            )
-            for sym in symbols
-        }
         for t in open_trades:
-            if t.strategy_id == sid:
-                flags[t.id] = sym_flag.get(t.symbol)
-    return flags
+            if t.strategy_id != sid:
+                continue
+            daily = _completed_daily_bars(bars_by_symbol.get(t.symbol) or [], s.asset_class)
+            if want_macd:
+                macd_flags[t.id] = stats.macd_bullish(
+                    [float(b["c"]) for b in daily], fast, slow, signal
+                )
+            if want_atr:
+                atr_pcts[t.id] = stats.atr_pct(daily, period)
+    return macd_flags, atr_pcts
 
 
 async def tick(leverage_unlocked: bool = False) -> None:
@@ -494,9 +597,10 @@ async def _manage_exits(
     # dropouts; the per-trade loop below turns them into exits (still respecting
     # market hours). A ranking we can't compute leaves holdings untouched.
     rotation_reason = await _rotation_dropout_reasons(session, client, open_trades)
-    # Daily-MACD exit signal, also computed once up front for the strategies that
-    # opted in (one batched daily-bars call each). {} when nobody opted in.
-    macd_exit_flags = await _macd_exit_flags(session, client, open_trades)
+    # Daily-MACD exit signal AND the ATR stop's current ATR%, both computed once up
+    # front for the strategies that opted in (one shared batched daily-bars call
+    # each). Empty dicts when nobody opted in.
+    macd_exit_flags, atr_exit_pcts = await _daily_exit_signals(session, client, open_trades)
 
     for trade in open_trades:
         if trade.asset_class == "stock" and not market_open:
@@ -530,6 +634,7 @@ async def _manage_exits(
                 # flatten a 24/7 crypto position.
                 closes_soon and trade.asset_class == "stock",
                 macd_bullish=macd_exit_flags.get(trade.id),
+                atr_pct=atr_exit_pcts.get(trade.id),
             )
         if not should_exit:
             continue
@@ -622,14 +727,22 @@ async def _consider_entries(
             continue
         candidates, scan_result = candidates
 
-        # Optional daily-MACD entry filter: one batched daily-bars call, then set
-        # each candidate's macd_bullish before evaluate_entry reads it.
-        await _apply_macd_entry_filter(client, strategy, params, candidates)
+        # Optional daily signals (MACD entry filter and/or ATR sizing): ONE batched
+        # daily-bars call, then set each candidate's macd_bullish / atr_pct before
+        # evaluate_entry and sizing read them.
+        await _apply_daily_signals(client, strategy, params, candidates)
 
         for cand in candidates:
             entry_ok, entry_reason = evaluate_entry(params, cand, now_et)
             if not entry_ok:
                 continue
+
+            # ATR sizing (opt-in): size so a stop-out loses ~risk_usd, capped at the
+            # sleeve; falls back to the fixed sizing_usd when off or atr_pct is
+            # unavailable. This size flows through the rails AND into open_trade.
+            entry_sizing = atr_position_size(
+                params, strategy.sizing_usd, strategy.sleeve_usd, cand.atr_pct
+            )
 
             ctx = _build_rail_context(
                 session, mode, strategy, cand.symbol, equity, risk,
@@ -637,7 +750,7 @@ async def _consider_entries(
             )
             rails_ok, rails_reason = check_rails(
                 {"max_positions": strategy.max_positions, "sleeve_usd": strategy.sleeve_usd},
-                strategy.sizing_usd,
+                entry_sizing,
                 ctx,
             )
             version_id = _latest_version_id(session, strategy.id)
@@ -658,6 +771,7 @@ async def _consider_entries(
             await execution.open_trade(
                 session, client, strategy, version_id, mode, cand,
                 f"{entry_reason}; {rails_reason}",
+                sizing_usd=entry_sizing,
             )
 
 

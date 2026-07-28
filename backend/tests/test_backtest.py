@@ -296,3 +296,62 @@ def test_macd_entry_filter_allows_entry_when_bullish():
     result = run_backtest(strat, {"TEST": series}, RISK, starting_cash=5000, spread_pct=0)
     assert result["trades"] == 1
     assert "MACD bullish" in result["trade_list"][0]["entry_reason"]
+
+
+# ---- ATR stops & sizing (off by default) ----
+
+def _daily_ohlc(rows: list[tuple[float, float, float]], start: str = "2026-05-01T00:00:00Z") -> list[dict]:
+    """One bar PER DAY (close, high, low) — so each bar is its own ET day and ATR
+    history accumulates one completed bar at a time, exactly like the live daily
+    ATR fetch."""
+    t0 = datetime.fromisoformat(start.replace("Z", "+00:00"))
+    out = []
+    for i, (c, h, l) in enumerate(rows):
+        ts = t0 + timedelta(days=i)
+        out.append({"t": ts.strftime("%Y-%m-%dT%H:%M:%SZ"), "c": c, "h": h, "l": l, "v": 1000, "vw": c})
+    return out
+
+
+# 16 flat calm days (range 99–101 → ATR ≈ 2), then a +4% riser to 104 → entry.
+_ATR_FLAT = [(100.0, 101.0, 99.0)] * 16
+_ATR_RISER = _ATR_FLAT + [(104.0, 105.0, 103.0)]
+
+
+def test_atr_off_is_byte_identical():
+    # An all-zero atr block must not change anything vs no atr block at all.
+    series = _daily_ohlc(_ATR_RISER + [(104.0, 105.0, 103.0)])
+    base = run_backtest(STRATEGY, {"TEST": series}, RISK, starting_cash=5000, spread_pct=0)
+    strat = copy.deepcopy(STRATEGY)
+    strat["params"]["atr"] = {"period": 14, "stop_mult": 0.0, "risk_usd": 0.0}
+    off = run_backtest(strat, {"TEST": series}, RISK, starting_cash=5000, spread_pct=0)
+    assert base == off
+
+
+def test_atr_sizing_enlarges_position_for_a_calm_name():
+    # A calm name (ATR ≈ 1.9%) with a 2× stop → 3.8% stop distance. risk_usd 50 →
+    # ~$1,300 size, bigger than the fixed $1,000, so more shares are bought.
+    series = _daily_ohlc(_ATR_RISER + [(104.0, 105.0, 103.0)])
+    fixed = run_backtest(STRATEGY, {"TEST": series}, RISK, starting_cash=5000, spread_pct=0)
+    strat = copy.deepcopy(STRATEGY)
+    strat["params"]["atr"] = {"period": 14, "stop_mult": 2.0, "risk_usd": 50.0}
+    sized = run_backtest(strat, {"TEST": series}, RISK, starting_cash=5000, spread_pct=0)
+    assert fixed["trades"] == 1 and sized["trades"] == 1
+    assert sized["trade_list"][0]["qty"] > fixed["trade_list"][0]["qty"]
+
+
+def test_atr_stop_widens_and_holds_a_drop_the_fixed_stop_would_catch():
+    # Entry at 104, then a −5% drop to 98.8. Isolate the HARD stop by turning the
+    # trailing stop off. The fixed 4% stop exits; a wide 5× ATR stop (≈ 10%) holds.
+    series = _daily_ohlc(_ATR_RISER + [(98.8, 99.0, 98.0)])
+    base = copy.deepcopy(STRATEGY)
+    base["params"]["exit"]["trailing_stop_pct"] = 0
+
+    fixed = run_backtest(base, {"TEST": series}, RISK, starting_cash=5000, spread_pct=0)
+    assert "stop-loss" in fixed["trade_list"][0]["exit_reason"]
+    assert "ATR" not in fixed["trade_list"][0]["exit_reason"]
+
+    strat = copy.deepcopy(base)
+    strat["params"]["atr"] = {"period": 14, "stop_mult": 5.0, "risk_usd": 0.0}  # ATR stop ≈ 10%
+    wide = run_backtest(strat, {"TEST": series}, RISK, starting_cash=5000, spread_pct=0)
+    # The wide ATR stop is not hit by the 5% drop — it survives to forced liquidation.
+    assert "forced liquidation" in wide["trade_list"][0]["exit_reason"]

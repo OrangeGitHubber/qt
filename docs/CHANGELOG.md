@@ -3,6 +3,36 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## ATR-based stops & position sizing — optional, off by default (2026-07-27)
+
+A strategy can now size its **stop** and its **position** to each symbol's real
+volatility, measured by **ATR** (Average True Range — the symbol's typical daily
+move, gaps included). Two independent switches, both **off by default**, that
+sit in a new "Volatility-based stops & sizing" area under Sizing & safety:
+
+- **ATR stop** (`atr.stop_mult`, 0 = off). Instead of a fixed stop-loss %, the
+  hard stop is placed at **stop_mult × ATR%** below entry. A volatile stock gets
+  a **wider** stop and a calm one a **tighter** stop, so ordinary daily wiggle
+  doesn't shake you out of a good trade. It stays the **hard** stop (top
+  priority), and it's **recomputed from the current bar's ATR every tick**, so
+  the stop *breathes* with the symbol's volatility — widening as things get wild,
+  tightening as they calm. If the ATR can't be computed (a data blip or too
+  little history) it **falls back to the fixed stop-loss** — a position is never
+  left without a stop.
+- **ATR sizing** (`atr.risk_usd`, 0 = off; needs the ATR stop on). Each position
+  is sized so that a stop-out loses **about `risk_usd`**, whatever the symbol's
+  volatility: `size = risk_usd / (stop_mult × ATR% / 100)`. A wild name gets a
+  **smaller** position, a calm one a **larger** position, for the **same dollar
+  risk**. The computed size is **capped at the strategy's sleeve budget** (so a
+  very calm name can't compute a size that blows the sleeve) and falls back to
+  the fixed **$ per trade** when ATR sizing is off or the ATR is unavailable.
+
+Both features reuse the same look-ahead-safe **daily-bar** ATR (completed bars
+only — never today's in-progress bar), fetched together with the MACD signal in
+one call so there's no duplicate work. The backtester mirrors both exactly, and
+non-ATR runs stay byte-for-byte identical. The editor spells all of this out in
+plain English next to each field, with an advanced **ATR period** (default 14).
+
 ## Basket ranking: "Relative strength vs S&P 500" + a MACD when-to-use hint (2026-07-27)
 
 Two small additions to how basket strategies rank their members and how MACD is

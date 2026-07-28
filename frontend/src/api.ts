@@ -58,6 +58,10 @@ export interface StrategyParams {
   // Present only on a DCA baseline sleeve: buy the fixed symbol list every
   // interval_days as independent lots. Absent or <= 0 = not a DCA strategy.
   dca?: { interval_days: number };
+  // Optional ATR-based stops & sizing (both off by default). stop_mult > 0 sets
+  // the hard stop at stop_mult × ATR% below entry; risk_usd > 0 (needs stop_mult)
+  // sizes each position so a stop-out loses ~risk_usd. period is the ATR lookback.
+  atr?: { period: number; stop_mult: number; risk_usd: number };
 }
 
 export type RankBy = "momentum_today" | "return_30d" | "relative_strength" | "rs_vs_spy";

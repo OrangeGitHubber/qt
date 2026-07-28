@@ -64,10 +64,28 @@ class DCAConfig(BaseModel):
     interval_days: int = Field(default=0, ge=0, le=365)  # 0 = disabled
 
 
+class ATRConfig(BaseModel):
+    """ATR-based stops & position sizing. Two independent switches, off by
+    default. period is the ATR lookback in daily bars. stop_mult > 0 enables the
+    ATR stop (the hard stop becomes stop_mult × ATR% below entry, adapting to the
+    symbol's volatility). risk_usd > 0 (which also needs stop_mult > 0) enables
+    ATR sizing (each position sized so a stop-out loses ~risk_usd). Both zero =
+    off, and the fixed stop_loss_pct / sizing_usd are unchanged.
+
+    Declared as an explicit nested model — like DCAConfig — because pydantic drops
+    keys it doesn't know about, so without this field the atr block would not
+    survive a save."""
+
+    period: int = Field(default=14, ge=2, le=100)
+    stop_mult: float = Field(default=0, ge=0, le=20)  # 0 = off (use fixed stop_loss_pct)
+    risk_usd: float = Field(default=0, ge=0, le=100_000)  # 0 = off (use fixed sizing_usd)
+
+
 class StrategyParams(BaseModel):
     entry: EntryRules = EntryRules()
     exit: ExitRules = ExitRules()
     dca: DCAConfig | None = None  # present only for DCA sleeve strategies
+    atr: ATRConfig | None = None  # present only when ATR stops/sizing are configured
 
     @model_validator(mode="after")
     def _stop_required_unless_dca(self) -> "StrategyParams":

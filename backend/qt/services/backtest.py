@@ -17,7 +17,14 @@ from zoneinfo import ZoneInfo
 
 from qt.broker.alpaca import AlpacaClient
 from qt.services import stats
-from qt.services.engine import Candidate, RailContext, check_rails, evaluate_entry, evaluate_exit
+from qt.services.engine import (
+    Candidate,
+    RailContext,
+    atr_position_size,
+    check_rails,
+    evaluate_entry,
+    evaluate_exit,
+)
 
 ET = ZoneInfo("America/New_York")
 
@@ -28,6 +35,30 @@ def _macd_on(params: dict) -> bool:
         params.get("entry", {}).get("require_macd_bullish")
         or params.get("exit", {}).get("exit_on_macd_bearish")
     )
+
+
+def _atr_on(params: dict) -> bool:
+    """Whether either ATR feature is on — the ATR stop (stop_mult > 0) or ATR
+    sizing (risk_usd > 0). Absent/zero on both = off."""
+    a = params.get("atr") or {}
+    return float(a.get("stop_mult", 0) or 0) > 0 or float(a.get("risk_usd", 0) or 0) > 0
+
+
+def _annotate_atr(prepared: dict[str, list[dict]], bars_by_symbol: dict[str, list[dict]], params: dict) -> None:
+    """Attach `atr_pct` to each prepared bar, in place, when the strategy opts
+    into ATR. The value at bar i is computed from the raw OHLC bars up to and
+    INCLUDING the prior completed bar (raw[:i]) — never the current bar, so there
+    is NO look-ahead — mirroring _annotate_macd. The prepared series and the raw
+    bars are index-aligned (1:1, same order), so raw[:i] is exactly the completed
+    history at prepared bar i. No-op when ATR is off, keeping non-ATR backtests
+    byte-identical."""
+    if not _atr_on(params):
+        return
+    period = int((params.get("atr") or {}).get("period", 14) or 14)
+    for symbol, series in prepared.items():
+        raw = bars_by_symbol.get(symbol) or []
+        for i, bar in enumerate(series):
+            bar["atr_pct"] = stats.atr_pct(raw[:i], period, current_price=bar["close"])
 
 
 def _annotate_macd(prepared: dict[str, list[dict]], params: dict) -> None:
@@ -205,6 +236,7 @@ def run_backtest(
 
     prepared = {s: _prepare(b, day_of) for s, b in bars_by_symbol.items() if b}
     _annotate_macd(prepared, params)  # no-op unless the strategy opts into MACD
+    _annotate_atr(prepared, bars_by_symbol, params)  # no-op unless the strategy opts into ATR
     # chronological event stream across all symbols
     events: dict[datetime, dict[str, dict]] = {}
     for symbol, series in prepared.items():
@@ -247,6 +279,7 @@ def run_backtest(
                 params, swing, trade.entry_price, trade.entry_at,
                 trade.high_water, price, bar["vwap"], ts, bar.get("last_of_day", False),
                 macd_bullish=bar.get("macd_bullish"),
+                atr_pct=bar.get("atr_pct"),
             )
             if not should_exit:
                 continue
@@ -302,6 +335,10 @@ def run_backtest(
                 elif "entry window" in entry_reason:
                     diag["rejected_entry_window"] += 1
                 continue
+            # ATR sizing (opt-in): size so a stop-out loses ~risk_usd, capped at
+            # the sleeve; falls back to the fixed `sizing` when off or atr_pct is
+            # unavailable. Byte-identical to `sizing` when ATR sizing is off.
+            entry_sizing = atr_position_size(params, sizing, strategy["sleeve_usd"], bar.get("atr_pct"))
             daily_loss = max(0.0, -state.realized_by_day.get(day, 0.0))
             ctx = RailContext(
                 equity=equity,
@@ -326,7 +363,7 @@ def run_backtest(
             ctx.last_loss_at = None
             rails_ok, rails_reason = check_rails(
                 {"max_positions": strategy["max_positions"], "sleeve_usd": strategy["sleeve_usd"]},
-                sizing, ctx,
+                entry_sizing, ctx,
             )
             if rails_ok and last_loss is not None:
                 cooldown = timedelta(hours=risk.get("cooldown_hours_after_loss", 24))
@@ -336,7 +373,7 @@ def run_backtest(
                 diag["entry_ok_but_rail_blocked"] += 1
                 continue
             fill = bar["close"] * (1 + slip)
-            qty = float(int(sizing // fill)) if strategy["asset_class"] == "stock" else round(sizing / fill, 6)
+            qty = float(int(entry_sizing // fill)) if strategy["asset_class"] == "stock" else round(entry_sizing / fill, 6)
             if qty <= 0 or fill * qty > state.cash:
                 diag["too_small_or_no_cash"] += 1
                 continue
@@ -506,9 +543,10 @@ def run_portfolio_backtest(
         sid: {s: _prepare(b, day_of) for s, b in (bars_by_strategy.get(sid) or {}).items() if b}
         for sid in strat_by_id
     }
-    # Each strategy carries its own MACD periods/toggles; annotate its own bars.
+    # Each strategy carries its own MACD/ATR periods/toggles; annotate its own bars.
     for sid, prepared in prepared_by_strategy.items():
         _annotate_macd(prepared, strat_by_id[sid]["params"])
+        _annotate_atr(prepared, bars_by_strategy.get(sid) or {}, strat_by_id[sid]["params"])
     events: dict[datetime, list[tuple[int, str, dict]]] = {}
     for sid, series_map in prepared_by_strategy.items():
         for symbol, series in series_map.items():
@@ -550,6 +588,7 @@ def run_portfolio_backtest(
                 strat["params"], strat["swing_mode"], trade.entry_price, trade.entry_at,
                 trade.high_water, price, bar["vwap"], ts, bar.get("last_of_day", False),
                 macd_bullish=bar.get("macd_bullish"),
+                atr_pct=bar.get("atr_pct"),
             )
             if not should_exit:
                 continue
@@ -593,6 +632,12 @@ def run_portfolio_backtest(
             strat_open = [t for t in open_trades.values() if t.strategy_id == sid]
             strat_exposure = sum(t.entry_price * t.qty for t in strat_open)
             daily_loss = max(0.0, -realized_by_day.get(day, 0.0))
+            # ATR sizing (opt-in) per this strategy; falls back to its fixed
+            # sizing_usd when off or atr_pct is unavailable. Flows through BOTH the
+            # rails and the fill below, matching the live engine.
+            sizing = atr_position_size(
+                params, strat["sizing_usd"], strat["sleeve_usd"], bar.get("atr_pct")
+            )
             ctx = RailContext(
                 equity=equity,
                 open_positions_total=len(open_trades),
@@ -616,7 +661,7 @@ def run_portfolio_backtest(
             ctx.last_loss_at = None
             rails_ok, _rails_reason = check_rails(
                 {"max_positions": strat["max_positions"], "sleeve_usd": strat["sleeve_usd"]},
-                strat["sizing_usd"], ctx,
+                sizing, ctx,
             )
             if rails_ok and last_loss is not None:
                 cooldown = timedelta(hours=risk.get("cooldown_hours_after_loss", 24))
@@ -624,7 +669,6 @@ def run_portfolio_backtest(
                     rails_ok = False
             if not rails_ok:
                 continue
-            sizing = strat["sizing_usd"]
             fill = bar["close"] * (1 + slip)
             qty = float(int(sizing // fill)) if strat["asset_class"] == "stock" else round(sizing / fill, 6)
             if qty <= 0 or fill * qty > cash:

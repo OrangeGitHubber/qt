@@ -144,6 +144,17 @@ function Editor({
       },
     }));
   }
+  // ATR block is optional; seed 14 / 0 / 0 (period / stop off / sizing off) the
+  // first time any field is edited so all three are stored together.
+  function setAtr(key: "period" | "stop_mult" | "risk_usd", value: number) {
+    setS((cur) => ({
+      ...cur,
+      params: {
+        ...cur.params!,
+        atr: { period: 14, stop_mult: 0, risk_usd: 0, ...(cur.params!.atr ?? {}), [key]: value },
+      },
+    }));
+  }
 
   // Swing vs intraday are opposites (hold overnight vs flatten before the close),
   // so they're one choice, not two independent checkboxes. Intraday implies
@@ -179,6 +190,9 @@ function Editor({
   // The MACD period fields appear only when at least one MACD toggle is on.
   const macdOn = !!(p.entry.require_macd_bullish || p.exit.exit_on_macd_bearish);
   const macd = p.macd ?? { fast: 12, slow: 26, signal: 9 };
+  const atr = p.atr ?? { period: 14, stop_mult: 0, risk_usd: 0 };
+  // The advanced ATR period field appears only once an ATR feature is turned on.
+  const atrOn = atr.stop_mult > 0 || atr.risk_usd > 0;
   return (
     <form className="card editor" onSubmit={save}>
       <h3>{s.id ? `Edit: ${s.name}` : "New strategy"}</h3>
@@ -497,6 +511,57 @@ function Editor({
               onChange={(e) => setS({ ...s, ignore_regime: e.target.checked })} />
             Ignore regime filter (not recommended) <InfoTip k="regime_filter" />
           </label>
+        )}
+      </div>
+
+      <div className="atr-section">
+        <h5>
+          Volatility-based stops &amp; sizing (ATR) <InfoTip k="atr" />
+        </h5>
+        <p className="hint">
+          Optional. Off by default — leave both at 0 to keep the fixed stop-loss and fixed $ per trade above. ATR is this
+          symbol's <strong>typical daily move</strong>, so these adapt to each symbol's real volatility.
+        </p>
+        <div className="filter-grid">
+          <label>
+            ATR stop (× ATR, 0 = off)
+            <NumberField step="0.1" min="0" max="20" value={atr.stop_mult}
+              onChange={(n) => setAtr("stop_mult", n)} />
+            <span className="field-help">
+              Sets the stop at a multiple of this symbol's Average True Range — its typical daily move — instead of a
+              fixed %. A volatile stock gets a wider stop, a calm one a tighter stop, so ordinary daily wiggle doesn't
+              shake you out. 0 = off (use the fixed stop-loss above).
+            </span>
+          </label>
+          <label>
+            Risk $ per trade (ATR sizing, 0 = off)
+            <NumberField step="any" min="0" value={atr.risk_usd}
+              onChange={(n) => setAtr("risk_usd", n)} />
+            <span className="field-help">
+              Sizes each position so a stop-out loses about this many dollars, no matter how volatile the stock is — a
+              wild stock gets a smaller position, a calm one a larger position, for the same risk. Needs the ATR stop
+              above turned on. 0 = off (use the fixed $ per trade).
+            </span>
+          </label>
+        </div>
+        {atrOn && (
+          <details className="macd-advanced">
+            <summary>
+              Advanced — ATR period <InfoTip k="atr" />
+            </summary>
+            <div className="filter-grid">
+              <label>
+                ATR period (days)
+                <NumberField step="1" min="2" max="100" value={atr.period}
+                  onChange={(n) => setAtr("period", n)} />
+              </label>
+            </div>
+            <p className="hint">
+              How many completed daily bars the Average True Range averages over. <strong>14</strong> is standard.
+              Computed from completed daily bars only — never today's in-progress bar — so it's look-ahead-safe, and the
+              stop is recomputed each bar, breathing with the symbol's volatility.
+            </p>
+          </details>
         )}
       </div>
 

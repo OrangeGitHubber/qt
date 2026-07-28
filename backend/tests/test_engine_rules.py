@@ -357,3 +357,90 @@ def test_hard_stop_wins_over_macd_exit():
         p, True, 100.0, NOW - timedelta(hours=1), 100.0, 95.9, None, NOW, False, macd_bullish=False
     )
     assert should and "stop-loss" in reason
+
+
+# ---- optional ATR stop (off by default) ----
+
+def atr_params(**overrides) -> dict:
+    """params() plus an atr block; stop_mult drives the ATR stop."""
+    p = params(**overrides)
+    p["atr"] = {"period": 14, "stop_mult": 2.0, "risk_usd": 0.0}
+    return p
+
+
+def test_atr_stop_off_uses_fixed_stop_even_when_atr_supplied():
+    # No atr block → the fixed 4% stop applies; a 3% drop does NOT stop out.
+    should, _ = evaluate_exit(
+        params(), True, 100.0, YESTERDAY, 100.0, 97.0, None, NOW, False, atr_pct=1.0
+    )
+    assert not should  # -3% > -4% fixed stop
+
+
+def test_atr_stop_triggers_at_stop_mult_times_atr():
+    # ATR 1.5%, stop_mult 2 → effective stop 3.0%. A 3.1% drop stops out; the
+    # fixed 4% stop alone would NOT have fired, proving the ATR stop is in effect.
+    p = atr_params(exit={"stop_loss_pct": 4.0})
+    p["atr"]["stop_mult"] = 2.0
+    should, reason = evaluate_exit(
+        p, True, 100.0, YESTERDAY, 100.0, 96.9, None, NOW, False, atr_pct=1.5
+    )
+    assert should and "ATR stop-loss" in reason and "2× ATR 1.50%" in reason
+
+
+def test_atr_stop_holds_when_move_smaller_than_atr_stop():
+    # Same effective 3.0% stop; a 2.5% drop stays in.
+    p = atr_params(exit={"stop_loss_pct": 4.0})
+    should, _ = evaluate_exit(
+        p, True, 100.0, YESTERDAY, 100.0, 97.5, None, NOW, False, atr_pct=1.5
+    )
+    assert not should
+
+
+def test_atr_stop_falls_back_to_fixed_when_atr_unavailable():
+    # stop_mult set but atr_pct None (fetch blip / too little history) → the fixed
+    # 4% stop still guards the position: a 4.1% drop stops out.
+    p = atr_params(exit={"stop_loss_pct": 4.0})
+    should, reason = evaluate_exit(
+        p, True, 100.0, YESTERDAY, 100.0, 95.9, None, NOW, False, atr_pct=None
+    )
+    assert should and "stop-loss" in reason and "ATR" not in reason
+
+
+# ---- ATR position sizing math ----
+
+def test_atr_sizing_off_returns_fixed_size():
+    from qt.services.engine import atr_position_size
+
+    # No atr block → the fixed size, untouched.
+    assert atr_position_size(params(), 200.0, 1000.0, atr_pct=2.0) == 200.0
+    # risk_usd set but stop_mult 0 → still off (sizing needs the stop distance).
+    p = params()
+    p["atr"] = {"period": 14, "stop_mult": 0.0, "risk_usd": 50.0}
+    assert atr_position_size(p, 200.0, 1000.0, atr_pct=2.0) == 200.0
+
+
+def test_atr_sizing_math():
+    from qt.services.engine import atr_position_size
+
+    # risk_usd 50, stop_mult 2, atr_pct 2.5% → stop distance 5% → size 50/0.05 = 1000.
+    p = params()
+    p["atr"] = {"period": 14, "stop_mult": 2.0, "risk_usd": 50.0}
+    assert atr_position_size(p, 200.0, 5000.0, atr_pct=2.5) == 1000.0
+
+
+def test_atr_sizing_capped_at_sleeve():
+    from qt.services.engine import atr_position_size
+
+    # A very calm name (tiny atr_pct) computes a huge size; the sleeve caps it.
+    p = params()
+    p["atr"] = {"period": 14, "stop_mult": 1.0, "risk_usd": 50.0}
+    # 50 / (1 * 0.1/100) = 50 / 0.001 = 50000, capped to the 1000 sleeve.
+    assert atr_position_size(p, 200.0, 1000.0, atr_pct=0.1) == 1000.0
+
+
+def test_atr_sizing_falls_back_when_atr_none():
+    from qt.services.engine import atr_position_size
+
+    p = params()
+    p["atr"] = {"period": 14, "stop_mult": 2.0, "risk_usd": 50.0}
+    assert atr_position_size(p, 200.0, 1000.0, atr_pct=None) == 200.0

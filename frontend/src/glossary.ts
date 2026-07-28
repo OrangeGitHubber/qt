@@ -134,9 +134,9 @@ export const GLOSSARY: Record<string, GlossaryEntry> = {
     url: "https://www.investopedia.com/terms/c/candlestick.asp",
   },
   atr: {
-    term: "ATR — typical daily move",
+    term: "Average True Range (ATR)",
     explain:
-      "Average True Range: how much this symbol usually moves in a day, as a % of price (gaps included). It's the noise floor for your stops — a 2% trailing stop on a stock that routinely swings 4% will shake you out of good trades for no reason. Set stops wider than ATR, not tighter.",
+      "The average size of a symbol's daily move, as a % of price — gaps between one day's close and the next included, not just the day's high-to-low range. It's the noise floor for your stops: a 2% stop on a stock that routinely swings 4% will shake you out of good trades for no reason. QT can use it two ways (both off by default): an ATR STOP places the stop a multiple of ATR below entry, so volatile names get a wider stop and calm ones a tighter stop; ATR SIZING sizes each position so a stop-out loses about the same dollars whatever the symbol's volatility.",
     url: "https://www.investopedia.com/terms/a/atr.asp",
   },
   change_30d: {
