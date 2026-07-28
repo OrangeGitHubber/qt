@@ -138,7 +138,7 @@ function StrategyContributionsCard() {
 
   return (
     <div className="card">
-      <div className="toolbar">
+      <div className="card-head">
         <h3>
           Strategy contributions <span className="hint">(realized · {totals.mode} mode)</span>
         </h3>

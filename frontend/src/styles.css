@@ -1120,6 +1120,22 @@ td.detail p {
   margin: 0 0 0 auto;
 }
 
+/* Card header row: title on the left, a control (e.g. account picker) pushed to
+   the right, both vertically centered — without the h3's default margins skewing
+   the alignment the way a generic .toolbar does. */
+.card-head {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 0.5rem;
+}
+.card-head h3 {
+  margin: 0;
+}
+.card-head .account-select {
+  margin-left: auto;
+}
+
 /* Broker-account picker on the journal / contributions views. */
 .account-select {
   display: inline-flex;
