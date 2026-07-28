@@ -63,9 +63,9 @@ STARTER_BASKETS: dict[str, list[str]] = {
         "FWONA", "RBLX",
     ],
     "Energy": [
-        "XOM", "CVX", "COP", "EOG", "SLB", "MPC", "PSX", "VLO", "PXD", "OXY",
+        "XOM", "CVX", "COP", "EOG", "SLB", "MPC", "PSX", "VLO", "OXY",
         "HES", "HAL", "BKR", "DVN", "WMB", "OKE", "KMI", "FANG", "CTRA",
-        "MRO", "APA", "EQT", "OVV", "TRGP", "CHRD", "MTDR", "PBF", "AMR",
+        "APA", "EQT", "OVV", "TRGP", "CHRD", "MTDR", "PBF", "AMR",
         "CNX", "RRC",
     ],
     "Utilities": [
@@ -81,7 +81,7 @@ STARTER_BASKETS: dict[str, list[str]] = {
     ],
     "Materials": [
         "LIN", "SHW", "FCX", "APD", "ECL", "NUE", "DOW", "CTVA", "DD", "NEM",
-        "ALB", "PPG", "VMC", "MLM", "CE", "FMC", "MOS", "CF", "IP", "WRK",
+        "ALB", "PPG", "VMC", "MLM", "CE", "FMC", "MOS", "CF", "IP", "SW",
         "PKG", "AEM", "GOLD", "STLD", "VALE", "SCCO", "CCK", "BALL", "AA",
         "EMN",
     ],
