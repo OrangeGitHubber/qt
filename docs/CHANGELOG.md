@@ -3,6 +3,17 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Optimizer: it now tells you exactly which symbols it tests (2026-07-27)
+
+The parameter search wasn't clear about *which* symbols it validates on, so it
+was easy to run one and not know what universe was used. It now spells it out.
+Under the symbol picker, a live line says "This search will test on: …" for the
+strategy you picked — your hand-picked symbols, the strategy's own list, a named
+basket's members, or (highlighted) your watchlist. That last case is the
+gotcha: a **scanner** strategy can't be replayed on the historical daily risers,
+so the search falls back to your asset-class **watchlist** — now stated plainly
+instead of buried. The results header also lists the exact symbols it tested.
+
 ## MACD momentum signal — optional entry filter & exit (2026-07-27)
 
 A strategy can now use **MACD** (Moving Average Convergence Divergence, the

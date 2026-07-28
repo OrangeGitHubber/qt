@@ -1,6 +1,8 @@
 import { FormEvent, useEffect, useRef, useState } from "react";
 import {
+  Basket,
   createStrategy,
+  getBaskets,
   getOptimizerStatus,
   getStrategies,
   OptimizerNeighbourPoint,
@@ -24,6 +26,38 @@ const KNOB_ORDER = ["min_day_gain_pct", "trailing_stop_pct", "stop_loss_pct", "t
 
 function pct(v: number | null | undefined): string {
   return v != null ? `${v}%` : "—";
+}
+
+// Spell out EXACTLY which symbols the search will run on, mirroring the backend's
+// _resolve_symbols rules, so there's no mystery about the universe. `warn` = the
+// surprising / fallback cases the user should notice.
+function universeExplain(
+  strategy: StrategyRow | undefined,
+  symbols: string[],
+  baskets: Basket[],
+): { warn: boolean; text: string } | null {
+  if (!strategy) return null;
+  if (symbols.length > 0) {
+    const shown = symbols.slice(0, 12).join(", ");
+    return { warn: false, text: `your ${symbols.length} picked symbol${symbols.length === 1 ? "" : "s"}: ${shown}${symbols.length > 12 ? " …" : ""}` };
+  }
+  if (strategy.universe === "basket") {
+    const b = baskets.find((x) => x.id === strategy.basket_id);
+    return b
+      ? { warn: false, text: `the members of basket “${b.name}” (${b.count} symbol${b.count === 1 ? "" : "s"})` }
+      : { warn: true, text: "this basket strategy has no basket/members — pick symbols above first" };
+  }
+  if (strategy.universe === "custom") {
+    const n = strategy.symbols?.length ?? 0;
+    return n > 0
+      ? { warn: false, text: `this strategy's own symbol list (${n})` }
+      : { warn: true, text: "this strategy's symbol list is empty — pick symbols above" };
+  }
+  // scanner / watchlist / both
+  return {
+    warn: true,
+    text: `your ${strategy.asset_class} watchlist — a scanner strategy can't replay the historical daily risers, so the search validates on your watchlist. Pick specific symbols above to test something else.`,
+  };
 }
 
 function Stat({ label, value, tone, sub }: { label: string; value: string; tone?: "up" | "down"; sub?: string }) {
@@ -65,6 +99,7 @@ function Plateau({ knob, points }: { knob: string; points: OptimizerNeighbourPoi
 export default function Optimizer() {
   const [strategies, setStrategies] = useState<StrategyRow[]>([]);
   const [strategyId, setStrategyId] = useState<number | null>(null);
+  const [baskets, setBaskets] = useState<Basket[]>([]);
   const [symbols, setSymbols] = useState<string[]>([]);
   const [days, setDays] = useState(180);
   const [timeframe, setTimeframe] = useState("1Day");
@@ -87,6 +122,7 @@ export default function Optimizer() {
       setStrategies(rows);
       if (rows.length && strategyId === null) setStrategyId(rows[0].id);
     });
+    getBaskets().then(setBaskets).catch(() => setBaskets([]));
     // Pick up a search already in flight (e.g. after a page switch).
     getOptimizerStatus()
       .then((s) => {
@@ -244,15 +280,23 @@ export default function Optimizer() {
             </label>
             <div className="field">
               <span className="field-cap">
-                Symbols to validate across (none picked = your watchlist){" "}
+                Symbols to validate across (leave empty to use the strategy's own universe){" "}
               </span>
               <SymbolPicker assetClass={strategy?.asset_class} value={symbols} onChange={setSymbols} multi />
             </div>
           </div>
+          {(() => {
+            const u = universeExplain(strategy, symbols, baskets);
+            if (!u) return null;
+            return (
+              <p className={`hint ${u.warn ? "warn" : ""}`}>
+                This search will test on: <strong>{u.text}</strong>
+              </p>
+            );
+          })()}
           <p className="hint">
             Validate across <strong>several symbols or the basket</strong>, never one ticker — a setting that fits a
-            single name's history rarely survives contact with another. A scanner strategy falls back to its asset-class
-            watchlist (a merged timeline can't reconstruct the historical daily risers).
+            single name's history rarely survives contact with another.
           </p>
           <div className="filter-grid">
             <label>
@@ -324,6 +368,9 @@ export default function Optimizer() {
               <strong>{result.tested_combinations.toLocaleString()} combinations</strong> · {result.symbols.length}{" "}
               symbol{result.symbols.length === 1 ? "" : "s"} · last {result.days} days ({result.timeframe})
             </h3>
+            <p className="hint">
+              Tested on: <strong>{result.symbols.join(", ")}</strong>
+            </p>
             <p className="hint">
               <strong>Out-of-sample is the real result.</strong> The search optimized on{" "}
               {result.in_sample_window.days} days ({result.in_sample_window.start.slice(0, 10)} →{" "}
