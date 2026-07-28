@@ -1263,6 +1263,14 @@ details.adv[open] > summary::before {
   margin: 0.25rem 0 0.5rem;
 }
 
+/* A toggle chip paired with its ? explainer, kept out of the <label> so a
+   tooltip click never flips the checkbox. */
+.chip-with-tip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
 .chip-toggle {
   display: inline-flex;
   align-items: center;

@@ -12,17 +12,19 @@ const RANGES: { label: string; days: number | null }[] = [
   { label: "Max", days: null },
 ];
 
-// The overlays the user can toggle. `stockOnly` ones are hidden for crypto.
-const OVERLAYS: { key: OverlayKey; label: string; stockOnly?: boolean }[] = [
-  { key: "markers", label: "Buy / sell markers" },
-  { key: "ma", label: "50 & 200-day MA" },
-  { key: "ema", label: "EMA 9 & 21" },
-  { key: "bb", label: "Bollinger Bands" },
-  { key: "atrStop", label: "ATR-stop level" },
-  { key: "volume", label: "Volume" },
-  { key: "macd", label: "MACD" },
-  { key: "rsi", label: "RSI" },
-  { key: "rs", label: "Rel. strength vs SPY", stockOnly: true },
+// The overlays the user can toggle. Each has a ? tip explaining what it measures
+// and how to read it. `stockOnly` ones are hidden for crypto.
+type Tip = Parameters<typeof InfoTip>[0]["k"];
+const OVERLAYS: { key: OverlayKey; label: string; tip: Tip; stockOnly?: boolean }[] = [
+  { key: "markers", label: "Buy / sell markers", tip: "chart_markers" },
+  { key: "ma", label: "50 & 200-day MA", tip: "ma_overlay" },
+  { key: "ema", label: "EMA 9 & 21", tip: "ema_overlay" },
+  { key: "bb", label: "Bollinger Bands", tip: "bollinger_overlay" },
+  { key: "atrStop", label: "ATR-stop level", tip: "atr_stop_line" },
+  { key: "volume", label: "Volume", tip: "volume_overlay" },
+  { key: "macd", label: "MACD", tip: "macd" },
+  { key: "rsi", label: "RSI", tip: "rsi" },
+  { key: "rs", label: "Rel. strength vs SPY", tip: "rs_ratio", stockOnly: true },
 ];
 
 type OverlayKey = "markers" | "ma" | "ema" | "bb" | "atrStop" | "volume" | "macd" | "rsi" | "rs";
@@ -220,10 +222,13 @@ export default function SymbolDetail({
             {/* Overlay toggles — each adds/removes its data on the chart below. */}
             <div className="overlay-toggles">
               {visibleOverlays.map((o) => (
-                <label key={o.key} className={`chip-toggle ${on[o.key] ? "chip-on" : ""}`}>
-                  <input type="checkbox" checked={on[o.key]} onChange={() => toggle(o.key)} />
-                  {o.label}
-                </label>
+                <span key={o.key} className="chip-with-tip">
+                  <label className={`chip-toggle ${on[o.key] ? "chip-on" : ""}`}>
+                    <input type="checkbox" checked={on[o.key]} onChange={() => toggle(o.key)} />
+                    {o.label}
+                  </label>
+                  <InfoTip k={o.tip} />
+                </span>
               ))}
             </div>
             <p className="hint">

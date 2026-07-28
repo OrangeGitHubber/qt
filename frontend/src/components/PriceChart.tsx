@@ -37,8 +37,8 @@ export interface ChartOverlays {
 // Data-viz series colors, legible on both light and dark grounds. These are
 // intentionally NOT the app accent — they're categorical encodings.
 export const SERIES_COLORS = {
-  ma50: "#e0a13b",
-  ma200: "#b5651d",
+  ma50: "#e0a13b", // warm gold
+  ma200: "#3ec8c8", // cyan — deliberately a different hue from MA50 so the two don't blur
   ema9: "#3b9ae0",
   ema21: "#8a5cf6",
   atrStop: "#e04b6a",
@@ -358,6 +358,9 @@ export default function PriceChart({
             const y = scaleY(box, 0, 100);
             return (
               <g>
+                {/* The 50–70 band is the healthy-uptrend zone (bullish momentum,
+                    not yet overbought) — shaded green as the "good area to be in". */}
+                <rect x={padL} y={y(70)} width={W - padL - padR} height={y(50) - y(70)} fill="var(--ok)" opacity="0.12" />
                 <text x={padL - 8} y={box.top + 10} textAnchor="end" className="chart-label">RSI</text>
                 {[30, 50, 70].map((lv) => (
                   <g key={lv}>
@@ -379,6 +382,8 @@ export default function PriceChart({
             const y = scaleY(box, min, max);
             return (
               <g>
+                {/* Above 1.0 = out-performing the S&P 500 — the "good" zone, shaded green. */}
+                <rect x={padL} y={box.top} width={W - padL - padR} height={Math.max(0, y(1) - box.top)} fill="var(--ok)" opacity="0.12" />
                 <text x={padL - 8} y={box.top + 10} textAnchor="end" className="chart-label">RS</text>
                 <line x1={padL} x2={W - padR} y1={y(1)} y2={y(1)} stroke="var(--border)" strokeDasharray="3 3" />
                 <text x={W - padR + 2} y={y(1) + 3} className="chart-label">1.0</text>

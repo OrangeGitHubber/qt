@@ -331,4 +331,54 @@ export const GLOSSARY: Record<string, GlossaryEntry> = {
       "Systematically trying many settings for a strategy (min gain, stops, take-profit) through the SAME backtester, instead of guessing one by hand — this is a search, not 'AI'. QT searches on the first ~70% of the history and reports the result on the final ~30% it never optimized on, so a lucky in-sample fit gets caught. The output is a HYPOTHESIS: an editable draft strategy, born disabled, that still has to prove itself in shadow then paper. It never enables anything for you.",
     url: "https://www.investopedia.com/terms/b/backtesting.asp",
   },
+
+  // ---- Symbol-detail chart overlays (display-only) ----
+  chart_markers: {
+    term: "Buy / sell markers",
+    explain:
+      "The green ▲ (buys) and red ▼ (sells) come from THIS symbol's trade journal, placed on the day each trade happened — hover for the price, reason and P&L. They let you see where the strategy actually entered and exited against the price action: did it buy strength and sell into weakness, or the other way around? Nothing to interpret numerically — they're a record of what the bot did here.",
+    url: "https://www.investopedia.com/terms/t/trade.asp",
+  },
+  ma_overlay: {
+    term: "50 & 200-day moving averages",
+    explain:
+      "The average closing price over the last 50 days (gold) and 200 days (cyan), redrawn each day. They smooth out the noise to show the TREND: price above a rising average is an uptrend, below a falling one is a downtrend. Traders watch the cross — the 50-day rising ABOVE the 200-day is the bullish 'golden cross', dropping below is the bearish 'death cross'. The 200-day is the slow, big-picture line; the 50-day turns sooner.",
+    url: "https://www.investopedia.com/terms/m/movingaverage.asp",
+  },
+  ema_overlay: {
+    term: "EMA 9 & 21",
+    explain:
+      "Exponential moving averages that weight recent prices more, so they react FASTER than the 50/200-day lines — this is short-term trend and momentum. Price above a rising 9 and 21 EMA, with the 9 above the 21, is short-term bullish; the 9 crossing below the 21 is an early warning that momentum is fading. Use them for timing within a trend, not the big-picture direction.",
+    url: "https://www.investopedia.com/terms/e/ema.asp",
+  },
+  bollinger_overlay: {
+    term: "Bollinger Bands",
+    explain:
+      "A 20-day average with an upper and lower band set 2 standard deviations away, so the bands WIDEN when volatility rises and pinch in when it falls. Price riding the upper band = stretched/strong; hugging the lower band = weak or oversold; a 'squeeze' (very narrow bands) often comes before a big move. It frames how far price has stretched from normal — not a buy/sell signal on its own.",
+    url: "https://www.investopedia.com/terms/b/bollingerbands.asp",
+  },
+  atr_stop_line: {
+    term: "ATR-stop level",
+    explain:
+      "An ILLUSTRATIVE trailing stop drawn at close − 2×ATR (ATR = the symbol's typical daily move). It shows how far a volatility-based stop would sit below price and how it 'breathes' — wider when the stock is volatile, tighter when calm — so ordinary wiggle doesn't shake you out. It is NOT a specific position's live stop, just a visual for where a sensible stop might ride.",
+    url: "https://www.investopedia.com/terms/a/atr.asp",
+  },
+  volume_overlay: {
+    term: "Volume",
+    explain:
+      "Shares (or contracts) traded each day — green when the day closed up, red when down. It's the conviction behind a move: a breakout on HIGH volume is far more trustworthy than one on light volume, and a rally on fading volume is suspect. Note for stocks: the free IEX feed sees only a slice of true volume, so read it for relative comparison (this bar vs recent bars), not absolute size.",
+    url: "https://www.investopedia.com/terms/v/volume.asp",
+  },
+  rsi: {
+    term: "RSI (Relative Strength Index)",
+    explain:
+      "A 0–100 momentum oscillator over 14 days. Above 70 = overbought (stretched, prone to pull back); below 30 = oversold; the 50 line is the momentum midline — above 50 is bullish, below is bearish. The shaded 50–70 band (green) is the sweet spot: healthy uptrend momentum that isn't yet overbought. Above 70 momentum is strong but chasing it is risky; that's why 'good' here is the band, not simply 'as high as possible'.",
+    url: "https://www.investopedia.com/terms/r/rsi.asp",
+  },
+  rs_ratio: {
+    term: "Relative strength vs SPY",
+    explain:
+      "This symbol's price divided by the S&P 500's (SPY), rebased to 1.0 at the start of the window. ABOVE 1.0 (shaded green) means it has OUT-performed the market since then; a RISING line means it's leading right now. Below 1.0 or falling means it's lagging. It answers 'is this a leader or a laggard?' independent of whether the whole market went up or down — the good zone is above 1.0 and rising.",
+    url: "https://www.investopedia.com/terms/r/relativestrength.asp",
+  },
 };

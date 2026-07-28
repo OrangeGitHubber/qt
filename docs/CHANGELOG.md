@@ -21,6 +21,23 @@ the Baskets screen. A handful of energy/materials names in the sector lists have
 since been acquired or merged away (Pioneer/PXD, Marathon Oil/MRO, WestRock/WRK) —
 they're included as given but may not trade on Alpaca, so prune them if you like.
 
+## Symbol chart overlays: clearer colors, ? explainers, and "good zone" shading (2026-07-28)
+
+Polish on the symbol-detail review chart, from testing feedback:
+
+- **MA50 vs MA200 are now easy to tell apart** — the 200-day line is cyan against
+  the 50-day's gold, instead of two near-identical oranges.
+- **Every overlay checkbox has a ? explainer** — what it measures and, crucially,
+  how to read it: moving averages (trend + golden/death cross), EMA 9/21 (faster
+  momentum), Bollinger Bands (volatility envelope), the ATR-stop line, volume,
+  MACD, RSI, relative-strength, and the buy/sell journal markers.
+- **The "good" zone is shaded green** so it reads at a glance:
+  - **RSI** shades the **50–70 band** — healthy uptrend momentum that isn't yet
+    overbought (below 30 is oversold, above 70 is overbought/caution).
+  - **Relative strength vs SPY** shades **above 1.0** — the region where the
+    symbol is out-performing the S&P 500 since the start of the window. Above 1.0
+    and rising = a market leader.
+
 ## Top-N ranking now works for watchlists and custom lists, not just baskets (2026-07-28)
 
 Ranking a pool of symbols and trading only the strongest few — plus rotating out
