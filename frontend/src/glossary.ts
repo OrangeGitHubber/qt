@@ -208,7 +208,7 @@ export const GLOSSARY: Record<string, GlossaryEntry> = {
   entry_window: {
     term: "Entry window (ET)",
     explain:
-      "Only OPEN new positions between these US-Eastern times; outside the window entries are skipped (exits and stops always still work). Use it to avoid the chaotic first minutes after the 09:30 open, or to stop opening trades late in the day. Turn it off to allow entries any time the market is open. Crypto trades 24/7, so ET hours mean little there — usually leave this off for crypto.",
+      "Restricts BUYING only, on purpose. New positions are only OPENED between these US-Eastern times; outside the window entries are skipped. SELLING is never time-boxed — exits, trailing stops and stop-losses always fire whenever they're triggered, because you must always be able to get out (a window that could block a stop-out would be dangerous). That's why it's an 'entry' window, not a 'trading' window. Use it to avoid the chaotic first minutes after the 09:30 open, or to stop opening trades late in the day. Crypto trades 24/7, so ET hours mean little there — usually leave this off for crypto.",
     url: "https://www.investopedia.com/terms/t/tradinghours.asp",
   },
   max_holding: {

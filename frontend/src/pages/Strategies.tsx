@@ -267,6 +267,8 @@ function Editor({
             Name
             <input value={s.name ?? ""} onChange={(e) => setS({ ...s, name: e.target.value })} required />
           </label>
+        </div>
+        <div className="slider-row">
           <div className="field">
             <span className="field-cap">Asset class</span>
             <Segmented
@@ -288,7 +290,7 @@ function Editor({
               ariaLabel="Trading style"
               onChange={setStyle}
               options={[
-                { value: "swing", label: "Swing (overnight)" },
+                { value: "swing", label: "Swing" },
                 { value: "intraday", label: "Intraday" },
               ]}
             />
