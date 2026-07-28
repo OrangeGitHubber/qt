@@ -2,6 +2,38 @@
 
 Why QT is the way it is. Newest first.
 
+## 2026-07-28 — The three jobs QT exists to do (product objectives)
+Restated with Werner so every feature can be checked against them. QT must serve
+three distinct trading styles, each a strategy the engine runs concurrently:
+
+1. **Intraday momentum on fast movers** (crypto + stocks). Ride the day's biggest
+   risers and exit same-day. Served by: the **scanner** universe (today's top
+   movers), **intraday** trading style (flatten before close for stocks), ATR
+   stops, and the trade-rate limiter. **Honest limitation (raised 2026-07-28):**
+   this is strong for **crypto** (24/7, clean aggregated feed) but data-limited
+   for **stocks** on the free IEX plan (sees ~2–3% of volume; 15-min bars miss
+   sub-15-min spikes; wide spreads on thin small-caps). And QT is deliberately
+   **not** a high-frequency scalper — marketable-limit orders only, a trade-rate
+   cap, and spread-cost awareness all push against rapid churn. So "intraday
+   scalping" here means **intraday momentum with same-day exits**, and the
+   scoreboard/paper→live gate is the arbiter of whether stock intraday earns its
+   place. A paid SIP feed is the lever if stock intraday must be first-class.
+2. **Long-term rotation across a specified list** as strengths change. Hold the
+   strongest few of a chosen set, rotating as the ranking shifts. Served by:
+   **basket / watchlist / custom** universes + **top-N ranking** (relative
+   strength, RS-vs-SPY, 30-day return) + **rotate-on-rank-dropout** + the regime
+   filter + swing/long holds. The 2026-07-28 work to extend top-N ranking and
+   rotation beyond baskets to **watchlist and custom** lists exists precisely to
+   serve this job ("a specified list", not only a curated basket).
+3. **Medium/long-term trades on a set list** per buy/sell criteria. Trade a fixed
+   set of names whenever they meet the entry rules; exit on the configured
+   downturn. Served by: **custom / watchlist** universes + entry/exit rules +
+   swing mode, no ranking required (trade all that qualify).
+
+Everything built should map to one of these; if it doesn't, raise it and either
+drop it or revise the objective. Current status: goals 2 and 3 are strongly
+served; goal 1 is strong for crypto and honestly data-limited for stocks (above).
+
 ## 2026-07-26 — Bar cache backend is configurable (SQLite default, optional Postgres)
 The historical **bar cache** (bulk daily bars + computed movers, the foundation
 for replaying the scanner over past days) is kept in a store **separate** from
