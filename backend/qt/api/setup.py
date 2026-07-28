@@ -44,6 +44,13 @@ async def save_alpaca_keys(keys: AlpacaKeys, session: Session = Depends(get_sess
 
     security.set_secret(session, SECRET_KEY_ID, keys.key_id)
     security.set_secret(session, SECRET_KEY_SECRET, keys.key_secret)
+    # Remember which account these keys belong to so new trades get stamped with
+    # it — that's what lets the journal / P&L views separate accounts after a
+    # key switch.
+    from qt.settings_service import set_setting
+
+    if account.get("account_number"):
+        set_setting(session, "current_account_id", account.get("account_number"))
     session.add(AuditLog(category="setup", message="Alpaca paper keys saved and verified"))
     return {
         "ok": True,

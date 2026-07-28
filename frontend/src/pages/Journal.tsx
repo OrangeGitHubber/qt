@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { getJournal, JournalRow } from "../api";
+import AccountSelect from "../components/AccountSelect";
 
 function money(v: number | null) {
   if (v === null || v === undefined) return "—";
@@ -21,11 +22,12 @@ export default function Journal() {
   const [mode, setMode] = useState<string>("");
   const [status, setStatus] = useState<"" | "trades" | "rejected">("");
   const [assetClass, setAssetClass] = useState<"" | "stock" | "crypto">("");
+  const [account, setAccount] = useState<string>("");
   const [expanded, setExpanded] = useState<string | null>(null);
 
   const refresh = useCallback(() => {
-    getJournal(mode || undefined, status || undefined, assetClass || undefined).then(setRows);
-  }, [mode, status, assetClass]);
+    getJournal(mode || undefined, status || undefined, assetClass || undefined, account || undefined).then(setRows);
+  }, [mode, status, assetClass, account]);
 
   useEffect(() => {
     refresh();
@@ -72,6 +74,7 @@ export default function Journal() {
           <option value="shadow">Shadow</option>
           <option value="paper">Paper</option>
         </select>
+        <AccountSelect value={account} onChange={setAccount} />
         <button className="small btn-ghost" onClick={refresh}>
           Refresh
         </button>

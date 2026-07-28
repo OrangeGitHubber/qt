@@ -75,12 +75,16 @@ async def open_trade(
     # `sizing_usd` lets the caller override the strategy's fixed $ per trade — the
     # engine passes the ATR-derived size when ATR sizing is on. None = the fixed
     # strategy.sizing_usd, so existing callers are unaffected.
+    from qt.settings_service import get_setting
+
+    account_id = get_setting(session, "current_account_id")  # tag the trade's account
     effective_sizing = strategy.sizing_usd if sizing_usd is None else sizing_usd
     qty = _qty_for(cand.asset_class, effective_sizing, cand.price)
     if qty <= 0:
         session.add(
             Trade(
                 strategy_id=strategy.id, config_version_id=version_id, mode=mode,
+                account_id=account_id,
                 symbol=cand.symbol, asset_class=cand.asset_class, qty=0, notional=0,
                 status="rejected",
                 entry_reason=f"wanted to buy ({reason}) but position too small: "
@@ -92,6 +96,7 @@ async def open_trade(
     now = datetime.now(timezone.utc)
     trade = Trade(
         strategy_id=strategy.id, config_version_id=version_id, mode=mode,
+        account_id=account_id,
         symbol=cand.symbol, asset_class=cand.asset_class, qty=qty,
         notional=qty * cand.price, status="open", entry_reason=reason,
         entry_price=cand.price, entry_at=now, high_water=cand.price,

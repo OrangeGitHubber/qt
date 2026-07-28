@@ -514,6 +514,11 @@ async def tick(leverage_unlocked: bool = False) -> None:
             return
 
         equity = float(account.get("equity") or 0)
+        # Remember the live account so new trades get tagged with it — even if the
+        # keys were saved before per-account tagging existed. Write only on change.
+        acct_num = account.get("account_number")
+        if acct_num and get_setting(session, "current_account_id") != acct_num:
+            set_setting(session, "current_account_id", acct_num)
         market_open = bool(clock.get("is_open"))
         closes_soon = False
         if market_open and clock.get("next_close"):
@@ -847,6 +852,7 @@ async def _consider_entries(
                             strategy_id=strategy.id,
                             config_version_id=version_id,
                             mode=mode, symbol=cand.symbol, asset_class=cand.asset_class,
+                            account_id=get_setting(session, "current_account_id"),
                             qty=0, notional=0, status="rejected",
                             entry_reason=f"wanted to buy ({entry_reason}) but {rails_reason}",
                         )
@@ -958,6 +964,7 @@ async def _consider_dca_entries(
                 Trade(
                     strategy_id=strategy.id, config_version_id=version_id,
                     mode=mode, symbol=sym, asset_class=cand.asset_class,
+                    account_id=get_setting(session, "current_account_id"),
                     qty=0, notional=0, status="rejected",
                     entry_reason=f"wanted to buy ({reason}) but {rails_reason}",
                 )

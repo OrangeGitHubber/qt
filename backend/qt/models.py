@@ -107,6 +107,10 @@ class Trade(Base):
         ForeignKey("strategy_config_versions.id"), nullable=True
     )
     mode: Mapped[str] = mapped_column(String(16), index=True)  # shadow | paper | live
+    # The broker account this trade was made on (Alpaca account number). Lets the
+    # journal / P&L views separate accounts after a key switch. Null = made before
+    # tagging existed (legacy) — a one-time SQL backfill can stamp those.
+    account_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     symbol: Mapped[str] = mapped_column(String(32), index=True)
     asset_class: Mapped[str] = mapped_column(String(16))
     side: Mapped[str] = mapped_column(String(8), default="long")

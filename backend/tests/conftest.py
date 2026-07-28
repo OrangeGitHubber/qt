@@ -22,6 +22,20 @@ def _db():
     init_db()
 
 
+@pytest.fixture(autouse=True)
+def _reset_account_setting():
+    """Trades are tagged with the current broker account, and the journal / P&L
+    views default to filtering by it. The setting is global, so a test that saves
+    keys (which stamps it) would otherwise make later tests' untagged trades
+    vanish. Clear it before each test so the default filter is inert unless the
+    test sets it deliberately."""
+    from qt.settings_service import set_setting
+
+    with session_scope() as s:
+        set_setting(s, "current_account_id", "")
+    yield
+
+
 @pytest.fixture()
 def client():
     return TestClient(app)

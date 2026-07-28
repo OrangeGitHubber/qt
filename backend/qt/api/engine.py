@@ -20,6 +20,34 @@ router = APIRouter(prefix="/api/engine", tags=["engine"])
 LEVERAGE_CONFIRM_PHRASE = "I ACCEPT AMPLIFIED LOSSES"
 
 
+def _account_conditions(account: str | None, session: Session) -> list:
+    """SQLAlchemy filter conditions to scope trades to one broker account. Default
+    (account is None) = the CURRENT account, so the journal / P&L views auto-scope
+    to it after a key switch. 'all' = no filter; 'untagged' = the legacy null
+    trades (from before per-account tagging)."""
+    if account == "all":
+        return []
+    if account == "untagged":
+        return [Trade.account_id.is_(None)]
+    if account is None:
+        account = get_setting(session, "current_account_id")
+    return [Trade.account_id == account] if account else []
+
+
+@router.get("/accounts")
+def accounts(session: Session = Depends(get_session)) -> dict:
+    """Broker accounts present in the trade history, for the journal / P&L account
+    selector. `current` is the one new trades are tagged with."""
+    current = get_setting(session, "current_account_id")
+    rows = session.query(Trade.account_id, func.count(Trade.id)).group_by(Trade.account_id).all()
+    out = [
+        {"id": acct, "trades": int(n), "is_current": acct == current, "untagged": acct is None}
+        for acct, n in rows
+    ]
+    out.sort(key=lambda a: (not a["is_current"], a["untagged"], -a["trades"]))
+    return {"current": current, "accounts": out}
+
+
 @router.get("")
 async def engine_state(session: Session = Depends(get_session)) -> dict:
     mode = get_mode(session)
@@ -222,10 +250,13 @@ def journal(
     mode: str | None = None,
     status: str | None = None,
     asset_class: str | None = None,
+    account: str | None = None,
     limit: int = 100,
     session: Session = Depends(get_session),
 ) -> list[dict]:
     q = session.query(Trade, Strategy.name).join(Strategy, Trade.strategy_id == Strategy.id)
+    for cond in _account_conditions(account, session):
+        q = q.filter(cond)
     if mode:
         q = q.filter(Trade.mode == mode)
     if asset_class in ("stock", "crypto"):
@@ -267,23 +298,25 @@ def get_scoreboard(session: Session = Depends(get_session)) -> dict:
 
 
 @router.get("/strategy-pnl")
-def strategy_pnl(session: Session = Depends(get_session)) -> dict:
+def strategy_pnl(account: str | None = None, session: Session = Depends(get_session)) -> dict:
     """Per-strategy REALIZED P&L in the active mode — the exact, additive
     breakdown the aggregate scoreboard hides. Realized only (locked-in, sums to
     the account's realized P&L); open positions are shown as a count. Unrealized
-    marks would need live quotes and aren't included here."""
+    marks would need live quotes and aren't included here. Scoped to the current
+    account by default (pass account=all / a specific id / untagged)."""
     mode = get_mode(session)
+    acct = _account_conditions(account, session)
     win = func.sum(case((Trade.pnl > 0, 1), else_=0))
     rows = (
         session.query(Trade.strategy_id, func.coalesce(func.sum(Trade.pnl), 0.0),
                       func.count(Trade.id), func.coalesce(win, 0))
-        .filter(Trade.mode == mode, Trade.status == "closed")
+        .filter(Trade.mode == mode, Trade.status == "closed", *acct)
         .group_by(Trade.strategy_id)
         .all()
     )
     open_by = dict(
         session.query(Trade.strategy_id, func.count(Trade.id))
-        .filter(Trade.mode == mode, Trade.status == "open")
+        .filter(Trade.mode == mode, Trade.status == "open", *acct)
         .group_by(Trade.strategy_id)
         .all()
     )
@@ -309,15 +342,16 @@ def strategy_pnl(session: Session = Depends(get_session)) -> dict:
 
 
 @router.get("/strategy-pnl-daily")
-def strategy_pnl_daily(days: int = 30, session: Session = Depends(get_session)) -> dict:
+def strategy_pnl_daily(days: int = 30, account: str | None = None, session: Session = Depends(get_session)) -> dict:
     """Per-strategy realized P&L bucketed by day (active mode) for a stacked
     daily-contribution chart. Derived from closed trades grouped by exit DATE ×
     strategy — no snapshot storage needed. Realized only; a day with no closed
     trades simply doesn't appear. `days` is the lookback window; days <= 0 means
-    all time (no cutoff)."""
+    all time (no cutoff). Scoped to the current account by default."""
     mode = get_mode(session)
     day_col = func.date(Trade.exit_at)  # 'YYYY-MM-DD' of the (UTC) exit timestamp
     filters = [Trade.mode == mode, Trade.status == "closed", Trade.exit_at.isnot(None)]
+    filters += _account_conditions(account, session)
     if days > 0:
         cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%d")
         filters.append(day_col >= cutoff)

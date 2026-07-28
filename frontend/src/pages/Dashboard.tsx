@@ -11,6 +11,7 @@ import {
   StrategyPnl,
   StrategyPnlDaily,
 } from "../api";
+import AccountSelect from "../components/AccountSelect";
 import InfoTip from "../components/InfoTip";
 import LineChart from "../components/LineChart";
 import StackedPnlBars, { PnlSeries } from "../components/StackedPnlBars";
@@ -110,16 +111,17 @@ function StrategyContributionsCard() {
   const [totals, setTotals] = useState<StrategyPnl | null>(null);
   const [daily, setDaily] = useState<StrategyPnlDaily | null>(null);
   const [windowDays, setWindowDays] = useState(30); // chart lookback; 0 = all time
+  const [account, setAccount] = useState<string>(""); // "" = current account (default)
 
-  // Totals table is all-time and fetched once.
+  // Totals re-fetch when the account filter changes.
   useEffect(() => {
-    getStrategyPnl().then(setTotals).catch(() => setTotals(null));
-  }, []);
+    getStrategyPnl(account || undefined).then(setTotals).catch(() => setTotals(null));
+  }, [account]);
 
-  // The daily chart re-fetches whenever the selected window changes.
+  // The daily chart re-fetches whenever the window or account changes.
   useEffect(() => {
-    getStrategyPnlDaily(windowDays).then(setDaily).catch(() => setDaily(null));
-  }, [windowDays]);
+    getStrategyPnlDaily(windowDays, account || undefined).then(setDaily).catch(() => setDaily(null));
+  }, [windowDays, account]);
 
   if (!totals) return null;
 
@@ -136,9 +138,12 @@ function StrategyContributionsCard() {
 
   return (
     <div className="card">
-      <h3>
-        Strategy contributions <span className="hint">(realized · {totals.mode} mode)</span>
-      </h3>
+      <div className="toolbar">
+        <h3>
+          Strategy contributions <span className="hint">(realized · {totals.mode} mode)</span>
+        </h3>
+        <AccountSelect value={account} onChange={setAccount} />
+      </div>
       <p className="hint">
         Each strategy's realized (locked-in) profit or loss — the exact split behind the single scoreboard line, and it
         sums to the account's realized total. Open positions are shown as a count, not yet marked to market.

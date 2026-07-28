@@ -1120,6 +1120,21 @@ td.detail p {
   margin: 0 0 0 auto;
 }
 
+/* Broker-account picker on the journal / contributions views. */
+.account-select {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.account-select select {
+  width: auto;
+  margin: 0;
+}
+
 /* Segmented control — a two-way slider-style pick (e.g. Stocks | Crypto). */
 .segmented {
   display: inline-flex;

@@ -289,15 +289,28 @@ export interface SlackPrefs {
 export const getSlackPrefs = () => fetch("/api/engine/slack/prefs").then((r) => handle<SlackPrefs>(r));
 export const setSlackPrefs = (prefs: Record<string, boolean>) =>
   fetch("/api/engine/slack/prefs", { ...json({ prefs }), method: "PUT" }).then((r) => handle<{ prefs: Record<string, boolean> }>(r));
-export const getJournal = (mode?: string, status?: string, assetClass?: string) => {
+export const getJournal = (mode?: string, status?: string, assetClass?: string, account?: string) => {
   const qs = new URLSearchParams();
   if (mode) qs.set("mode", mode);
   if (status) qs.set("status", status);
   if (assetClass) qs.set("asset_class", assetClass);
+  if (account) qs.set("account", account);
   const q = qs.toString();
   return fetch(`/api/engine/journal${q ? `?${q}` : ""}`).then((r) => handle<JournalRow[]>(r));
 };
 export const getScoreboard = () => fetch("/api/engine/scoreboard").then((r) => handle<Scoreboard>(r));
+
+export interface AccountRow {
+  id: string | null;
+  trades: number;
+  is_current: boolean;
+  untagged: boolean;
+}
+export interface AccountsResponse {
+  current: string | null;
+  accounts: AccountRow[];
+}
+export const getAccounts = () => fetch("/api/engine/accounts").then((r) => handle<AccountsResponse>(r));
 
 export interface StrategyPnl {
   mode: string;
@@ -317,9 +330,15 @@ export interface StrategyPnlDaily {
   days: string[];
   strategies: { strategy_id: number; name: string; values: number[]; total: number }[];
 }
-export const getStrategyPnl = () => fetch("/api/engine/strategy-pnl").then((r) => handle<StrategyPnl>(r));
-export const getStrategyPnlDaily = (days = 30) =>
-  fetch(`/api/engine/strategy-pnl-daily?days=${days}`).then((r) => handle<StrategyPnlDaily>(r));
+export const getStrategyPnl = (account?: string) =>
+  fetch(`/api/engine/strategy-pnl${account ? `?account=${encodeURIComponent(account)}` : ""}`).then((r) =>
+    handle<StrategyPnl>(r),
+  );
+export const getStrategyPnlDaily = (days = 30, account?: string) => {
+  const qs = new URLSearchParams({ days: String(days) });
+  if (account) qs.set("account", account);
+  return fetch(`/api/engine/strategy-pnl-daily?${qs}`).then((r) => handle<StrategyPnlDaily>(r));
+};
 
 export interface BarCacheStats {
   daily_symbols: number;

@@ -53,3 +53,43 @@ def test_journal_status_filter_and_timestamp(client):
     with session_scope() as s:
         s.query(Trade).delete()
     client.delete(f"/api/strategies/{sid}")
+
+
+def test_journal_and_pnl_account_filter(client):
+    from qt.settings_service import set_setting
+
+    body = dict(STRAT, name="Acct filter test")
+    sid = client.post("/api/strategies", json=body).json()["id"]
+    try:
+        with session_scope() as s:
+            set_setting(s, "current_account_id", "NEWACCT")
+            set_setting(s, "engine_mode", "paper")  # so strategy-pnl (active mode) counts the paper trades
+            for sym, acct, pnl in [("AAA", "NEWACCT", 5.0), ("BBB", "OLDACCT", 9.0), ("CCC", None, 1.0)]:
+                s.add(Trade(strategy_id=sid, mode="paper", symbol=sym, asset_class="stock",
+                            qty=1, notional=100, status="closed", account_id=acct, pnl=pnl,
+                            entry_price=10, exit_price=10))
+
+        mine = lambda rows: {r["symbol"] for r in rows if r["strategy"] == "Acct filter test"}
+        # Default = current account only.
+        assert mine(client.get("/api/engine/journal").json()) == {"AAA"}
+        assert mine(client.get("/api/engine/journal?account=OLDACCT").json()) == {"BBB"}
+        assert mine(client.get("/api/engine/journal?account=untagged").json()) == {"CCC"}
+        assert mine(client.get("/api/engine/journal?account=all").json()) == {"AAA", "BBB", "CCC"}
+
+        # /accounts lists every bucket, marking the current one.
+        accts = client.get("/api/engine/accounts").json()
+        assert accts["current"] == "NEWACCT"
+        assert {a["id"] for a in accts["accounts"]} == {"NEWACCT", "OLDACCT", None}
+
+        # strategy-pnl defaults to the current account (paper mode).
+        pnl = client.get("/api/engine/strategy-pnl").json()
+        assert pnl["realized_total"] == 5.0  # only NEWACCT's AAA
+        pnl_all = client.get("/api/engine/strategy-pnl?account=all").json()
+        assert pnl_all["realized_total"] == 15.0  # 5 + 9 + 1
+    finally:
+        with session_scope() as s:
+            s.query(Trade).filter(Trade.strategy_id == sid).delete()
+            # Reset the globals so other tests default to no account filter / engine off.
+            set_setting(s, "current_account_id", "")
+            set_setting(s, "engine_mode", "off")
+        client.delete(f"/api/strategies/{sid}")

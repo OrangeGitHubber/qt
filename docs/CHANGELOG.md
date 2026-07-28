@@ -21,6 +21,25 @@ the Baskets screen. A handful of energy/materials names in the sector lists have
 since been acquired or merged away (Pioneer/PXD, Marathon Oil/MRO, WestRock/WRK) —
 they're included as given but may not trade on Alpaca, so prune them if you like.
 
+## Journal + P&L are now per broker account (2026-07-28)
+
+After switching Alpaca paper accounts, the journal and per-strategy P&L still
+showed the OLD account's trades. Now every trade is **stamped with the account it
+was made on** (the Alpaca account number, captured on key-save and on each engine
+cycle), and the **Journal** and Dashboard **"Strategy contributions"** views
+default to the **current account** — with an **Account** dropdown to view a past
+account, the legacy pre-tagging trades ("Earlier / untagged"), or "All accounts".
+So the moment you point QT at a different account, the views go clean on their
+own; nothing is deleted.
+
+New: `GET /api/engine/accounts` (the accounts present in history) and an optional
+`account` filter on `/journal`, `/strategy-pnl`, and `/strategy-pnl-daily`. The
+account picker only appears when there's more than one account to choose from.
+
+Note: trades made *before* this change are untagged; a one-time SQL backfill can
+assign them your old account id if you want them attributed rather than grouped
+as "Earlier".
+
 ## Strategies: "Current ranking" — see who's eligible in a ranked strategy (2026-07-28)
 
 For a ranked strategy (a basket, or a watchlist/custom list with "Rank & take top
