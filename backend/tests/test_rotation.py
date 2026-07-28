@@ -16,6 +16,7 @@ def _seed(session, *, rotate: bool, symbols: tuple[str, ...]):
     session.query(Strategy).delete()
     strat = Strategy(
         name="Rot", asset_class="stock", universe="basket", top_n=2, rank_by="relative_strength",
+        rank_enabled=True,  # a basket is always ranked; rotation needs a top-N to fall out of
         params=json.dumps({"entry": {}, "exit": {"rotate_on_rank_dropout": rotate}}),
     )
     session.add(strat)
@@ -40,13 +41,10 @@ def _cleanup(session):
 
 def test_rotation_flags_holdings_that_left_the_top_n(monkeypatch):
     # Current top-N ranks {AAA, BBB}; the held CCC has dropped out.
-    async def fake_candidates(session, client, s):
-        return [
-            engine.Candidate(symbol="AAA", asset_class="stock", price=10, change_pct=1, vwap=None),
-            engine.Candidate(symbol="BBB", asset_class="stock", price=10, change_pct=1, vwap=None),
-        ]
+    async def fake_top(session, client, s):
+        return {"AAA", "BBB"}
 
-    monkeypatch.setattr(engine, "_basket_candidates", fake_candidates)
+    monkeypatch.setattr(engine, "_ranked_symbols_now", fake_top)
     with session_scope() as s:
         held, kept = _seed(s, rotate=True, symbols=("CCC", "AAA"))
         reasons = asyncio.run(engine._rotation_dropout_reasons(s, MagicMock(), [held, kept]))
@@ -59,7 +57,7 @@ def test_rotation_left_alone_when_flag_off(monkeypatch):
     async def boom(*a, **k):
         raise AssertionError("must not rank a strategy without the rotate flag")
 
-    monkeypatch.setattr(engine, "_basket_candidates", boom)
+    monkeypatch.setattr(engine, "_ranked_symbols_now", boom)
     with session_scope() as s:
         (t,) = _seed(s, rotate=False, symbols=("CCC",))
         reasons = asyncio.run(engine._rotation_dropout_reasons(s, MagicMock(), [t]))
@@ -70,11 +68,39 @@ def test_rotation_left_alone_when_flag_off(monkeypatch):
 def test_rotation_holds_when_ranking_unavailable(monkeypatch):
     # If the live ranking can't be computed, never force a blind exit.
     async def empty(session, client, s):
-        return []
+        return set()
 
-    monkeypatch.setattr(engine, "_basket_candidates", empty)
+    monkeypatch.setattr(engine, "_ranked_symbols_now", empty)
     with session_scope() as s:
         (t,) = _seed(s, rotate=True, symbols=("CCC",))
         reasons = asyncio.run(engine._rotation_dropout_reasons(s, MagicMock(), [t]))
         assert reasons == {}
+        _cleanup(s)
+
+
+def test_rotation_now_works_for_ranked_watchlist(monkeypatch):
+    # Rotation is no longer basket-only: a ranked WATCHLIST strategy also rotates
+    # out a holding that fell out of its top-N.
+    from qt.models import Strategy, Trade
+
+    async def fake_top(session, client, s):
+        return {"AAA"}
+
+    monkeypatch.setattr(engine, "_ranked_symbols_now", fake_top)
+    with session_scope() as s:
+        s.query(Trade).delete()
+        s.query(Strategy).delete()
+        strat = Strategy(
+            name="WLRot", asset_class="stock", universe="watchlist", top_n=1,
+            rank_by="relative_strength", rank_enabled=True,
+            params=json.dumps({"entry": {}, "exit": {"rotate_on_rank_dropout": True}}),
+        )
+        s.add(strat)
+        s.flush()
+        held = Trade(strategy_id=strat.id, mode="paper", symbol="ZZZ", asset_class="stock",
+                     status="open", qty=1, notional=10)
+        s.add(held)
+        s.commit()
+        reasons = asyncio.run(engine._rotation_dropout_reasons(s, MagicMock(), [held]))
+        assert held.id in reasons
         _cleanup(s)

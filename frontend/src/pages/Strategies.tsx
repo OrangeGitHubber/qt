@@ -32,6 +32,7 @@ const EMPTY: Partial<StrategyRow> = {
   symbols: [],
   rank_by: "momentum_today",
   top_n: 10,
+  rank_enabled: false,
   preset: "custom",
   swing_mode: true,
   ignore_regime: false,
@@ -246,6 +247,10 @@ function Editor({
   const macd = p.macd ?? { fast: 12, slow: 26, signal: 9 };
   const atr = p.atr ?? { period: 14, stop_mult: 0, risk_usd: 0 };
   const windowOn = !!(p.entry.entry_window_start && p.entry.entry_window_end);
+  // Ranking: a basket is always ranked; watchlist/custom can opt in. Scanner/both
+  // are already ranked by the scanner, so the controls don't apply there.
+  const rankable = s.universe === "watchlist" || s.universe === "custom";
+  const ranking = s.universe === "basket" || (rankable && !!s.rank_enabled);
   return (
     <form className="card editor" onSubmit={save}>
       <h3>{s.id ? `Edit: ${s.name}` : "New strategy"}</h3>
@@ -322,36 +327,21 @@ function Editor({
             </select>
           </label>
           {s.universe === "basket" && (
-            <>
-              <label>
-                Basket
-                <select
-                  value={s.basket_id ?? ""}
-                  onChange={(e) => setS({ ...s, basket_id: e.target.value ? Number(e.target.value) : null })}
-                  required
-                >
-                  <option value="">— pick a basket —</option>
-                  {baskets.map((b) => (
-                    <option key={b.id} value={b.id}>
-                      {b.name} ({b.count})
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                Rank by {s.rank_by === "rs_vs_spy" && <InfoTip k="rs_vs_spy" />}
-                <select value={s.rank_by} onChange={(e) => setS({ ...s, rank_by: e.target.value as RankBy })}>
-                  {(Object.keys(RANK_LABELS) as RankBy[])
-                    // rs_vs_spy is benchmark-relative to SPY — a stock-only ranking.
-                    .filter((k) => k !== "rs_vs_spy" || s.asset_class === "stock")
-                    .map((k) => (
-                      <option key={k} value={k}>
-                        {RANK_LABELS[k]}
-                      </option>
-                    ))}
-                </select>
-              </label>
-            </>
+            <label>
+              Basket
+              <select
+                value={s.basket_id ?? ""}
+                onChange={(e) => setS({ ...s, basket_id: e.target.value ? Number(e.target.value) : null })}
+                required
+              >
+                <option value="">— pick a basket —</option>
+                {baskets.map((b) => (
+                  <option key={b.id} value={b.id}>
+                    {b.name} ({b.count})
+                  </option>
+                ))}
+              </select>
+            </label>
           )}
           {p.dca && (
             <label>
@@ -365,11 +355,38 @@ function Editor({
             </label>
           )}
         </div>
-        {s.universe === "basket" && (
-          <div className="param-grid" style={{ marginTop: "0.6rem" }}>
-            <Param label="Take top N" tip="rank_by">
+
+        {/* Ranking: a basket is always ranked; a watchlist/custom list opts in
+            with this checkbox to trade only the strongest few. */}
+        {rankable && (
+          <label className="check" style={{ marginTop: "0.6rem" }}>
+            <input
+              type="checkbox"
+              checked={!!s.rank_enabled}
+              onChange={(e) => setS({ ...s, rank_enabled: e.target.checked })}
+            />
+            Rank &amp; trade only the top N of this list <InfoTip k="rank_enabled" />
+          </label>
+        )}
+        {ranking && (
+          <div className="filter-grid" style={{ marginTop: "0.6rem" }}>
+            <label>
+              Rank by {s.rank_by === "rs_vs_spy" && <InfoTip k="rs_vs_spy" />}
+              <select value={s.rank_by} onChange={(e) => setS({ ...s, rank_by: e.target.value as RankBy })}>
+                {(Object.keys(RANK_LABELS) as RankBy[])
+                  // rs_vs_spy is benchmark-relative to SPY — a stock-only ranking.
+                  .filter((k) => k !== "rs_vs_spy" || s.asset_class === "stock")
+                  .map((k) => (
+                    <option key={k} value={k}>
+                      {RANK_LABELS[k]}
+                    </option>
+                  ))}
+              </select>
+            </label>
+            <label>
+              Take top N <InfoTip k="rank_by" />
               <NumberField step="1" min="1" max="50" value={s.top_n!} onChange={(n) => setS({ ...s, top_n: n })} />
-            </Param>
+            </label>
           </div>
         )}
         <div style={{ marginTop: "0.6rem" }}>
@@ -520,7 +537,7 @@ function Editor({
                 onChange={(e) => setExit("exit_on_macd_bearish", e.target.checked)} />
               Exit when MACD turns bearish <InfoTip k="macd" />
             </label>
-            {s.universe === "basket" && (
+            {ranking && (
               <label className="check">
                 <input type="checkbox" checked={!!p.exit.rotate_on_rank_dropout}
                   onChange={(e) => setExit("rotate_on_rank_dropout", e.target.checked)} />

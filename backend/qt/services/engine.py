@@ -552,7 +552,9 @@ async def _rotation_dropout_reasons(
             continue
         seen.add(t.strategy_id)
         s = session.get(Strategy, t.strategy_id)
-        if s is None or s.universe != "basket":
+        # Rotation only makes sense for a RANKED universe (basket / watchlist /
+        # custom with ranking on) — that's what defines a "top N" to fall out of.
+        if s is None or not s.rank_enabled or s.universe not in ("basket", "watchlist", "custom"):
             continue
         try:
             exit_cfg = json.loads(s.params).get("exit", {})
@@ -564,7 +566,7 @@ async def _rotation_dropout_reasons(
     reasons: dict[int, str] = {}
     for sid, s in rotate.items():
         try:
-            top = {c.symbol for c in await _basket_candidates(session, client, s)}
+            top = await _ranked_symbols_now(session, client, s)
         except AlpacaError as exc:
             log.warning("rotation rank check for '%s' failed — holding positions: %s", s.name, exc)
             continue
@@ -892,9 +894,35 @@ async def _candidates_for(
         if not syms:
             return [], scan_result
         try:
+            # Opt-in ranking: trade only the top-N of the custom list by the chosen
+            # metric; otherwise consider them all (entry rules decide).
+            if strategy.rank_enabled:
+                return await _ranked_candidates(
+                    client, strategy.asset_class, syms, strategy.rank_by, strategy.top_n
+                ), scan_result
             return await _symbol_candidates(client, strategy.asset_class, syms), scan_result
         except AlpacaError as exc:
             log.warning("custom candidates for '%s' failed: %s", strategy.name, exc)
+            return None
+
+    # A watchlist universe with ranking on: rank the whole watchlist and keep the
+    # top-N. ("both" never ranks — rank_enabled is forced off in the API — because
+    # its scanner half is already ranked.)
+    if strategy.universe == "watchlist" and strategy.rank_enabled:
+        from qt.models import WatchlistItem
+
+        syms = [
+            i.symbol
+            for i in session.query(WatchlistItem).filter(WatchlistItem.asset_class == strategy.asset_class).all()
+        ]
+        if not syms:
+            return [], scan_result
+        try:
+            return await _ranked_candidates(
+                client, strategy.asset_class, syms, strategy.rank_by, strategy.top_n
+            ), scan_result
+        except AlpacaError as exc:
+            log.warning("watchlist ranking for '%s' failed: %s", strategy.name, exc)
             return None
 
     candidates: list[Candidate] = []
@@ -976,30 +1004,21 @@ async def _symbol_candidates(
     return out
 
 
-async def _basket_candidates(
-    session: Session, client: AlpacaClient, strategy: Strategy
+async def _ranked_candidates(
+    client: AlpacaClient, asset_class: str, symbols: list[str], rank_by: str, top_n: int
 ) -> list[Candidate]:
-    """Load the strategy's basket, snapshot its members, rank by the chosen
-    metric and return the top-N as candidates. The entry rules still filter
-    these afterward — top-N is the candidate set, not an auto-buy list."""
-    from qt.models import BasketItem
+    """Snapshot a POOL of symbols, score each by `rank_by`, and return the top-N
+    as candidates. Universe-agnostic: the pool can be a basket's members, a
+    watchlist, or a hand-picked custom list — ranking works the same on any fixed
+    set. The entry rules still filter the result; top-N is the candidate set, not
+    an auto-buy list."""
     from qt.services import ranking, stats
 
-    if strategy.basket_id is None:
-        return []
-    items = (
-        session.query(BasketItem)
-        .filter(
-            BasketItem.basket_id == strategy.basket_id,
-            BasketItem.asset_class == strategy.asset_class,
-        )
-        .all()
-    )
-    symbols = sorted({i.symbol for i in items})
+    symbols = sorted(set(symbols))
     if not symbols:
         return []
 
-    is_stock = strategy.asset_class == "stock"
+    is_stock = asset_class == "stock"
     snaps = await (client.stock_snapshots(symbols) if is_stock else client.crypto_snapshots(symbols))
 
     price_map: dict[str, float] = {}
@@ -1021,22 +1040,22 @@ async def _basket_candidates(
             "rs_vs_spy": None,
         }
 
-    # Benchmark-relative strength ranks each member by its out-performance of SPY
+    # Benchmark-relative strength ranks each name by its out-performance of SPY
     # over a lookback window. It's a STOCK-only metric (SPY is the benchmark) — a
-    # crypto basket can't pick it (guarded in the API), so we never fetch SPY for
+    # crypto pool can't pick it (guarded in the API), so we never fetch SPY for
     # crypto.
     RS_VS_SPY_WINDOW = 90  # calendar days of relative return
-    want_rs_vs_spy = strategy.rank_by == "rs_vs_spy" and strategy.asset_class == "stock"
+    want_rs_vs_spy = rank_by == "rs_vs_spy" and asset_class == "stock"
 
     # Bar-based metrics need daily history. Only fetch when the ranking asks for
     # it — momentum_today rides on the snapshot alone. relative_strength needs the
     # longest window (~320d for a 200-day SMA); rs_vs_spy reuses that same fetch so
     # SPY is just one extra symbol in the batch.
-    if strategy.rank_by in ("return_30d", "relative_strength") or want_rs_vs_spy:
-        lookback_days = 320 if strategy.rank_by in ("relative_strength", "rs_vs_spy") else 60
+    if rank_by in ("return_30d", "relative_strength") or want_rs_vs_spy:
+        lookback_days = 320 if rank_by in ("relative_strength", "rs_vs_spy") else 60
         start = (datetime.now(timezone.utc) - timedelta(days=lookback_days)).strftime("%Y-%m-%dT%H:%M:%SZ")
         fetch_symbols = symbols + ["SPY"] if want_rs_vs_spy else symbols
-        bars_by_symbol = await client.historical_bars(fetch_symbols, strategy.asset_class, "1Day", start)
+        bars_by_symbol = await client.historical_bars(fetch_symbols, asset_class, "1Day", start)
         for sym in symbols:
             bars = bars_by_symbol.get(sym) or []
             cur = price_map.get(sym)
@@ -1054,7 +1073,7 @@ async def _basket_candidates(
                     if member_return is not None:
                         metrics[sym]["rs_vs_spy"] = round(member_return - spy_return, 2)
 
-    ranked = ranking.rank_symbols(metrics, strategy.rank_by, strategy.top_n)
+    ranked = ranking.rank_symbols(metrics, rank_by, top_n)
     candidates: list[Candidate] = []
     for sym, _value in ranked:
         price = price_map.get(sym)
@@ -1063,13 +1082,63 @@ async def _basket_candidates(
         candidates.append(
             Candidate(
                 symbol=sym,
-                asset_class=strategy.asset_class,
+                asset_class=asset_class,
                 price=price,
                 change_pct=metrics[sym]["momentum_today"] or 0.0,
                 vwap=vwap_map.get(sym),
             )
         )
     return candidates
+
+
+def _basket_symbols(session: Session, strategy: Strategy) -> list[str]:
+    """The strategy's basket members for its asset class (deduped, sorted)."""
+    from qt.models import BasketItem
+
+    if strategy.basket_id is None:
+        return []
+    items = (
+        session.query(BasketItem)
+        .filter(
+            BasketItem.basket_id == strategy.basket_id,
+            BasketItem.asset_class == strategy.asset_class,
+        )
+        .all()
+    )
+    return sorted({i.symbol for i in items})
+
+
+async def _basket_candidates(
+    session: Session, client: AlpacaClient, strategy: Strategy
+) -> list[Candidate]:
+    """A basket universe: rank its members by the chosen metric and take the
+    top-N (a basket is always ranked)."""
+    return await _ranked_candidates(
+        client, strategy.asset_class, _basket_symbols(session, strategy),
+        strategy.rank_by, strategy.top_n,
+    )
+
+
+async def _ranked_symbols_now(session: Session, client: AlpacaClient, s: Strategy) -> set[str]:
+    """The set of symbols currently in a ranked strategy's top-N — its live pool
+    (basket members / watchlist / custom list) ranked and cut to top_n. Used by
+    the rotation check to see which open positions have fallen out. Empty set for
+    a non-ranked universe."""
+    if s.universe == "basket":
+        pool = _basket_symbols(session, s)
+    elif s.universe == "custom":
+        pool = json.loads(s.symbols) if s.symbols else []
+    elif s.universe == "watchlist":
+        from qt.models import WatchlistItem
+
+        pool = [
+            i.symbol
+            for i in session.query(WatchlistItem).filter(WatchlistItem.asset_class == s.asset_class).all()
+        ]
+    else:
+        return set()
+    cands = await _ranked_candidates(client, s.asset_class, pool, s.rank_by, s.top_n)
+    return {c.symbol for c in cands}
 
 
 def _build_rail_context(

@@ -178,7 +178,13 @@ export const GLOSSARY: Record<string, GlossaryEntry> = {
   rank_by: {
     term: "Top-N ranking",
     explain:
-      "For a basket universe the live engine snapshots every member, ranks them by the metric you choose, and considers only the top N as buy candidates (your entry rules still apply). Metrics: today's % move, 30-day return, or relative strength (how far price sits above/below its 200-day average). A backtest can't do this — it tests the whole basket over history because the historical daily ranking can't be reconstructed. Top-N is a LIVE feature only.",
+      "The live engine snapshots the pool, ranks it by the metric you choose, and considers only the top N as buy candidates (your entry rules still apply). Works for a basket (always ranked) and — when you switch ranking on — a watchlist or a custom list. Metrics: today's % move, 30-day return, relative strength (price vs its own 200-day average), or relative strength vs the S&P 500. A backtest can't do this — it tests the whole pool over history because the historical daily ranking can't be reconstructed. Top-N is a LIVE feature only.",
+    url: "https://www.investopedia.com/terms/r/relativestrength.asp",
+  },
+  rank_enabled: {
+    term: "Rank & take top N",
+    explain:
+      "For a WATCHLIST or a CUSTOM list, turn this on to trade only the STRONGEST few names instead of the whole list: each cycle the engine ranks the pool by your chosen metric and keeps the top N as candidates (your entry rules still decide from there). Off = consider the whole list, entry rules alone deciding. Baskets are always ranked, so this is implicit there. It's a LIVE feature — a backtest can't reconstruct the historical daily ranking, so it tests the whole pool. Pair it with 'rotate out when it leaves the top N' to rotate into and out of names as their strengths change.",
     url: "https://www.investopedia.com/terms/r/relativestrength.asp",
   },
   rs_vs_spy: {
@@ -190,7 +196,7 @@ export const GLOSSARY: Record<string, GlossaryEntry> = {
   rotate_on_rank_dropout: {
     term: "Rotate on rank drop-out",
     explain:
-      "For a basket strategy, sell a holding the moment it falls out of the current top-N ranking — the essence of a rotation strategy: always hold the strongest few, rotating into new leaders as the ranking shifts. It's a LIVE feature (the engine re-ranks each cycle); a backtest can't reconstruct the historical daily ranking. Pair it with a wide stop-loss as a safety net and the rotation does the rest.",
+      "For a RANKED strategy (a basket, or a watchlist/custom list with 'Rank & take top N' on), sell a holding the moment it falls out of the current top-N ranking — the essence of a rotation strategy: always hold the strongest few, rotating into new leaders as the ranking shifts. It's a LIVE feature (the engine re-ranks each cycle); a backtest can't reconstruct the historical daily ranking. Pair it with a wide stop-loss as a safety net and the rotation does the rest.",
     url: "https://www.investopedia.com/terms/s/sectorrotation.asp",
   },
   trade_rate: {

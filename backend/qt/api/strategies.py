@@ -128,6 +128,7 @@ class StrategyBody(BaseModel):
         pattern="^(momentum_today|return_30d|relative_strength|rs_vs_spy)$",
     )
     top_n: int = Field(default=10, ge=1, le=50)
+    rank_enabled: bool = False  # rank the pool + keep top N (basket forces this on)
     preset: str = "custom"
     params: StrategyParams = StrategyParams()
     sizing_usd: float = Field(default=200, ge=10, le=100_000)
@@ -149,6 +150,14 @@ class StrategyBody(BaseModel):
         # silently ranking nothing.
         if self.rank_by == "rs_vs_spy" and self.asset_class != "stock":
             raise ValueError("Relative strength vs S&P 500 is a stock-only ranking.")
+        # Normalize rank_enabled to where ranking is meaningful: a basket is ALWAYS
+        # ranked (its whole point), while scanner/both are already ranked by the
+        # scanner, so ranking there is a no-op. Only watchlist/custom carry the
+        # user's opt-in choice as given.
+        if self.universe == "basket":
+            self.rank_enabled = True
+        elif self.universe in ("scanner", "both"):
+            self.rank_enabled = False
         return self
 
     def clean_symbols(self) -> list[str]:
@@ -186,6 +195,7 @@ def _serialize(s: Strategy) -> dict:
         "symbols": json.loads(s.symbols) if s.symbols else [],
         "rank_by": s.rank_by,
         "top_n": s.top_n,
+        "rank_enabled": s.rank_enabled,
         "preset": s.preset,
         "params": json.loads(s.params),
         "sizing_usd": s.sizing_usd,
@@ -241,6 +251,7 @@ def create_strategy(body: StrategyBody, session: Session = Depends(get_session))
         symbols=json.dumps(body.clean_symbols()),
         rank_by=body.rank_by,
         top_n=body.top_n,
+        rank_enabled=body.rank_enabled,
         preset=body.preset,
         params=body.params.model_dump_json(),
         sizing_usd=body.sizing_usd,
@@ -271,6 +282,7 @@ def update_strategy(
     strategy.symbols = json.dumps(body.clean_symbols())
     strategy.rank_by = body.rank_by
     strategy.top_n = body.top_n
+    strategy.rank_enabled = body.rank_enabled
     strategy.preset = body.preset
     strategy.params = body.params.model_dump_json()
     strategy.sizing_usd = body.sizing_usd

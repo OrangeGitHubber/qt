@@ -65,6 +65,41 @@ def test_rotate_on_rank_dropout_persists_through_save(client):
     assert resp.json()["params"]["exit"]["rotate_on_rank_dropout"] is True
 
 
+def test_rank_enabled_opts_in_for_watchlist_and_custom(client):
+    made = []
+    # A watchlist strategy can now opt into top-N ranking.
+    r = client.post(
+        "/api/strategies",
+        json=_body(universe="watchlist", rank_enabled=True, rank_by="relative_strength", top_n=5),
+    )
+    assert r.status_code == 200
+    assert r.json()["rank_enabled"] is True and r.json()["top_n"] == 5
+    made.append(r.json()["id"])
+
+    # So can a custom list (needs symbols).
+    r2 = client.post(
+        "/api/strategies",
+        json=_body(universe="custom", symbols=["AAPL", "MSFT"], rank_enabled=True),
+    )
+    assert r2.status_code == 200 and r2.json()["rank_enabled"] is True
+    made.append(r2.json()["id"])
+
+    # A basket is ALWAYS ranked — the flag is forced on even if omitted/false.
+    bid = client.post("/api/baskets", json={"name": "RankForce"}).json()["id"]
+    r3 = client.post("/api/strategies", json=_body(universe="basket", basket_id=bid, rank_enabled=False))
+    assert r3.status_code == 200 and r3.json()["rank_enabled"] is True
+    made.append(r3.json()["id"])
+
+    # Scanner/both are pre-ranked, so the flag is forced OFF (a no-op there).
+    r4 = client.post("/api/strategies", json=_body(universe="scanner", rank_enabled=True))
+    assert r4.status_code == 200 and r4.json()["rank_enabled"] is False
+    made.append(r4.json()["id"])
+
+    for sid in made:
+        client.delete(f"/api/strategies/{sid}")
+    client.delete(f"/api/baskets/{bid}")
+
+
 def test_presets_available(client):
     presets = client.get("/api/strategies/presets").json()
     assert "momentum_swing_stocks" in presets

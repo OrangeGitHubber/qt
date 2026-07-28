@@ -223,6 +223,7 @@ export default function Optimizer() {
         symbols: strategy.symbols,
         rank_by: strategy.rank_by,
         top_n: strategy.top_n,
+        rank_enabled: strategy.rank_enabled,
         preset: "custom",
         params: result.best_draft_params,
         sizing_usd: strategy.sizing_usd,

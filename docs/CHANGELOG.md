@@ -21,6 +21,25 @@ the Baskets screen. A handful of energy/materials names in the sector lists have
 since been acquired or merged away (Pioneer/PXD, Marathon Oil/MRO, WestRock/WRK) —
 they're included as given but may not trade on Alpaca, so prune them if you like.
 
+## Top-N ranking now works for watchlists and custom lists, not just baskets (2026-07-28)
+
+Ranking a pool of symbols and trading only the strongest few — plus rotating out
+of names as they weaken — used to be a basket-only feature. It now works for a
+**watchlist** or a **custom list** too, which is the natural home for the
+"long-term rotation across a specified list" strategy.
+
+- On a watchlist or specific-symbols strategy, a new **"Rank & trade only the top
+  N of this list"** toggle appears (off by default, so existing strategies are
+  unchanged). Turn it on and you get the same **Rank by** (momentum / 30-day
+  return / relative strength / RS-vs-SPY) + **Take top N** controls baskets have.
+- **Rotate out when it leaves the top N** is no longer basket-only — any ranked
+  strategy (basket, or a ranked watchlist/custom list) can rotate as strengths
+  shift: hold the strongest few, sell one when it drops out, let a new leader in.
+- Nothing changes for existing strategies: baskets stay always-ranked; scanner
+  and "scanner + watchlist" are already ranked by the scanner, so the toggle
+  doesn't apply there. It remains a **live** feature (a backtest can't
+  reconstruct the historical daily ranking, so it tests the whole pool).
+
 ## Strategy builder shows the symbols in play — editable inline (2026-07-28)
 
 Pick a universe and the builder now shows **exactly which symbols the strategy

@@ -67,8 +67,11 @@ class Strategy(Base):
     universe: Mapped[str] = mapped_column(String(16), default="scanner")  # scanner | watchlist | both | basket | custom
     basket_id: Mapped[int | None] = mapped_column(ForeignKey("baskets.id"), nullable=True)
     symbols: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON list for universe="custom"
-    rank_by: Mapped[str] = mapped_column(String(24), default="momentum_today")  # momentum_today | return_30d | relative_strength
-    top_n: Mapped[int] = mapped_column(Integer, default=10)  # basket: take the top N ranked symbols
+    rank_by: Mapped[str] = mapped_column(String(24), default="momentum_today")  # momentum_today | return_30d | relative_strength | rs_vs_spy
+    top_n: Mapped[int] = mapped_column(Integer, default=10)  # take the top N ranked symbols
+    # When true, rank the universe's pool by rank_by and keep the top N (basket
+    # is always ranked; watchlist/custom opt in). False = consider the whole pool.
+    rank_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     preset: Mapped[str] = mapped_column(String(48), default="custom")
     params: Mapped[str] = mapped_column(Text)  # JSON: entry/exit rules
     sizing_usd: Mapped[float] = mapped_column(Float, default=200.0)  # $ per trade

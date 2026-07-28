@@ -76,6 +76,7 @@ export interface StrategyRow {
   symbols: string[];
   rank_by: RankBy;
   top_n: number;
+  rank_enabled?: boolean; // rank the pool + keep top N (basket always; watchlist/custom opt in)
   preset: string;
   params: StrategyParams;
   sizing_usd: number;
