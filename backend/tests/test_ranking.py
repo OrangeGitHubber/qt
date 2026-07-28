@@ -6,9 +6,17 @@ from qt.services.ranking import RANK_METRICS, rank_symbols
 
 
 def _metrics(**by_symbol):
-    """Helper: {'AAA': (mom, ret, rs)} -> full metrics dict."""
+    """Helper: {'AAA': (mom, ret, rs[, rs_vs_spy])} -> full metrics dict.
+
+    The 4th tuple element (rs_vs_spy) is optional so the existing 3-tuple
+    callers keep working; it defaults to None."""
     return {
-        sym: {"momentum_today": t[0], "return_30d": t[1], "relative_strength": t[2]}
+        sym: {
+            "momentum_today": t[0],
+            "return_30d": t[1],
+            "relative_strength": t[2],
+            "rs_vs_spy": t[3] if len(t) > 3 else None,
+        }
         for sym, t in by_symbol.items()
     }
 
@@ -53,7 +61,19 @@ def test_unknown_metric_raises():
 
 
 def test_all_metrics_are_rankable():
-    m = _metrics(A=(1.0, 2.0, 3.0), B=(4.0, 5.0, 6.0))
+    m = _metrics(A=(1.0, 2.0, 3.0, 4.0), B=(5.0, 6.0, 7.0, 8.0))
     for metric in RANK_METRICS:
         ranked = rank_symbols(m, metric, 1)
         assert ranked == [("B", pytest.approx(m["B"][metric]))]
+
+
+def test_rs_vs_spy_ranks_higher_outperformance_first():
+    # rs_vs_spy = member return minus SPY return; the biggest OUT-performer wins.
+    m = _metrics(A=(0, 0, 0, 2.0), B=(0, 0, 0, 9.5), C=(0, 0, 0, -4.0))
+    assert [s for s, _ in rank_symbols(m, "rs_vs_spy", 3)] == ["B", "A", "C"]
+
+
+def test_rs_vs_spy_can_be_negative_and_drops_missing():
+    # A trails SPY (negative but present → ranked); C has no value → dropped.
+    m = _metrics(A=(0, 0, 0, -1.5), B=(0, 0, 0, -0.5), C=(0, 0, 0, None))
+    assert [s for s, _ in rank_symbols(m, "rs_vs_spy", 5)] == ["B", "A"]

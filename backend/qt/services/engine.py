@@ -904,19 +904,41 @@ async def _basket_candidates(
             "momentum_today": round(change, 2) if change is not None else None,
             "return_30d": None,
             "relative_strength": None,
+            "rs_vs_spy": None,
         }
 
+    # Benchmark-relative strength ranks each member by its out-performance of SPY
+    # over a lookback window. It's a STOCK-only metric (SPY is the benchmark) — a
+    # crypto basket can't pick it (guarded in the API), so we never fetch SPY for
+    # crypto.
+    RS_VS_SPY_WINDOW = 90  # calendar days of relative return
+    want_rs_vs_spy = strategy.rank_by == "rs_vs_spy" and strategy.asset_class == "stock"
+
     # Bar-based metrics need daily history. Only fetch when the ranking asks for
-    # it — momentum_today rides on the snapshot alone.
-    if strategy.rank_by in ("return_30d", "relative_strength"):
-        lookback_days = 320 if strategy.rank_by == "relative_strength" else 60
+    # it — momentum_today rides on the snapshot alone. relative_strength needs the
+    # longest window (~320d for a 200-day SMA); rs_vs_spy reuses that same fetch so
+    # SPY is just one extra symbol in the batch.
+    if strategy.rank_by in ("return_30d", "relative_strength") or want_rs_vs_spy:
+        lookback_days = 320 if strategy.rank_by in ("relative_strength", "rs_vs_spy") else 60
         start = (datetime.now(timezone.utc) - timedelta(days=lookback_days)).strftime("%Y-%m-%dT%H:%M:%SZ")
-        bars_by_symbol = await client.historical_bars(symbols, strategy.asset_class, "1Day", start)
+        fetch_symbols = symbols + ["SPY"] if want_rs_vs_spy else symbols
+        bars_by_symbol = await client.historical_bars(fetch_symbols, strategy.asset_class, "1Day", start)
         for sym in symbols:
             bars = bars_by_symbol.get(sym) or []
             cur = price_map.get(sym)
             metrics[sym]["return_30d"] = stats.pct_change_over(bars, 30, cur)
             metrics[sym]["relative_strength"] = stats.vs_sma_pct(bars, 200, cur)
+        if want_rs_vs_spy:
+            spy_bars = bars_by_symbol.get("SPY") or []
+            spy_last = float(spy_bars[-1]["c"]) if spy_bars else None
+            spy_return = stats.pct_change_over(spy_bars, RS_VS_SPY_WINDOW, spy_last)
+            if spy_return is not None:
+                for sym in symbols:
+                    member_return = stats.pct_change_over(
+                        bars_by_symbol.get(sym) or [], RS_VS_SPY_WINDOW, price_map.get(sym)
+                    )
+                    if member_return is not None:
+                        metrics[sym]["rs_vs_spy"] = round(member_return - spy_return, 2)
 
     ranked = ranking.rank_symbols(metrics, strategy.rank_by, strategy.top_n)
     candidates: list[Candidate] = []

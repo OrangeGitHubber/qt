@@ -107,3 +107,28 @@ def test_bad_rank_by_rejected(client):
         == 422
     )
     client.delete(f"/api/baskets/{bid}")
+
+
+def test_rs_vs_spy_accepted_for_stock_basket(client):
+    bid = client.post("/api/baskets", json={"name": "RSStock"}).json()["id"]
+    resp = client.post(
+        "/api/strategies",
+        json=_body(universe="basket", basket_id=bid, asset_class="stock", rank_by="rs_vs_spy"),
+    )
+    assert resp.status_code == 200
+    assert resp.json()["rank_by"] == "rs_vs_spy"
+    client.delete(f"/api/strategies/{resp.json()['id']}")
+    client.delete(f"/api/baskets/{bid}")
+
+
+def test_rs_vs_spy_rejected_for_crypto_basket(client):
+    # rs_vs_spy is benchmarked to SPY (a stock) — a crypto basket can't pick it.
+    bid = client.post("/api/baskets", json={"name": "RSCrypto"}).json()["id"]
+    assert (
+        client.post(
+            "/api/strategies",
+            json=_body(universe="basket", basket_id=bid, asset_class="crypto", rank_by="rs_vs_spy"),
+        ).status_code
+        == 422
+    )
+    client.delete(f"/api/baskets/{bid}")

@@ -21,6 +21,7 @@ const RANK_LABELS: Record<RankBy, string> = {
   momentum_today: "Today's % move (momentum)",
   return_30d: "30-day return",
   relative_strength: "Relative strength (vs 200-day average)",
+  rs_vs_spy: "Relative strength vs S&P 500",
 };
 
 const EMPTY: Partial<StrategyRow> = {
@@ -245,13 +246,16 @@ function Editor({
               </select>
             </label>
             <label>
-              Rank by
+              Rank by {s.rank_by === "rs_vs_spy" && <InfoTip k="rs_vs_spy" />}
               <select value={s.rank_by} onChange={(e) => setS({ ...s, rank_by: e.target.value as RankBy })}>
-                {(Object.keys(RANK_LABELS) as RankBy[]).map((k) => (
-                  <option key={k} value={k}>
-                    {RANK_LABELS[k]}
-                  </option>
-                ))}
+                {(Object.keys(RANK_LABELS) as RankBy[])
+                  // rs_vs_spy is benchmark-relative to SPY — a stock-only ranking.
+                  .filter((k) => k !== "rs_vs_spy" || s.asset_class === "stock")
+                  .map((k) => (
+                    <option key={k} value={k}>
+                      {RANK_LABELS[k]}
+                    </option>
+                  ))}
               </select>
             </label>
             <label>
@@ -349,6 +353,9 @@ function Editor({
             onChange={(e) => setEntry("require_macd_bullish", e.target.checked)} />
           Require bullish MACD to enter <InfoTip k="macd" />
         </label>
+        <p className="hint">
+          Best for swing / daily strategies — it avoids buying into fading momentum. Leave off for fast intraday trades.
+        </p>
         <label className="check">
           <input
             type="checkbox"

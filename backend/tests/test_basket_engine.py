@@ -97,6 +97,44 @@ async def test_return_30d_ranking_uses_daily_bars():
         s.query(Basket).filter(Basket.id == bid).delete()
 
 
+async def test_rs_vs_spy_ranks_by_outperformance_of_spy():
+    sid, bid = _make_basket_strategy("rs_vs_spy", 2, ["AAA", "BBB", "CCC"])
+    # Snapshot price = each member's "now" close (rs_vs_spy uses it as price_now).
+    snaps = {"AAA": _snap(110.0, 109.0), "BBB": _snap(105.0, 104.0), "CCC": _snap(98.0, 99.0)}
+
+    def bars(now_close, old_close):
+        old_t = (datetime.now(timezone.utc) - timedelta(days=100)).strftime("%Y-%m-%dT00:00:00Z")
+        new_t = (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y-%m-%dT00:00:00Z")
+        return [{"t": old_t, "c": old_close, "h": old_close, "l": old_close},
+                {"t": new_t, "c": now_close, "h": now_close, "l": now_close}]
+
+    # 90-day returns: AAA +10%, BBB +5%, CCC -2%; SPY +2%.
+    # rs_vs_spy = member − SPY: AAA +8, BBB +3, CCC −4. Top 2 = AAA, BBB.
+    hist = {
+        "AAA": bars(110.0, 100.0),
+        "BBB": bars(105.0, 100.0),
+        "CCC": bars(98.0, 100.0),
+        "SPY": bars(102.0, 100.0),
+    }
+    client = SimpleNamespace(
+        stock_snapshots=AsyncMock(return_value=snaps),
+        historical_bars=AsyncMock(return_value=hist),
+    )
+    with session_scope() as s:
+        strat = s.get(Strategy, sid)
+        cands = await _basket_candidates(s, client, strat)
+
+    # SPY must be added to the SAME batched bars fetch (one extra symbol).
+    fetched_symbols = client.historical_bars.await_args.args[0]
+    assert "SPY" in fetched_symbols
+    assert [c.symbol for c in cands] == ["AAA", "BBB"]
+
+    with session_scope() as s:
+        s.query(BasketItem).filter(BasketItem.basket_id == bid).delete()
+        s.query(Strategy).filter(Strategy.id == sid).delete()
+        s.query(Basket).filter(Basket.id == bid).delete()
+
+
 async def test_empty_basket_yields_no_candidates():
     sid, bid = _make_basket_strategy("momentum_today", 5, [])
     client = SimpleNamespace(stock_snapshots=AsyncMock(return_value={}), historical_bars=AsyncMock())

@@ -3,6 +3,26 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Basket ranking: "Relative strength vs S&P 500" + a MACD when-to-use hint (2026-07-27)
+
+Two small additions to how basket strategies rank their members and how MACD is
+explained.
+
+- **New basket ranking — "Relative strength vs S&P 500" (`rs_vs_spy`).** For a
+  basket universe you can now rank members by how far each one has **out-performed
+  the market** over a ~90-day window: the member's return *minus* SPY's return
+  over the same span. This is the classic sector-rotation "relative strength", and
+  it's different from the existing **"Relative strength (vs 200-day average)"** —
+  a stock can sit above its *own* long-term trend yet still be **lagging the
+  market**. Positive means it's beating SPY; negative means it's trailing. Like
+  every top-N ranking it's a **live** feature only: a backtest can't reconstruct
+  the historical daily basket ordering. It's **stock-only** (SPY is a stock
+  benchmark), so a crypto basket can't select it — the option is hidden for crypto
+  strategies and rejected by the server if forced.
+- **MACD "when to turn it on" hint.** Next to the MACD entry/exit switches there's
+  now a one-line pointer: best for swing / daily strategies (it avoids buying into
+  fading momentum), and better left off for fast intraday trades.
+
 ## Optimizer: it now tells you exactly which symbols it tests (2026-07-27)
 
 The parameter search wasn't clear about *which* symbols it validates on, so it

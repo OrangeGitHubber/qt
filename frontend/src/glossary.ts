@@ -181,6 +181,12 @@ export const GLOSSARY: Record<string, GlossaryEntry> = {
       "For a basket universe the live engine snapshots every member, ranks them by the metric you choose, and considers only the top N as buy candidates (your entry rules still apply). Metrics: today's % move, 30-day return, or relative strength (how far price sits above/below its 200-day average). A backtest can't do this — it tests the whole basket over history because the historical daily ranking can't be reconstructed. Top-N is a LIVE feature only.",
     url: "https://www.investopedia.com/terms/r/relativestrength.asp",
   },
+  rs_vs_spy: {
+    term: "Relative strength vs the market",
+    explain:
+      "Ranks each basket member by how much it has OUT-performed the S&P 500 (SPY) over a ~90-day window — the member's return minus SPY's return over the same span. This is the classic sector-rotation 'relative strength', and it differs from 'Relative strength (vs 200-day average)': a name can sit ABOVE its own 200-day trend yet still LAG the market. Positive = beating SPY; negative = trailing it. Stocks only (SPY is a stock benchmark). Like all top-N ranking it's a LIVE feature — a backtest can't reconstruct the historical daily basket ranking.",
+    url: "https://www.investopedia.com/terms/r/relativestrength.asp",
+  },
   rotate_on_rank_dropout: {
     term: "Rotate on rank drop-out",
     explain:

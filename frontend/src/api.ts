@@ -60,7 +60,7 @@ export interface StrategyParams {
   dca?: { interval_days: number };
 }
 
-export type RankBy = "momentum_today" | "return_30d" | "relative_strength";
+export type RankBy = "momentum_today" | "return_30d" | "relative_strength" | "rs_vs_spy";
 
 export interface StrategyRow {
   id: number;

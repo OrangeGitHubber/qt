@@ -86,7 +86,10 @@ class StrategyBody(BaseModel):
     universe: str = Field(default="scanner", pattern="^(scanner|watchlist|both|basket|custom)$")
     basket_id: int | None = None
     symbols: list[str] = []  # for universe="custom": the hand-picked symbol list
-    rank_by: str = Field(default="momentum_today", pattern="^(momentum_today|return_30d|relative_strength)$")
+    rank_by: str = Field(
+        default="momentum_today",
+        pattern="^(momentum_today|return_30d|relative_strength|rs_vs_spy)$",
+    )
     top_n: int = Field(default=10, ge=1, le=50)
     preset: str = "custom"
     params: StrategyParams = StrategyParams()
@@ -104,6 +107,11 @@ class StrategyBody(BaseModel):
             raise ValueError("A basket universe needs a basket selected.")
         if self.universe == "custom" and not [s for s in self.symbols if s.strip()]:
             raise ValueError("A custom universe needs at least one symbol.")
+        # rs_vs_spy ranks members by out-performance of SPY — a stock benchmark,
+        # meaningless for a crypto basket. Block the combination rather than
+        # silently ranking nothing.
+        if self.rank_by == "rs_vs_spy" and self.asset_class != "stock":
+            raise ValueError("Relative strength vs S&P 500 is a stock-only ranking.")
         return self
 
     def clean_symbols(self) -> list[str]:

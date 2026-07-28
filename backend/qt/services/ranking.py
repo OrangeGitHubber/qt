@@ -1,19 +1,25 @@
 """Top-N ranking for basket universes — a PURE function so it's unit-tested
 without a broker.
 
-The three metrics are all derived from price data QT already computes:
+The metrics are all derived from price data QT already computes:
   - momentum_today     : % change vs yesterday's close (from the snapshot)
   - return_30d         : % change over ~30 calendar days (from daily bars)
   - relative_strength  : % above/below the 200-day moving average (daily bars)
                          — the same trend test the regime filter applies to SPY,
                          per symbol. Higher = further above its own long trend.
+  - rs_vs_spy          : benchmark-relative strength — the member's % return over
+                         a lookback window MINUS SPY's % return over the SAME
+                         window. Higher = out-performing the market. Unlike
+                         relative_strength (price vs its OWN 200-day average), a
+                         name can be above its own trend yet still LAGGING SPY.
+                         Stocks only (SPY is the benchmark).
 
 Ranking is descending (bigger metric = better) with a deterministic tie-break
 on symbol, and symbols whose chosen metric is missing (None) are dropped — you
 cannot rank on data you don't have.
 """
 
-RANK_METRICS = ("momentum_today", "return_30d", "relative_strength")
+RANK_METRICS = ("momentum_today", "return_30d", "relative_strength", "rs_vs_spy")
 
 
 def rank_symbols(
