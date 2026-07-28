@@ -308,41 +308,26 @@ export default function Optimizer() {
                 ))}
               </select>
             </label>
-            <div className="field">
-              <span className="field-cap">
-                Symbols to validate across (leave empty to use the strategy's own universe){" "}
-              </span>
-              <SymbolPicker
-                assetClass={strategy?.asset_class}
-                value={symbols}
-                onChange={setSymbols}
-                multi
-                disabled={scannerReplay}
-              />
-            </div>
-          </div>
-          <label className="check">
-            <input type="checkbox" checked={scannerReplay} onChange={(e) => setScannerReplay(e.target.checked)} />
-            Scanner replay — optimize against the historical <strong>top risers each day</strong> (the strategy's real
-            universe), not a fixed list <InfoTip k="scanner_replay" />
-          </label>
-          {scannerReplay && (
-            <>
-              <label style={{ display: "block", marginTop: 8 }}>
+            {/* The universe comes from the STRATEGY, not the optimizer. A scanner
+                strategy is optimized by replaying its real universe (the day's
+                top-N risers), so we show the risers knob; every other universe is
+                a fixed pool you can optionally narrow to a validation subset. */}
+            {scannerReplay ? (
+              <label>
                 <span className="field-cap">
                   Risers per day (top N) <InfoTip k="replay_top_n" />
                 </span>
                 <NumberField min={1} max={100} step={1} value={replayTopN} onChange={setReplayTopN} />
               </label>
-              <p className="hint">
-                Each day of history, only that day's <strong>top {replayTopN}</strong> risers are eligible to enter; the
-                searched entry/exit knobs then decide. Read offline from the bar cache, so it needs a completed sweep
-                first (Settings → Historical bar cache), and the <strong>bar size below is ignored</strong> — replay uses
-                15-minute bars if you've run an intraday sweep (so intraday exits behave), else daily. The symbol picker
-                and the 50-symbol cap don't apply — the universe is however many names made a top-N list.
-              </p>
-            </>
-          )}
+            ) : (
+              <div className="field">
+                <span className="field-cap">
+                  Symbols to validate across (optional — defaults to the strategy's own universe){" "}
+                </span>
+                <SymbolPicker assetClass={strategy?.asset_class} value={symbols} onChange={setSymbols} multi />
+              </div>
+            )}
+          </div>
           {(() => {
             const u = universeExplain(strategy, symbols, baskets, scannerReplay, replayTopN);
             if (!u) return null;
@@ -352,10 +337,12 @@ export default function Optimizer() {
               </p>
             );
           })()}
-          <p className="hint">
-            Validate across <strong>several symbols or the basket</strong>, never one ticker — a setting that fits a
-            single name's history rarely survives contact with another.
-          </p>
+          {!scannerReplay && (
+            <p className="hint">
+              Validate across <strong>several symbols or the basket</strong>, never one ticker — a setting that fits a
+              single name's history rarely survives contact with another.
+            </p>
+          )}
           <div className="filter-grid">
             <label>
               <span className="field-cap">
