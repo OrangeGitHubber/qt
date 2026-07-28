@@ -14,8 +14,10 @@ three distinct trading styles, each a strategy the engine runs concurrently:
    for **stocks** on the free IEX plan (sees ~2–3% of volume; 15-min bars miss
    sub-15-min spikes; wide spreads on thin small-caps). And QT is deliberately
    **not** a high-frequency scalper — marketable-limit orders only, a trade-rate
-   cap, and spread-cost awareness all push against rapid churn. So "intraday
-   scalping" here means **intraday momentum with same-day exits**, and the
+   cap, and spread-cost awareness all push against rapid churn. **Werner confirmed
+   2026-07-28: this goal is intraday momentum with same-day exits, NOT
+   scalping/HFT** (which is a different architecture — real-time tick data,
+   sub-second execution — and a retail money-loser; explicitly out of scope). The
    scoreboard/paper→live gate is the arbiter of whether stock intraday earns its
    place. A paid SIP feed is the lever if stock intraday must be first-class.
 2. **Long-term rotation across a specified list** as strengths change. Hold the
