@@ -149,7 +149,7 @@ export default function Optimizer() {
     const strat = strategies.find((s) => s.id === strategyId);
     if (strat) {
       setCash(Math.max(strat.sleeve_usd || 5000, 100));
-      setSymbols(strat.universe === "custom" ? (strat.symbols ?? []).slice(0, 25) : []);
+      setSymbols(strat.universe === "custom" ? (strat.symbols ?? []).slice(0, 50) : []);
       // A scanner strategy defaults to replaying its REAL universe (each day's
       // top-N risers) rather than a stand-in watchlist — the whole point of the
       // scanner-replay optimizer. Any other universe keeps its fixed symbol set.
@@ -328,7 +328,7 @@ export default function Optimizer() {
                 searched entry/exit knobs then decide. Read offline from the bar cache, so it needs a completed sweep
                 first (Settings → Historical bar cache), and the <strong>bar size below is ignored</strong> — replay uses
                 15-minute bars if you've run an intraday sweep (so intraday exits behave), else daily. The symbol picker
-                and the 25-symbol cap don't apply — the universe is however many names made a top-N list.
+                and the 50-symbol cap don't apply — the universe is however many names made a top-N list.
               </p>
             </>
           )}

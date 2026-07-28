@@ -21,6 +21,17 @@ the Baskets screen. A handful of energy/materials names in the sector lists have
 since been acquired or merged away (Pioneer/PXD, Marathon Oil/MRO, WestRock/WRK) —
 they're included as given but may not trade on Alpaca, so prune them if you like.
 
+## Optimizer & backtest symbol cap raised 25 → 50 (2026-07-28)
+
+A 30-symbol sector basket wouldn't optimize ("Max 25 symbols per search"). The
+optimizer downloads bars **once, batched**, then reuses them across every
+iteration, so the symbol count barely touches the rate limit — the 25 was just a
+conservative copy from the backtest. Raised both to **50**, which comfortably
+fits a full sector basket. (Subsetting to a top-25 by rank was considered and
+rejected: validating a parameter set across the *whole* basket is the point —
+params that survive 30 names are far likelier real than ones tuned to a picked
+25.)
+
 ## Journal + P&L are now per broker account (2026-07-28)
 
 After switching Alpaca paper accounts, the journal and per-strategy P&L still

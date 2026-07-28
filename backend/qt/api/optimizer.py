@@ -213,8 +213,11 @@ async def start_optimize(
                 status_code=422,
                 detail="No symbols to search over — pass some, or add symbols to the watchlist for this asset class.",
             )
-        if len(symbols) > 25:
-            raise HTTPException(status_code=422, detail="Max 25 symbols per search (rate limits).")
+        # The search downloads the bars ONCE (batched) then reuses them across every
+        # iteration, so the symbol count only affects that one download — 50 covers a
+        # full sector basket with headroom without straining the rate limit.
+        if len(symbols) > 50:
+            raise HTTPException(status_code=422, detail="Max 50 symbols per search (rate limits).")
 
     # Read everything the (session-less) background task needs NOW, while the
     # request's DB session is open — pass plain dicts/lists into the task.

@@ -258,8 +258,8 @@ async def run(
             status_code=422,
             detail="No symbols: pass some, or add symbols to the watchlist for this asset class.",
         )
-    if len(symbols) > 25:
-        raise HTTPException(status_code=422, detail="Max 25 symbols per backtest (rate limits).")
+    if len(symbols) > 50:
+        raise HTTPException(status_code=422, detail="Max 50 symbols per backtest (rate limits).")
 
     if body.timeframe == "1Day" and json.loads(strategy.params).get("entry", {}).get("require_above_vwap"):
         raise HTTPException(

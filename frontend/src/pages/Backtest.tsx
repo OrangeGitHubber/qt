@@ -155,7 +155,7 @@ export default function Backtest() {
       else setSymbols([]);
     } else if (strat.universe === "custom") {
       setScannerReplay(false);
-      setSymbols((strat.symbols ?? []).slice(0, 25));
+      setSymbols((strat.symbols ?? []).slice(0, 50));
     } else {
       setScannerReplay(false); // watchlist | both — empty picker = the watchlist
       setSymbols([]);
@@ -178,13 +178,13 @@ export default function Backtest() {
     const basket = baskets.find((b) => b.id === id);
     if (!basket) return;
     const all = basket.symbols.filter((m) => !assetClass || m.asset_class === assetClass).map((m) => m.symbol);
-    const capped = all.slice(0, 25);
+    const capped = all.slice(0, 50);
     setSymbols(capped);
     if (all.length === 0) {
       setBasketNote(`"${basket.name}" has no ${assetClass ?? ""} symbols to test.`);
-    } else if (all.length > 25) {
+    } else if (all.length > 50) {
       setBasketNote(
-        `Loaded the first 25 of ${all.length} symbols from "${basket.name}" — a backtest is capped at 25 symbols (rate limits).`,
+        `Loaded the first 50 of ${all.length} symbols from "${basket.name}" — a backtest is capped at 50 symbols (rate limits).`,
       );
     } else {
       setBasketNote(`Loaded ${capped.length} symbols from "${basket.name}".`);
