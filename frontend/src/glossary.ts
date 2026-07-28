@@ -28,7 +28,7 @@ export const GLOSSARY: Record<string, GlossaryEntry> = {
   macd: {
     term: "MACD",
     explain:
-      "Moving Average Convergence Divergence — a momentum gauge built from two moving averages of price. The MACD LINE is the fast average minus the slow one (default 12 vs 26 days); the SIGNAL line is a smoothed version of that (default 9 days); the HISTOGRAM is the gap between them. When the line crosses ABOVE its signal it's a bullish signal (momentum turning up); crossing BELOW is bearish. QT computes it from COMPLETED daily bars only — never today's unfinished bar — and leaves it OFF by default: turn it on to only enter while momentum is bullish, and/or to exit when it turns bearish.",
+      "Moving Average Convergence Divergence — a momentum gauge built from two moving averages of price. The MACD LINE is the fast average minus the slow one (default 12 vs 26 days); the SIGNAL line is a smoothed version of that (default 9 days); the HISTOGRAM is the gap between them. When the line crosses ABOVE its signal it's a bullish signal (momentum turning up); crossing BELOW is bearish. QT computes it from COMPLETED daily bars only — never today's unfinished bar — and leaves it OFF by default: turn it on to only enter while momentum is bullish, and/or to exit when it turns bearish. Best for swing / daily strategies — it avoids buying into fading momentum. Leave it off for fast intraday trades.",
     url: "https://www.investopedia.com/terms/m/macd.asp",
   },
   vwap: {
@@ -208,7 +208,7 @@ export const GLOSSARY: Record<string, GlossaryEntry> = {
   entry_window: {
     term: "Entry window (ET)",
     explain:
-      "Only OPEN new positions between these US-Eastern times; outside the window entries are skipped (exits and stops always still work). Use it to avoid the chaotic first minutes after the 09:30 open, or to stop opening trades late in the day. Turn it off to allow entries any time the market is open.",
+      "Only OPEN new positions between these US-Eastern times; outside the window entries are skipped (exits and stops always still work). Use it to avoid the chaotic first minutes after the 09:30 open, or to stop opening trades late in the day. Turn it off to allow entries any time the market is open. Crypto trades 24/7, so ET hours mean little there — usually leave this off for crypto.",
     url: "https://www.investopedia.com/terms/t/tradinghours.asp",
   },
   max_holding: {
@@ -244,8 +244,38 @@ export const GLOSSARY: Record<string, GlossaryEntry> = {
   universe: {
     term: "Universe",
     explain:
-      "Where a strategy's buy candidates come from: Scanner (today's risers), a Basket (your curated list, ranked top-N), Watchlist (your pinned symbols), or a Custom fixed list. The strategy's entry rules and the safety rails then decide what actually trades from that pool.",
+      "Where a strategy's buy candidates come from: Scanner (today's risers), a Basket (your curated list, ranked top-N), Watchlist (your pinned symbols), or a Custom fixed list. The strategy's entry rules and the safety rails then decide what actually trades from that pool. A strategy trades ONE asset class, so its universe is scoped to that class — a stocks strategy never sees crypto, and vice-versa.",
     url: "https://www.investopedia.com/terms/s/stockscreener.asp",
+  },
+  custom_symbols: {
+    term: "Specific symbols",
+    explain:
+      "The engine considers EXACTLY the symbols you list each cycle — your entry and exit rules still apply. Good for a focused, one-off strategy (e.g. just SPCX) without building a whole basket. Only the current asset class is searchable here, because a strategy trades one asset class.",
+    url: "https://www.investopedia.com/terms/s/stock.asp",
+  },
+  atr_stop: {
+    term: "ATR stop (× ATR)",
+    explain:
+      "Sets the stop at a multiple of this symbol's Average True Range — its typical daily move — instead of a fixed %. A volatile stock gets a wider stop, a calm one a tighter stop, so ordinary daily wiggle doesn't shake you out. It's recomputed each bar, so it breathes with the symbol's volatility. 0 = off (use the fixed stop-loss above).",
+    url: "https://www.investopedia.com/terms/a/atr.asp",
+  },
+  atr_risk: {
+    term: "Risk $ per trade (ATR sizing)",
+    explain:
+      "Sizes each position so a stop-out loses about this many dollars, no matter how volatile the stock is — a wild stock gets a smaller position, a calm one a larger position, for the same risk. Needs the ATR stop turned on. 0 = off (use the fixed $ per trade).",
+    url: "https://www.investopedia.com/terms/p/positionsizing.asp",
+  },
+  atr_period: {
+    term: "ATR period (days)",
+    explain:
+      "How many completed daily bars the Average True Range averages over. 14 is standard. Computed from completed daily bars only — never today's in-progress bar — so it's look-ahead-safe, and the stop is recomputed each bar, breathing with the symbol's volatility.",
+    url: "https://www.investopedia.com/terms/a/atr.asp",
+  },
+  order_fills: {
+    term: "Order fills (slippage)",
+    explain:
+      "How aggressively QT prices its marketable limit orders. Defaults match the built-in behaviour; widen them if exits or entries miss fills on fast, thin movers. These affect live/paper orders only — the backtest uses its own spread-cost setting and assumes fills.",
+    url: "https://www.investopedia.com/terms/s/slippage.asp",
   },
   starting_cash: {
     term: "Starting cash ($)",

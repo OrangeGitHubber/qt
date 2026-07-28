@@ -212,13 +212,27 @@ function Editor({
           Name
           <input value={s.name ?? ""} onChange={(e) => setS({ ...s, name: e.target.value })} required />
         </label>
-        <label>
-          Asset class
-          <select value={s.asset_class} onChange={(e) => setS({ ...s, asset_class: e.target.value as "stock" | "crypto" })}>
-            <option value="stock">Stocks</option>
-            <option value="crypto">Crypto</option>
-          </select>
-        </label>
+        <div className="field">
+          <span className="field-cap">Asset class</span>
+          <div className="segmented" role="group" aria-label="Asset class">
+            <button
+              type="button"
+              className={s.asset_class === "stock" ? "seg-on" : ""}
+              aria-pressed={s.asset_class === "stock"}
+              onClick={() => setS({ ...s, asset_class: "stock" })}
+            >
+              Stocks
+            </button>
+            <button
+              type="button"
+              className={s.asset_class === "crypto" ? "seg-on" : ""}
+              aria-pressed={s.asset_class === "crypto"}
+              onClick={() => setS({ ...s, asset_class: "crypto" })}
+            >
+              Crypto
+            </button>
+          </div>
+        </div>
         <label>
           Universe <InfoTip k="universe" />
           <select value={s.universe} onChange={(e) => setS({ ...s, universe: e.target.value as StrategyRow["universe"] })}>
@@ -230,12 +244,6 @@ function Editor({
           </select>
         </label>
       </div>
-      <p className="hint">
-        This is a <strong>{s.asset_class === "crypto" ? "crypto" : "stocks"}</strong> strategy, so its universe is{" "}
-        {s.asset_class === "crypto" ? "crypto" : "stocks"}-only: it draws from the{" "}
-        {s.asset_class === "crypto" ? "crypto" : "stocks"} side of the scanner/watchlist and never sees{" "}
-        {s.asset_class === "crypto" ? "stocks" : "crypto"}. Change <em>Asset class</em> above to trade the other.
-      </p>
       {s.preset !== "custom" && presets[s.preset!] && <p className="hint">{presets[s.preset!].description}</p>}
 
       {s.universe === "basket" && (
@@ -277,17 +285,14 @@ function Editor({
               <NumberField step="1" min="1" max="50" value={s.top_n!} onChange={(n) => setS({ ...s, top_n: n })} />
             </label>
           </div>
-          <p className="hint">
-            The live engine ranks the basket's members by this metric and considers the top {s.top_n} as candidates
-            (your entry rules still apply). Baskets are <strong>curated lists, not a sector database</strong>. Top-N
-            ranking is a live feature — a backtest of this strategy tests the whole basket over history.
-          </p>
         </>
       )}
 
       {s.universe === "custom" && (
         <>
-          <h4>Specific symbols</h4>
+          <h4>
+            Specific symbols <InfoTip k="custom_symbols" />
+          </h4>
           <div className="field">
             {s.asset_class === "crypto" ? "Crypto pairs" : "Stocks"} to trade
             <SymbolPicker
@@ -298,12 +303,6 @@ function Editor({
               placeholder={s.asset_class === "crypto" ? "Search: bitcoin or BTC/USD" : "Search: SPCX or a company name"}
             />
           </div>
-          <p className="hint">
-            The engine considers <strong>exactly these symbols</strong> each cycle (your entry and exit rules still
-            apply). Good for a focused, one-off strategy — e.g. just SPCX — without building a whole basket. Only{" "}
-            {s.asset_class === "crypto" ? "crypto pairs" : "stocks"} are searchable here because this is a{" "}
-            {s.asset_class === "crypto" ? "crypto" : "stocks"} strategy.
-          </p>
         </>
       )}
 
@@ -325,13 +324,6 @@ function Editor({
               />
             </label>
           </div>
-          <p className="hint">
-            This is a <strong>dollar-cost-averaging</strong> sleeve: it buys each symbol above every{" "}
-            <strong>{p.dca.interval_days}</strong> day{p.dca.interval_days === 1 ? "" : "s"} as an{" "}
-            <strong>independent lot</strong> — no averaging and no momentum exits, so lots simply
-            accumulate on this cadence (a buy-and-hold baseline) unless you set a stop below. Every
-            other safety rail — sleeve budget, exposure, trade-rate and daily-loss — still applies.
-          </p>
         </>
       )}
 
@@ -367,9 +359,6 @@ function Editor({
             onChange={(e) => setEntry("require_macd_bullish", e.target.checked)} />
           Require bullish MACD to enter <InfoTip k="macd" />
         </label>
-        <p className="hint">
-          Best for swing / daily strategies — it avoids buying into fading momentum. Leave off for fast intraday trades.
-        </p>
         <label className="check">
           <input
             type="checkbox"
@@ -401,13 +390,6 @@ function Editor({
           </>
         )}
       </div>
-      {s.asset_class === "crypto" && (
-        <p className="hint">
-          Crypto trades 24/7, so the <strong>entry window</strong> is usually left <strong>off</strong> (uncheck
-          "Limit entries to a time window") — the ET hours don't mean much for a 24-hour market. Turn it on only if
-          you want to avoid, say, thin overnight liquidity.
-        </p>
-      )}
 
       <h4>Exit rules — "the configurable downturn"</h4>
       <div className="filter-grid">
@@ -469,11 +451,6 @@ function Editor({
               <NumberField step="1" min="1" value={macd.signal} onChange={(n) => setMacd("signal", n)} />
             </label>
           </div>
-          <p className="hint">
-            Standard MACD is <strong>12 / 26 / 9</strong> (fast / slow / signal). Fast must be below slow. QT computes it
-            from <strong>completed daily bars only</strong> — never today's in-progress bar — so the signal is
-            look-ahead-safe.
-          </p>
         </details>
       )}
 
@@ -518,36 +495,22 @@ function Editor({
         <h5>
           Volatility-based stops &amp; sizing (ATR) <InfoTip k="atr" />
         </h5>
-        <p className="hint">
-          Optional. Off by default — leave both at 0 to keep the fixed stop-loss and fixed $ per trade above. ATR is this
-          symbol's <strong>typical daily move</strong>, so these adapt to each symbol's real volatility.
-        </p>
         <div className="filter-grid">
           <label>
-            ATR stop (× ATR, 0 = off)
+            ATR stop (× ATR, 0 = off) <InfoTip k="atr_stop" />
             <NumberField step="0.1" min="0" max="20" value={atr.stop_mult}
               onChange={(n) => setAtr("stop_mult", n)} />
-            <span className="field-help">
-              Sets the stop at a multiple of this symbol's Average True Range — its typical daily move — instead of a
-              fixed %. A volatile stock gets a wider stop, a calm one a tighter stop, so ordinary daily wiggle doesn't
-              shake you out. 0 = off (use the fixed stop-loss above).
-            </span>
           </label>
           <label>
-            Risk $ per trade (ATR sizing, 0 = off)
+            Risk $ per trade (ATR sizing, 0 = off) <InfoTip k="atr_risk" />
             <NumberField step="any" min="0" value={atr.risk_usd}
               onChange={(n) => setAtr("risk_usd", n)} />
-            <span className="field-help">
-              Sizes each position so a stop-out loses about this many dollars, no matter how volatile the stock is — a
-              wild stock gets a smaller position, a calm one a larger position, for the same risk. Needs the ATR stop
-              above turned on. 0 = off (use the fixed $ per trade).
-            </span>
           </label>
         </div>
         {atrOn && (
           <details className="macd-advanced">
             <summary>
-              Advanced — ATR period <InfoTip k="atr" />
+              Advanced — ATR period <InfoTip k="atr_period" />
             </summary>
             <div className="filter-grid">
               <label>
@@ -556,21 +519,13 @@ function Editor({
                   onChange={(n) => setAtr("period", n)} />
               </label>
             </div>
-            <p className="hint">
-              How many completed daily bars the Average True Range averages over. <strong>14</strong> is standard.
-              Computed from completed daily bars only — never today's in-progress bar — so it's look-ahead-safe, and the
-              stop is recomputed each bar, breathing with the symbol's volatility.
-            </p>
           </details>
         )}
       </div>
 
-      <h4>Advanced — order fills</h4>
-      <p className="hint">
-        How aggressively QT prices its marketable limit orders. Defaults match the built-in behaviour; widen them if
-        exits (or entries) miss fills on fast, thin movers. These affect live/paper orders only — the backtest uses its
-        own spread-cost setting and assumes fills.
-      </p>
+      <h4>
+        Advanced — order fills <InfoTip k="order_fills" />
+      </h4>
       <div className="filter-grid">
         <label>
           Entry slippage (%) <InfoTip k="entry_slippage" />
@@ -588,12 +543,6 @@ function Editor({
             onChange={(n) => setExit("exit_slippage_max_pct", n)} />
         </label>
       </div>
-      <p className="hint">
-        Set <strong>Max exit slippage</strong> above <strong>Exit slippage</strong> to enable an escalating chase: each
-        time an exit misses, the sell price widens one step further below the market (up to the max) so a fast drop
-        still gets out — always a limit, never a naked market order. Equal values = no escalation. The retry interval
-        itself (~1 min) is a global engine setting, not per-strategy.
-      </p>
 
       <p className={`sleeve-readout${overAllocated ? " over" : ""}`}>
         All strategy sleeves total <strong>{money(totalSleeves)}</strong>
