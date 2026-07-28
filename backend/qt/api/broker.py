@@ -10,58 +10,98 @@ endpoint. Deliberately gated behind a typed confirmation in the UI.
 import logging
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Body, Depends, HTTPException
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from qt.api.market import require_client
 from qt.broker.alpaca import AlpacaClient, AlpacaError
 from qt.db import get_session
 from qt.models import AuditLog, Trade
-from qt.services import notify
 
 log = logging.getLogger("qt.api.broker")
 
 router = APIRouter(prefix="/api/broker", tags=["broker"])
 
 
+class LiquidateBody(BaseModel):
+    # Off by default: QT closes only the positions IT tracks, leaving anything
+    # else alone — those "orphans" may belong to ANOTHER bot on the same Alpaca
+    # account, and QT must not flatten someone else's trades. Turn it on only for
+    # a true whole-account wipe.
+    include_orphans: bool = False
+
+
+def _norm(symbol: str) -> str:
+    """Match QT's symbols to the broker's: QT stores crypto as 'AVAX/USD', Alpaca
+    positions return it slash-less ('AVAXUSD'). Same rule reconciliation uses."""
+    return symbol.replace("/", "").upper()
+
+
 @router.post("/liquidate")
 async def liquidate(
+    body: LiquidateBody = Body(default=LiquidateBody()),
     session: Session = Depends(get_session),
     client: AlpacaClient = Depends(require_client),
 ) -> dict:
-    """Flatten EVERY position at the broker (at market) and mark the engine's
-    open trades closed. Irreversible — the UI requires a typed confirmation."""
-    # Snapshot positions first, so we can record a reasonable exit price for the
-    # engine's own trades and report which broker holdings QT never tracked.
+    """Flatten holdings and mark the engine's open trades closed. By default this
+    closes ONLY the positions QT tracks (by exact quantity, so a co-existing bot's
+    shares are untouched); set include_orphans to also flatten positions QT
+    doesn't track. Irreversible — the UI requires a typed confirmation."""
     try:
-        positions = await client.list_positions()
+        raw = await client.list_positions()
     except AlpacaError as exc:
         raise HTTPException(status_code=502, detail=f"Could not read positions ({exc.status_code}): {exc}")
 
-    price_by_symbol: dict[str, float] = {}
-    for p in positions:
+    # Index broker positions by the normalized symbol.
+    pos_by_norm: dict[str, dict] = {}
+    for p in raw:
+        sym = p.get("symbol") or ""
         try:
-            price_by_symbol[p.get("symbol")] = float(p.get("current_price") or p.get("avg_entry_price") or 0)
+            qty = float(p.get("qty") or 0)
+            price = float(p.get("current_price") or p.get("avg_entry_price") or 0)
         except (TypeError, ValueError):
-            pass
+            qty, price = 0.0, 0.0
+        if sym and qty:
+            pos_by_norm[_norm(sym)] = {"symbol": sym, "qty": qty, "price": price}
 
-    try:
-        results = await client.close_all_positions(cancel_orders=True)
-    except AlpacaError as exc:
-        raise HTTPException(status_code=502, detail=f"Liquidation failed ({exc.status_code}): {exc}")
-
-    # Reconcile the engine's real (paper/live) open trades to closed. Shadow
-    # trades are hypothetical — no broker position backs them — so leave them be.
     now = datetime.now(timezone.utc)
-    open_trades = (
-        session.query(Trade)
-        .filter(Trade.status == "open", Trade.mode != "shadow")
-        .all()
-    )
-    tracked = {t.symbol for t in open_trades}
+    # Only real (paper/live) trades correspond to broker positions; shadow trades
+    # are hypothetical, so leave them be.
+    open_trades = session.query(Trade).filter(Trade.status == "open", Trade.mode != "shadow").all()
+    tracked_norms = {_norm(t.symbol) for t in open_trades}
+    errors: list[str] = []
+    positions_closed = 0
+
+    if body.include_orphans:
+        try:
+            results = await client.close_all_positions(cancel_orders=True)
+        except AlpacaError as exc:
+            raise HTTPException(status_code=502, detail=f"Liquidation failed ({exc.status_code}): {exc}")
+        positions_closed = len(results) if isinstance(results, list) else 0
+        orphans_cleared = sorted(p["symbol"] for n, p in pos_by_norm.items() if n not in tracked_norms)
+        orphans_left: list[str] = []
+    else:
+        # Close only what QT holds, by its own quantity (never more than the
+        # broker shows for that symbol — the rest could be another bot's).
+        for t in open_trades:
+            pos = pos_by_norm.get(_norm(t.symbol))
+            if pos is None:
+                continue  # broker isn't holding it — nothing to sell, just reconcile below
+            qty_to_close = min(t.qty, pos["qty"]) if pos["qty"] else t.qty
+            try:
+                await client.close_position(pos["symbol"], qty=qty_to_close)
+                positions_closed += 1
+            except AlpacaError as exc:
+                errors.append(f"{t.symbol}: {exc}")
+        orphans_cleared = []
+        orphans_left = sorted(p["symbol"] for n, p in pos_by_norm.items() if n not in tracked_norms)
+
+    # Reconcile QT's open trades to closed (both modes) at the last known price;
+    # fall back to entry price (zero P&L) rather than inventing a number.
     for t in open_trades:
-        # Fall back to the entry price (zero P&L) rather than inventing a number.
-        exit_price = price_by_symbol.get(t.symbol) or t.entry_price or 0.0
+        pos = pos_by_norm.get(_norm(t.symbol))
+        exit_price = (pos["price"] if pos else 0.0) or t.entry_price or 0.0
         t.status = "closed"
         t.exit_at = now
         t.exit_price = exit_price
@@ -69,18 +109,25 @@ async def liquidate(
         if t.entry_price and t.qty:
             t.pnl = round((exit_price - t.entry_price) * t.qty, 2)
 
-    closed = len(results) if isinstance(results, list) else 0
-    broker_symbols = {r.get("symbol") for r in results if isinstance(r, dict)} if isinstance(results, list) else set()
-    orphans = sorted(s for s in (broker_symbols - tracked) if s)
+    scope = "whole account" if body.include_orphans else "QT holdings only"
+    msg = f"Manual liquidation ({scope}): closed {positions_closed} position(s), reconciled {len(open_trades)} engine trade(s)."
+    detail = f"orphans_cleared={orphans_cleared} orphans_left={orphans_left} errors={errors}"
+    session.add(AuditLog(category="broker", message=msg, detail=detail))
+    extra = ""
+    if orphans_cleared:
+        extra = f" Orphans cleared: {', '.join(orphans_cleared)}."
+    elif orphans_left:
+        extra = f" Left {len(orphans_left)} untracked position(s) alone: {', '.join(orphans_left)}."
+    from qt.services import notify
 
-    msg = f"Manual liquidation: closed {closed} broker position(s), reconciled {len(open_trades)} engine trade(s)."
-    session.add(AuditLog(category="broker", message=msg, detail=f"orphans_cleared={orphans}"))
-    slack_text = f":rotating_light: {msg}" + (f" Orphans cleared: {', '.join(orphans)}." if orphans else "")
-    await notify.slack_cat(session, "reconciliation", slack_text)
+    await notify.slack_cat(session, "reconciliation", f":rotating_light: {msg}{extra}")
 
     return {
         "ok": True,
-        "positions_closed": closed,
+        "mode": "full" if body.include_orphans else "qt_only",
+        "positions_closed": positions_closed,
         "trades_reconciled": len(open_trades),
-        "orphans_cleared": orphans,
+        "orphans_cleared": orphans_cleared,
+        "orphans_left": orphans_left,
+        "errors": errors,
     }

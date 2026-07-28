@@ -139,6 +139,19 @@ class AlpacaClient:
         """All open positions the broker currently holds."""
         return await self._get("/v2/positions") or []
 
+    async def close_position(self, symbol: str, qty: float | None = None) -> dict[str, Any]:
+        """Close ONE position at market — optionally only `qty` units of it, so we
+        never touch shares beyond what QT itself holds (another bot may own the
+        rest). `symbol` must be the broker's own representation (from
+        list_positions), e.g. crypto as 'AVAXUSD'. qty=None closes 100%."""
+        from urllib.parse import quote
+
+        path = f"/v2/positions/{quote(symbol, safe='')}"
+        if qty is not None:
+            q = int(qty) if float(qty).is_integer() else qty
+            path += f"?qty={q}"
+        return await self._delete(path) or {}
+
     async def close_all_positions(self, cancel_orders: bool = True) -> list[dict[str, Any]]:
         """Liquidate EVERY open position (at market) and, by default, cancel any
         resting orders — the manual "flatten the whole account" action. This

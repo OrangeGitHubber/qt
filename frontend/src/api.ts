@@ -733,8 +733,20 @@ export function saveAlpacaKeys(keyId: string, keySecret: string) {
   }).then((r) => handle<{ ok: boolean; account_number: string; status: string }>(r));
 }
 
-export function liquidateAll() {
-  return fetch("/api/broker/liquidate", { method: "POST" }).then((r) =>
-    handle<{ ok: boolean; positions_closed: number; trades_reconciled: number; orphans_cleared: string[] }>(r),
+export function liquidateAll(includeOrphans = false) {
+  return fetch("/api/broker/liquidate", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ include_orphans: includeOrphans }),
+  }).then((r) =>
+    handle<{
+      ok: boolean;
+      mode: "full" | "qt_only";
+      positions_closed: number;
+      trades_reconciled: number;
+      orphans_cleared: string[];
+      orphans_left: string[];
+      errors: string[];
+    }>(r),
   );
 }

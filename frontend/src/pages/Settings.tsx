@@ -77,6 +77,7 @@ export default function Settings() {
   const [showKeyForm, setShowKeyForm] = useState(false);
   const [liqConfirm, setLiqConfirm] = useState("");
   const [liqBusy, setLiqBusy] = useState(false);
+  const [liqOrphans, setLiqOrphans] = useState(false);
 
   // The status endpoint nulls the persisted cache totals while a sweep runs (to
   // avoid counting rows on every 3s poll). Retain the last-known totals so a run
@@ -130,12 +131,16 @@ export default function Settings() {
     setNote(null);
     setLiqBusy(true);
     try {
-      const res = await liquidateAll();
+      const res = await liquidateAll(liqOrphans);
       setLiqConfirm("");
       refresh();
-      const orphans = res.orphans_cleared.length ? ` (${res.orphans_cleared.length} were orphans QT didn't track)` : "";
+      const tail = res.orphans_cleared.length
+        ? ` (${res.orphans_cleared.length} were orphans QT didn't track)`
+        : res.orphans_left.length
+          ? `; left ${res.orphans_left.length} untracked position(s) alone`
+          : "";
       setNote(
-        `Liquidated: closed ${res.positions_closed} position(s)${orphans}, reconciled ${res.trades_reconciled} open trade(s).`,
+        `Liquidated: closed ${res.positions_closed} position(s), reconciled ${res.trades_reconciled} open trade(s)${tail}.`,
       );
     } catch (err) {
       setNote((err as Error).message);
@@ -326,12 +331,26 @@ export default function Settings() {
         )}
 
         <div className="atr-section">
-          <h5>Danger zone — liquidate all holdings</h5>
+          <h5>Danger zone — liquidate holdings</h5>
           <p className="hint">
-            Closes <strong>every</strong> position at the broker (at market) — including any QT doesn't track
-            (orphans) — cancels resting orders, and marks QT's open trades closed. Use it to start fresh, e.g. before
-            switching accounts. It does <strong>not</strong> touch your cash or the account itself, but the position
-            closes <strong>cannot be undone</strong>. Pause the engine first so it doesn't re-buy.
+            Closes the positions QT holds (at market, by QT's own quantity), cancels its resting orders, and marks QT's
+            open trades closed. Use it to start fresh, e.g. before switching accounts. It does <strong>not</strong> touch
+            your cash or the account itself, but the position closes <strong>cannot be undone</strong>. Pause the engine
+            first so it doesn't re-buy.
+          </p>
+          <label className="check">
+            <input type="checkbox" checked={liqOrphans} onChange={(e) => setLiqOrphans(e.target.checked)} />
+            Also close positions QT doesn't track (orphans)
+          </label>
+          <p className="hint warn">
+            {liqOrphans ? (
+              <>
+                ⚠ This will flatten <strong>every</strong> position on the account, including ones QT never opened. If
+                another bot or you trade this same Alpaca account, <strong>its positions will be closed too.</strong>
+              </>
+            ) : (
+              <>Off by default: untracked positions are left alone — they may belong to another bot on this account.</>
+            )}
           </p>
           <label>
             Type <strong>LIQUIDATE</strong> to confirm
@@ -348,7 +367,7 @@ export default function Settings() {
             disabled={liqBusy || liqConfirm !== "LIQUIDATE"}
             onClick={doLiquidate}
           >
-            {liqBusy ? "Liquidating…" : "Liquidate all holdings"}
+            {liqBusy ? "Liquidating…" : liqOrphans ? "Liquidate ALL holdings (incl. orphans)" : "Liquidate QT holdings"}
           </button>
         </div>
       </div>
