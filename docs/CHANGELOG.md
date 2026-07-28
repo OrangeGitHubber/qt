@@ -3,6 +3,30 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Symbol chart: toggleable review overlays (MACD, RS, markers, and more) (2026-07-28)
+
+Click any symbol (watchlist, scanner, backtest) and the detail chart now has a
+row of **overlay checkboxes** — each adds or removes its data on the chart, so
+you can review what a symbol (and your trades on it) were doing:
+
+- **Buy / sell markers** (on by default) — every entry and exit from the trade
+  journal for that symbol, placed on its day, with the price, reason, and P&L in
+  the tooltip.
+- **50 & 200-day moving averages** and **EMA 9 & 21** drawn on the price line.
+- **Bollinger Bands** (20-day, 2σ) as a shaded volatility envelope.
+- **ATR-stop level** — an illustrative "close − 2×ATR" line showing how far a
+  volatility-based stop sits below price and how it breathes (not a live stop).
+- **Volume**, **MACD** (12/26/9 with signal + histogram), and **RSI** (14) as
+  their own sub-panels beneath the price, sharing the crosshair.
+- **Relative strength vs SPY** (stocks) — the symbol's performance divided by
+  SPY's, rebased to 1.0 at the window start; above 1.0 and rising = leading the
+  market.
+
+All of it is **display-only** — indicators are computed in the browser from the
+daily bars the chart already loads (high/low/volume now ride along in the history
+response) and never touch a trading decision. Everything is off by default except
+the trade markers, so the chart stays clean until you ask for more.
+
 ## Optimizer can now search against the scanner's historical risers (2026-07-28)
 
 The parameter search used to fall back to your watchlist whenever the strategy's

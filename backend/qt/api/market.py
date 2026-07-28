@@ -175,7 +175,19 @@ async def history(
     return {
         "symbol": symbol,
         "asset_class": asset_class,
-        "bars": [{"t": b["t"], "c": float(b["c"])} for b in series],
+        # High/low/volume ride along so the detail chart can draw volatility
+        # overlays (ATR) and a volume sub-panel without a second round-trip. They
+        # may be missing on a sparse bar, hence the defensive .get.
+        "bars": [
+            {
+                "t": b["t"],
+                "c": float(b["c"]),
+                "h": float(b["h"]) if b.get("h") is not None else None,
+                "l": float(b["l"]) if b.get("l") is not None else None,
+                "v": float(b["v"]) if b.get("v") is not None else None,
+            }
+            for b in series
+        ],
         "stats": stats.compute(series),
     }
 

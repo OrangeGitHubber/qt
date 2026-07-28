@@ -1,66 +1,174 @@
 import { useMemo, useRef, useState } from "react";
+import type { MacdSeries, Num } from "../lib/indicators";
 
 export interface PricePoint {
   t: string;
   c: number;
+  h?: number | null;
+  l?: number | null;
+  v?: number | null;
 }
 
-/** Daily price history with a hover crosshair: move the cursor and the date
- *  and price track the line. Pointer events cover mouse and touch. */
-export default function PriceChart({ points, height = 320 }: { points: PricePoint[]; height?: number }) {
-  // sticky: the last hovered day stays shown after the cursor leaves, so the
-  // price/date can be read without it blanking the moment you move away.
+export interface OverlayLine {
+  key: string;
+  label: string;
+  color: string;
+  values: Num[]; // aligned 1:1 with points
+  dash?: boolean;
+}
+
+export interface ChartMarker {
+  index: number; // bar index the marker sits on
+  kind: "buy" | "sell";
+  price: number;
+  label: string; // tooltip text (reason, P&L…)
+}
+
+export interface ChartOverlays {
+  priceLines?: OverlayLine[]; // MAs / EMAs / ATR-stop drawn ON the price panel
+  bollinger?: { upper: Num[]; lower: Num[]; mid: Num[] } | null;
+  markers?: ChartMarker[];
+  volume?: boolean;
+  macd?: MacdSeries | null;
+  rsi?: Num[] | null;
+  rs?: { values: Num[]; label: string } | null;
+}
+
+// Data-viz series colors, legible on both light and dark grounds. These are
+// intentionally NOT the app accent — they're categorical encodings.
+export const SERIES_COLORS = {
+  ma50: "#e0a13b",
+  ma200: "#b5651d",
+  ema9: "#3b9ae0",
+  ema21: "#8a5cf6",
+  atrStop: "#e04b6a",
+  bollinger: "#7f8c9b",
+  macd: "#3b9ae0",
+  signal: "#e0a13b",
+  rs: "#2fae7a",
+};
+
+/** Daily price chart with optional, independently-toggled review overlays:
+ *  moving-average / EMA / ATR-stop lines and Bollinger bands on the price panel,
+ *  buy/sell journal markers, and stacked sub-panels (volume, MACD, RSI,
+ *  relative-strength). All panels share one x-axis and one hover crosshair.
+ *  Everything is DISPLAY-ONLY — nothing here drives a trade. */
+export default function PriceChart({
+  points,
+  overlays = {},
+  height = 320,
+}: {
+  points: PricePoint[];
+  overlays?: ChartOverlays;
+  height?: number;
+}) {
   const [hover, setHover] = useState<number | null>(null);
   const svgRef = useRef<SVGSVGElement>(null);
 
   const W = 900;
-  const H = height;
   const padL = 58;
   const padR = 16;
   const padT = 14;
-  const padB = 30;
 
-  const model = useMemo(() => {
-    if (points.length < 2) return null;
-    const values = points.map((p) => p.c);
-    const min = Math.min(...values);
-    const max = Math.max(...values);
+  // Panel stack: the price panel plus whichever sub-panels are enabled. Each has
+  // its own height and vertical offset; they share the x mapping.
+  const subPanels: { key: string; h: number }[] = [];
+  if (overlays.volume) subPanels.push({ key: "volume", h: 66 });
+  if (overlays.macd) subPanels.push({ key: "macd", h: 96 });
+  if (overlays.rsi) subPanels.push({ key: "rsi", h: 90 });
+  if (overlays.rs) subPanels.push({ key: "rs", h: 90 });
+
+  const GAP = 26; // room for a sub-panel's bottom date/axis + spacing
+  const priceH = height;
+  const totalH = padT + priceH + subPanels.reduce((s, p) => s + p.h + GAP, 0) + 30;
+
+  const n = points.length;
+  const x = (i: number) => padL + (n <= 1 ? 0 : (i / (n - 1)) * (W - padL - padR));
+
+  const price = useMemo(() => {
+    if (n < 2) return null;
+    // The price panel's y-range must contain the price AND any overlay lines /
+    // bands drawn on it, or an MA/band would clip off the top or bottom.
+    const extra: number[] = [];
+    for (const ln of overlays.priceLines ?? []) for (const v of ln.values) if (v != null) extra.push(v);
+    if (overlays.bollinger) {
+      for (const v of overlays.bollinger.upper) if (v != null) extra.push(v);
+      for (const v of overlays.bollinger.lower) if (v != null) extra.push(v);
+    }
+    const vals = points.map((p) => p.c).concat(extra);
+    const min = Math.min(...vals);
+    const max = Math.max(...vals);
     const span = max - min || 1;
-    const x = (i: number) => padL + (i / (points.length - 1)) * (W - padL - padR);
-    const y = (v: number) => H - padB - ((v - min) / span) * (H - padT - padB);
+    const top = padT;
+    const y = (v: number) => top + priceH - ((v - min) / span) * priceH;
     const path = points.map((p, i) => `${i === 0 ? "M" : "L"}${x(i).toFixed(1)},${y(p.c).toFixed(1)}`).join(" ");
-    const area = `${path} L${x(points.length - 1).toFixed(1)},${H - padB} L${padL},${H - padB} Z`;
-    return { min, max, x, y, path, area };
-  }, [points, H]);
+    const area = `${path} L${x(n - 1).toFixed(1)},${top + priceH} L${padL},${top + priceH} Z`;
+    return { min, max, top, y, path, area, bottom: top + priceH };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [points, overlays, priceH]);
 
-  if (!model) return <p className="hint">Not enough history to chart.</p>;
+  if (!price) return <p className="hint">Not enough history to chart.</p>;
 
   const first = points[0].c;
-  const last = points[points.length - 1].c;
+  const last = points[n - 1].c;
   const up = last >= first;
   const stroke = up ? "var(--ok)" : "var(--err)";
 
+  // Vertical offset where each sub-panel starts.
+  let cursor = price.bottom + GAP;
+  const panelBox: Record<string, { top: number; h: number; bottom: number }> = {};
+  for (const p of subPanels) {
+    panelBox[p.key] = { top: cursor, h: p.h, bottom: cursor + p.h };
+    cursor += p.h + GAP;
+  }
+
   function onMove(e: React.PointerEvent<SVGSVGElement>) {
     const rect = svgRef.current!.getBoundingClientRect();
-    // the SVG scales via viewBox — convert screen px back to viewBox units
     const vx = ((e.clientX - rect.left) / rect.width) * W;
     const ratio = (vx - padL) / (W - padL - padR);
-    const idx = Math.round(ratio * (points.length - 1));
-    setHover(Math.max(0, Math.min(points.length - 1, idx)));
+    const idx = Math.round(ratio * (n - 1));
+    setHover(Math.max(0, Math.min(n - 1, idx)));
   }
 
   const hp = hover !== null ? points[hover] : null;
   const hoverChange = hp ? ((hp.c / first - 1) * 100).toFixed(2) : null;
 
+  // Build an overlay path helper: skips null gaps (starts a new sub-path).
+  const linePath = (values: Num[], y: (v: number) => number) => {
+    let d = "";
+    let pen = false;
+    for (let i = 0; i < values.length; i++) {
+      const v = values[i];
+      if (v == null) {
+        pen = false;
+        continue;
+      }
+      d += `${pen ? "L" : "M"}${x(i).toFixed(1)},${y(v).toFixed(1)} `;
+      pen = true;
+    }
+    return d.trim();
+  };
+
+  // ----- sub-panel scale helpers -----
+  const rangeOf = (values: Num[], extra: number[] = []) => {
+    const nums = values.filter((v): v is number => v != null).concat(extra);
+    if (!nums.length) return { min: 0, max: 1 };
+    const min = Math.min(...nums);
+    const max = Math.max(...nums);
+    return { min, max: max === min ? min + 1 : max };
+  };
+  const scaleY = (box: { top: number; h: number }, min: number, max: number) => (v: number) =>
+    box.top + box.h - ((v - min) / (max - min || 1)) * box.h;
+
+  // Active-legend values at the hovered index (or the last bar when not hovering).
+  const li = hover ?? n - 1;
+
   return (
     <div className="pricechart">
-      {/* Fixed readout above the plot. Price, date and change each have their
-          own permanent slot so only the digits change as the cursor sweeps —
-          the layout never reflows and there is no scrollbar. */}
       <div className="chart-readout pc-readout" aria-label="Price readout">
         <div className="cr-price">
           {!hp ? (
-            <span className="hint">Hover the line for price and date.</span>
+            <span className="hint">Hover the chart for values and date.</span>
           ) : (
             `$${hp.c.toLocaleString(undefined, { maximumFractionDigits: 4 })}`
           )}
@@ -77,13 +185,26 @@ export default function PriceChart({ points, height = 320 }: { points: PricePoin
         </div>
       </div>
 
-      <svg
-        ref={svgRef}
-        viewBox={`0 0 ${W} ${H}`}
-        onPointerMove={onMove}
-        role="img"
-        aria-label="Price history"
-      >
+      {/* Legend: active price-panel overlays + their value at the hovered bar. */}
+      {(overlays.priceLines?.length || overlays.bollinger) && (
+        <div className="chart-legend">
+          {(overlays.priceLines ?? []).map((ln) => (
+            <span key={ln.key} className="legend-item">
+              <span className="legend-swatch" style={{ background: ln.color }} />
+              {ln.label}
+              {ln.values[li] != null ? ` ${(ln.values[li] as number).toFixed(2)}` : ""}
+            </span>
+          ))}
+          {overlays.bollinger && (
+            <span className="legend-item">
+              <span className="legend-swatch" style={{ background: SERIES_COLORS.bollinger }} />
+              Bollinger (20, 2σ)
+            </span>
+          )}
+        </div>
+      )}
+
+      <svg ref={svgRef} viewBox={`0 0 ${W} ${totalH}`} onPointerMove={onMove} role="img" aria-label="Price history with overlays">
         <defs>
           <linearGradient id="pcfill" x1="0" y1="0" x2="0" y2="1">
             <stop offset="0%" stopColor={stroke} stopOpacity="0.22" />
@@ -91,9 +212,10 @@ export default function PriceChart({ points, height = 320 }: { points: PricePoin
           </linearGradient>
         </defs>
 
+        {/* ---- price panel gridlines + axis labels ---- */}
         {[0, 0.25, 0.5, 0.75, 1].map((f) => {
-          const v = model.min + (model.max - model.min) * (1 - f);
-          const yy = padT + f * (H - padT - padB);
+          const v = price.max - (price.max - price.min) * f;
+          const yy = price.top + f * priceH;
           return (
             <g key={f}>
               <line x1={padL} x2={W - padR} y1={yy} y2={yy} stroke="var(--border)" strokeWidth="1" />
@@ -104,21 +226,186 @@ export default function PriceChart({ points, height = 320 }: { points: PricePoin
           );
         })}
 
-        <path d={model.area} fill="url(#pcfill)" />
-        <path d={model.path} fill="none" stroke={stroke} strokeWidth="1.8" />
+        {/* ---- Bollinger band fill (behind the price line) ---- */}
+        {overlays.bollinger &&
+          (() => {
+            const { upper, lower } = overlays.bollinger!;
+            let top = "";
+            let pen = false;
+            for (let i = 0; i < upper.length; i++) {
+              const v = upper[i];
+              if (v == null) { pen = false; continue; }
+              top += `${pen ? "L" : "M"}${x(i).toFixed(1)},${price.y(v).toFixed(1)} `;
+              pen = true;
+            }
+            let bot = "";
+            for (let i = lower.length - 1; i >= 0; i--) {
+              const v = lower[i];
+              if (v != null) bot += `L${x(i).toFixed(1)},${price.y(v).toFixed(1)} `;
+            }
+            if (!top) return null;
+            return (
+              <>
+                <path d={`${top} ${bot} Z`} fill={SERIES_COLORS.bollinger} fillOpacity="0.10" stroke="none" />
+                <path d={linePath(overlays.bollinger!.upper, price.y)} fill="none" stroke={SERIES_COLORS.bollinger} strokeWidth="1" strokeOpacity="0.6" strokeDasharray="2 2" />
+                <path d={linePath(overlays.bollinger!.lower, price.y)} fill="none" stroke={SERIES_COLORS.bollinger} strokeWidth="1" strokeOpacity="0.6" strokeDasharray="2 2" />
+              </>
+            );
+          })()}
 
+        <path d={price.area} fill="url(#pcfill)" />
+        <path d={price.path} fill="none" stroke={stroke} strokeWidth="1.8" />
+
+        {/* ---- price-panel overlay lines (MA / EMA / ATR-stop) ---- */}
+        {(overlays.priceLines ?? []).map((ln) => (
+          <path
+            key={ln.key}
+            d={linePath(ln.values, price.y)}
+            fill="none"
+            stroke={ln.color}
+            strokeWidth="1.4"
+            strokeDasharray={ln.dash ? "5 3" : undefined}
+            opacity="0.95"
+          />
+        ))}
+
+        {/* ---- buy/sell markers ---- */}
+        {(overlays.markers ?? []).map((m, i) => {
+          const cx = x(m.index);
+          const cy = price.y(m.price);
+          const c = m.kind === "buy" ? "var(--ok)" : "var(--err)";
+          const tri =
+            m.kind === "buy"
+              ? `${cx},${cy - 9} ${cx - 6},${cy + 2} ${cx + 6},${cy + 2}` // up triangle above the point
+              : `${cx},${cy + 9} ${cx - 6},${cy - 2} ${cx + 6},${cy - 2}`; // down triangle below
+          return (
+            <g key={i}>
+              <polygon points={tri} fill={c} stroke="var(--bg)" strokeWidth="1" />
+              <title>{m.label}</title>
+            </g>
+          );
+        })}
+
+        {/* ---- volume sub-panel ---- */}
+        {overlays.volume &&
+          panelBox.volume &&
+          (() => {
+            const box = panelBox.volume;
+            const vols = points.map((p) => p.v ?? 0);
+            const max = Math.max(1, ...vols);
+            return (
+              <g>
+                <text x={padL - 8} y={box.top + 10} textAnchor="end" className="chart-label">Vol</text>
+                <line x1={padL} x2={W - padR} y1={box.bottom} y2={box.bottom} stroke="var(--border)" />
+                {points.map((p, i) => {
+                  const h = ((p.v ?? 0) / max) * box.h;
+                  const barUp = i === 0 ? true : p.c >= points[i - 1].c;
+                  const bw = Math.max(1, (W - padL - padR) / n - 0.5);
+                  return (
+                    <rect
+                      key={i}
+                      x={x(i) - bw / 2}
+                      y={box.bottom - h}
+                      width={bw}
+                      height={h}
+                      fill={barUp ? "var(--ok)" : "var(--err)"}
+                      opacity="0.5"
+                    />
+                  );
+                })}
+              </g>
+            );
+          })()}
+
+        {/* ---- MACD sub-panel ---- */}
+        {overlays.macd &&
+          panelBox.macd &&
+          (() => {
+            const box = panelBox.macd;
+            const m = overlays.macd!;
+            const { min, max } = rangeOf([...m.macd, ...m.signal, ...m.hist], [0]);
+            const y = scaleY(box, min, max);
+            const zero = y(0);
+            const bw = Math.max(1, (W - padL - padR) / n - 0.5);
+            return (
+              <g>
+                <text x={padL - 8} y={box.top + 10} textAnchor="end" className="chart-label">MACD</text>
+                <line x1={padL} x2={W - padR} y1={zero} y2={zero} stroke="var(--border)" />
+                {m.hist.map((v, i) =>
+                  v == null ? null : (
+                    <rect
+                      key={i}
+                      x={x(i) - bw / 2}
+                      y={Math.min(zero, y(v))}
+                      width={bw}
+                      height={Math.abs(y(v) - zero)}
+                      fill={v >= 0 ? "var(--ok)" : "var(--err)"}
+                      opacity="0.45"
+                    />
+                  ),
+                )}
+                <path d={linePath(m.macd, y)} fill="none" stroke={SERIES_COLORS.macd} strokeWidth="1.4" />
+                <path d={linePath(m.signal, y)} fill="none" stroke={SERIES_COLORS.signal} strokeWidth="1.4" />
+              </g>
+            );
+          })()}
+
+        {/* ---- RSI sub-panel ---- */}
+        {overlays.rsi &&
+          panelBox.rsi &&
+          (() => {
+            const box = panelBox.rsi;
+            const y = scaleY(box, 0, 100);
+            return (
+              <g>
+                <text x={padL - 8} y={box.top + 10} textAnchor="end" className="chart-label">RSI</text>
+                {[30, 50, 70].map((lv) => (
+                  <g key={lv}>
+                    <line x1={padL} x2={W - padR} y1={y(lv)} y2={y(lv)} stroke="var(--border)" strokeDasharray={lv === 50 ? undefined : "3 3"} />
+                    <text x={W - padR + 2} y={y(lv) + 3} className="chart-label">{lv}</text>
+                  </g>
+                ))}
+                <path d={linePath(overlays.rsi!, y)} fill="none" stroke={SERIES_COLORS.ema9} strokeWidth="1.4" />
+              </g>
+            );
+          })()}
+
+        {/* ---- relative-strength sub-panel ---- */}
+        {overlays.rs &&
+          panelBox.rs &&
+          (() => {
+            const box = panelBox.rs;
+            const { min, max } = rangeOf(overlays.rs!.values, [1]);
+            const y = scaleY(box, min, max);
+            return (
+              <g>
+                <text x={padL - 8} y={box.top + 10} textAnchor="end" className="chart-label">RS</text>
+                <line x1={padL} x2={W - padR} y1={y(1)} y2={y(1)} stroke="var(--border)" strokeDasharray="3 3" />
+                <text x={W - padR + 2} y={y(1) + 3} className="chart-label">1.0</text>
+                <path d={linePath(overlays.rs!.values, y)} fill="none" stroke={SERIES_COLORS.rs} strokeWidth="1.4" />
+              </g>
+            );
+          })()}
+
+        {/* ---- shared hover crosshair spanning every panel ---- */}
         {hp && (
           <g>
-            <line x1={model.x(hover!)} x2={model.x(hover!)} y1={padT} y2={H - padB} stroke="var(--accent)" strokeDasharray="3 3" />
-            <circle cx={model.x(hover!)} cy={model.y(hp.c)} r="4" fill="var(--accent)" stroke="var(--bg)" strokeWidth="2" />
+            <line
+              x1={x(hover!)}
+              x2={x(hover!)}
+              y1={price.top}
+              y2={subPanels.length ? panelBox[subPanels[subPanels.length - 1].key].bottom : price.bottom}
+              stroke="var(--accent)"
+              strokeDasharray="3 3"
+            />
+            <circle cx={x(hover!)} cy={price.y(hp.c)} r="4" fill="var(--accent)" stroke="var(--bg)" strokeWidth="2" />
           </g>
         )}
 
-        <text x={padL} y={H - 8} className="chart-label">
-          {new Date(points[0].t).toLocaleDateString()}
-        </text>
-        <text x={W - padR} y={H - 8} textAnchor="end" className="chart-label">
-          {new Date(points[points.length - 1].t).toLocaleDateString()}
+        {/* ---- x-axis date labels at the very bottom ---- */}
+        <text x={padL} y={totalH - 8} className="chart-label">{new Date(points[0].t).toLocaleDateString()}</text>
+        <text x={W - padR} y={totalH - 8} textAnchor="end" className="chart-label">
+          {new Date(points[n - 1].t).toLocaleDateString()}
         </text>
       </svg>
     </div>

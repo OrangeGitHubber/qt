@@ -656,7 +656,7 @@ export interface WatchlistRow {
 export interface HistoryResponse {
   symbol: string;
   asset_class: string;
-  bars: { t: string; c: number }[];
+  bars: { t: string; c: number; h?: number | null; l?: number | null; v?: number | null }[];
   stats: {
     change_30d_pct: number | null;
     atr_pct: number | null;
