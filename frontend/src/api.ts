@@ -437,6 +437,94 @@ export const runPortfolioBacktest = (body: {
   spread_pct: number;
 }) => fetch("/api/backtest/portfolio", json(body)).then((r) => handle<PortfolioBacktestResult>(r));
 
+// ---- Strategy optimizer (parameter search) ----
+// Searches a momentum strategy's parameter space with the SAME backtester,
+// splitting history into in-sample (searched) and out-of-sample (validation).
+// Only the out-of-sample number is treated as real. NOT "AI" — a parameter search.
+
+export interface OptimizerMetrics {
+  net_pnl_pct: number | null;
+  trades: number | null;
+  win_rate: number | null;
+  return_on_deployed_pct: number | null;
+  max_drawdown_pct: number | null;
+}
+
+export interface OptimizerComboParams {
+  min_day_gain_pct: number;
+  trailing_stop_pct: number;
+  stop_loss_pct: number;
+  take_profit_pct: number;
+}
+
+export interface OptimizerResultRow {
+  rank: number;
+  params: OptimizerComboParams;
+  in_sample_score: number | null;
+  in_sample: OptimizerMetrics | null;
+  out_of_sample: OptimizerMetrics | null;
+  is_best: boolean;
+}
+
+export interface OptimizerWindow {
+  start: string;
+  end: string;
+  days: number;
+}
+
+export interface OptimizerNeighbourPoint {
+  value: number;
+  score: number | null;
+  is_best: boolean;
+}
+
+export interface OptimizerResult {
+  tested_combinations: number;
+  iterations: number;
+  in_sample_window: OptimizerWindow;
+  out_of_sample_window: OptimizerWindow;
+  results: OptimizerResultRow[];
+  best: OptimizerResultRow | null;
+  best_draft_params: StrategyParams;
+  neighbourhood: Record<string, OptimizerNeighbourPoint[]>;
+  hold_benchmark_comparison: {
+    strategy_out_of_sample_pct: number | null;
+    hold_out_of_sample_pct: number | null;
+    hold_label: string | null;
+    beat_hold: boolean | null;
+  };
+  symbols: string[];
+  warnings: string[];
+  strategy_name?: string;
+  timeframe?: string;
+  days?: number;
+}
+
+export interface OptimizerStatus {
+  running: boolean;
+  phase: string; // "downloading bars" | "searching" | "validating" | "done"
+  strategy_name: string;
+  started_at: string | null;
+  finished_at: string | null;
+  combos_total: number;
+  combos_done: number;
+  error: string | null;
+  result: OptimizerResult | null;
+}
+
+export const startOptimizer = (body: {
+  strategy_id: number;
+  symbols: string[];
+  days: number;
+  timeframe: string;
+  iterations: number;
+  starting_cash: number;
+  spread_pct: number;
+}) => fetch("/api/optimizer", json(body)).then((r) => handle<{ ok: boolean; started: boolean; symbols: string[]; iterations: number }>(r));
+
+export const getOptimizerStatus = () =>
+  fetch("/api/optimizer/status").then((r) => handle<OptimizerStatus>(r));
+
 async function handle<T>(resp: Response): Promise<T> {
   if (!resp.ok) {
     let detail = resp.statusText;

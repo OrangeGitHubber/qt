@@ -3,6 +3,34 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Strategy optimizer — a parameter search (2026-07-27)
+
+Instead of guessing a strategy's numbers (min gain, trailing stop, stop-loss,
+take-profit), the new **Optimizer** tab **searches** for settings that actually
+held up — running the *same* backtester across many combinations. It's a
+**parameter search, not "AI"**, and it's built from the ground up to fight
+**overfitting** (the trap where settings look brilliant on the history you tested
+and fall apart on anything new):
+
+- **Out-of-sample, always.** The search only ever sees the **first ~70%** of the
+  history. Every winner is then re-run on the **final ~30% it never looked at** —
+  and the app treats *only* that out-of-sample number as real. The in-sample
+  number is shown beside it, clearly labelled "not proof".
+- **It counts the coins.** It always tells you **how many combinations were
+  tested** — a winner out of 12 tries means far less than a winner out of 2,000.
+- **Plateaus, not peaks.** Around the winner it sweeps each knob one step either
+  way and charts those neighbouring scores, so a dependable setting (its
+  neighbours score similarly) is easy to tell from a lone lucky spike.
+- **vs buy-and-hold.** It puts the winner's out-of-sample return next to simply
+  holding the same symbols — if trading can't beat that, it destroyed value.
+- **Validate across several symbols**, never one ticker.
+
+The result is a **hypothesis**, not a verdict: a one-click **"Save as draft
+strategy"** creates a new strategy from the winning settings — born **disabled**,
+mirroring the one you tuned — that still has to earn its way up shadow → paper.
+Nothing is ever enabled for you. The search runs as a background job with a live
+progress bar, and reuses the existing backtester unchanged.
+
 ## Portfolio (multi-strategy) backtest (2026-07-27)
 
 The backtester could only replay **one** strategy at a time — but live, the engine

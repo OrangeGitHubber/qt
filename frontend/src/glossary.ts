@@ -271,4 +271,16 @@ export const GLOSSARY: Record<string, GlossaryEntry> = {
       "Symbols the scanner always drops and the engine never buys, in both markets. Use it to permanently avoid names you don't want the bot touching — e.g. a stock you already hold elsewhere, or one that keeps whipsawing you.",
     url: "https://www.investopedia.com/terms/e/exclusion.asp",
   },
+  overfitting: {
+    term: "Overfitting",
+    explain:
+      "Tuning a strategy's settings so tightly to past prices that it fits the noise, not the signal — it looks brilliant on the history you tested and falls apart on anything new. The classic trap of any parameter search. The defences: judge a config on data it never saw (out-of-sample), prefer settings whose neighbours also do well (a plateau, not a lone spike), and count how many combinations you tried — one winner out of thousands is often just luck.",
+    url: "https://www.investopedia.com/terms/o/overfitting.asp",
+  },
+  parameter_search: {
+    term: "Parameter search",
+    explain:
+      "Systematically trying many settings for a strategy (min gain, stops, take-profit) through the SAME backtester, instead of guessing one by hand — this is a search, not 'AI'. QT searches on the first ~70% of the history and reports the result on the final ~30% it never optimized on, so a lucky in-sample fit gets caught. The output is a HYPOTHESIS: an editable draft strategy, born disabled, that still has to prove itself in shadow then paper. It never enables anything for you.",
+    url: "https://www.investopedia.com/terms/b/backtesting.asp",
+  },
 };

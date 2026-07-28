@@ -1,0 +1,331 @@
+"""Strategy parameter search (Phase 4): sweep a momentum strategy's parameter
+space with the EXISTING backtester to find configs that actually held up — a
+disciplined alternative to hand-guessing numbers.
+
+This is a PARAMETER SEARCH, not "AI". It is deliberately built to fight
+overfitting, because the easiest thing in the world is to find a knob setting
+that looks brilliant on one slice of history and falls apart the moment the
+market does something new:
+
+- OUT-OF-SAMPLE ALWAYS. The search only ever sees the first ~70% of the window
+  (in-sample). Every reported winner is then re-run on the final ~30% the
+  search never touched (out-of-sample). Only the out-of-sample number is real.
+- IT COUNTS THE COINS. `tested_combinations` — how many distinct configs were
+  actually run — is always returned, so a "winner" out of 12 tries reads very
+  differently from a winner out of 2,000.
+- PLATEAUS, NOT PEAKS. Around the winner we sweep each parameter one step either
+  way and report those neighbouring scores. A good setting sits on a plateau
+  (its neighbours score similarly); a lone spike surrounded by bad neighbours is
+  noise dressed up as signal.
+- vs BUY-AND-HOLD. The winner's out-of-sample return is put next to simply
+  holding the same symbols — if it can't beat that, the trading destroyed value.
+
+The result is a HYPOTHESIS, returned as draft parameters the user can edit; it
+never enables anything. It still has to earn its way up the shadow -> paper
+ladder like any other strategy.
+
+Reuses qt.services.backtest.run_backtest UNCHANGED. The search function accepts
+an injected backtest fn so it is unit-testable with no network / no Alpaca.
+"""
+
+from __future__ import annotations
+
+import copy
+import random
+from datetime import datetime
+from typing import Callable
+
+from qt.services.backtest import run_backtest
+
+# The coarse grids the random search draws from. Discrete (not continuous) so a
+# "neighbour" is well-defined — the plateau sweep steps to the adjacent value on
+# each grid. Every stop_loss value is > 0: a hard stop is mandatory, so the best
+# draft is always a valid strategy. Exhaustive would be 8*7*6*7 = 2,352 combos;
+# we random-sample a small K of them, then refine locally (coarse-to-fine).
+PARAM_SPACE: dict[str, list[float]] = {
+    "min_day_gain_pct": [1.0, 1.5, 2.0, 3.0, 4.0, 5.0, 7.0, 10.0],
+    "trailing_stop_pct": [2.0, 3.0, 4.0, 5.0, 6.0, 8.0, 10.0],
+    "stop_loss_pct": [2.0, 3.0, 4.0, 5.0, 6.0, 8.0],
+    "take_profit_pct": [0.0, 5.0, 8.0, 10.0, 12.0, 15.0, 20.0],
+}
+
+ProgressFn = Callable[[int, int], None]
+BacktestFn = Callable[..., dict]
+
+
+def _parse_ts(iso: str) -> datetime:
+    return datetime.fromisoformat(iso.replace("Z", "+00:00"))
+
+
+def _window(start: datetime, end: datetime) -> dict:
+    return {
+        "start": start.isoformat(),
+        "end": end.isoformat(),
+        "days": round((end - start).total_seconds() / 86400, 1),
+    }
+
+
+def split_in_out_of_sample(
+    bars_by_symbol: dict[str, list[dict]], in_sample_frac: float = 0.7
+) -> tuple[dict[str, list[dict]], dict[str, list[dict]], datetime, datetime, datetime]:
+    """Split every symbol's bars at a single global time boundary so all symbols
+    share the SAME in/out split. In-sample = bars at/ before the boundary (the
+    first `in_sample_frac` of the calendar window); out-of-sample = bars strictly
+    after it. Splitting by time (not by count) keeps the two slices genuinely
+    chronological and non-overlapping — the out-of-sample slice is always the
+    later, unseen market."""
+    all_ts = sorted(
+        _parse_ts(b["t"]) for series in bars_by_symbol.values() for b in series
+    )
+    if not all_ts:
+        raise ValueError("No historical bars to optimize over.")
+    t0, t1 = all_ts[0], all_ts[-1]
+    boundary = t0 + (t1 - t0) * in_sample_frac
+    in_sample: dict[str, list[dict]] = {}
+    out_sample: dict[str, list[dict]] = {}
+    for symbol, series in bars_by_symbol.items():
+        in_sample[symbol] = [b for b in series if _parse_ts(b["t"]) <= boundary]
+        out_sample[symbol] = [b for b in series if _parse_ts(b["t"]) > boundary]
+    return in_sample, out_sample, t0, boundary, t1
+
+
+def _apply_combo(base_strategy: dict, combo: dict) -> dict:
+    """A copy of the base strategy dict with the four searched knobs overwritten.
+    Everything else (asset class, sizing, sleeve, entry window, VWAP rule…) is
+    left exactly as the user configured it — the search tunes momentum/exit
+    aggressiveness, not the whole strategy."""
+    params = copy.deepcopy(base_strategy["params"])
+    params.setdefault("entry", {})["min_day_gain_pct"] = combo["min_day_gain_pct"]
+    exit_rules = params.setdefault("exit", {})
+    exit_rules["trailing_stop_pct"] = combo["trailing_stop_pct"]
+    exit_rules["stop_loss_pct"] = combo["stop_loss_pct"]
+    exit_rules["take_profit_pct"] = combo["take_profit_pct"]
+    return {**base_strategy, "params": params}
+
+
+def _metrics(res: dict | None) -> dict | None:
+    """The handful of numbers the UI shows per config — pulled from a full
+    run_backtest result (or None if the config produced no runnable result)."""
+    if not res or "error" in res:
+        return None
+    return {
+        "net_pnl_pct": res.get("net_pnl_pct"),
+        "trades": res.get("trades"),
+        "win_rate": res.get("win_rate"),
+        "return_on_deployed_pct": res.get("return_on_deployed_pct"),
+        "max_drawdown_pct": res.get("max_drawdown_pct"),
+    }
+
+
+def _score(res: dict | None, min_trades: int) -> float | None:
+    """A config's in-sample score: its account return %, but only if it traded at
+    least `min_trades` times. Rewarding a config that fired once and got lucky is
+    exactly the overfitting trap this search exists to avoid, so thin configs
+    score None (ranked below every real one)."""
+    if not res or "error" in res:
+        return None
+    if (res.get("trades") or 0) < min_trades:
+        return None
+    return res.get("net_pnl_pct")
+
+
+def _sort_key(entry: dict):
+    score = entry["score"]
+    # None (too-thin) configs sink to the bottom; ties break on trade count so a
+    # config that proved itself over more trades wins.
+    return (score is not None, score if score is not None else float("-inf"), entry["in_sample"]["trades"] if entry["in_sample"] else 0)
+
+
+def optimize(
+    base_strategy: dict,
+    bars_by_symbol: dict[str, list[dict]],
+    risk: dict,
+    *,
+    iterations: int = 40,
+    starting_cash: float = 5000.0,
+    spread_pct: float = 0.1,
+    market: str = "stock",
+    in_sample_frac: float = 0.7,
+    min_trades: int = 3,
+    top_n_validate: int = 6,
+    seed: int | None = None,
+    backtest_fn: BacktestFn = run_backtest,
+    progress: ProgressFn | None = None,
+) -> dict:
+    """Search the momentum param space and return the out-of-sample-validated
+    findings.
+
+    Flow (coarse-to-fine):
+      1. Split the bars into in-sample (first ~70%) and out-of-sample (last ~30%).
+      2. Random-sample `iterations` distinct combos; run each on the IN-SAMPLE
+         slice only. Score = in-sample account return (needs >= min_trades).
+      3. Refine locally around the leader: sweep each knob one grid step either
+         way (one knob at a time), running those on the in-sample slice too. This
+         both finds a better local optimum AND produces the plateau/neighbourhood
+         picture.
+      4. Validate the top configs on the OUT-OF-SAMPLE slice the search never saw.
+         Only these numbers are treated as real.
+
+    `backtest_fn` defaults to the real backtester but can be injected (tests pass
+    a fake — no network). Returns the dict documented at the bottom."""
+    rng = random.Random(seed)
+
+    in_sample, out_sample, t0, boundary, t1 = split_in_out_of_sample(
+        bars_by_symbol, in_sample_frac
+    )
+
+    def run_in_sample(combo: dict) -> dict:
+        strat = _apply_combo(base_strategy, combo)
+        return backtest_fn(
+            strat, in_sample, risk,
+            starting_cash=starting_cash, spread_pct=spread_pct, market=market,
+        )
+
+    def run_out_of_sample(combo: dict) -> dict:
+        strat = _apply_combo(base_strategy, combo)
+        return backtest_fn(
+            strat, out_sample, risk,
+            starting_cash=starting_cash, spread_pct=spread_pct, market=market,
+        )
+
+    # ---- 1 & 2: random search over the coarse grid (in-sample only) ----
+    keys = list(PARAM_SPACE)
+    evaluated: dict[tuple, dict] = {}  # combo-tuple -> {combo, score, in_sample metrics}
+
+    # De-dupe: with a small grid, random draws collide; keep sampling (bounded)
+    # until we have `iterations` DISTINCT combos or exhaust the space.
+    space_size = 1
+    for values in PARAM_SPACE.values():
+        space_size *= len(values)
+    target = min(iterations, space_size)
+
+    def evaluate(combo: dict) -> dict:
+        key = tuple(combo[k] for k in keys)
+        if key in evaluated:
+            return evaluated[key]
+        res = run_in_sample(combo)
+        entry = {
+            "combo": combo,
+            "score": _score(res, min_trades),
+            "in_sample": _metrics(res),
+            "out_of_sample": None,
+        }
+        evaluated[key] = entry
+        if progress:
+            progress(len(evaluated), max(target, len(evaluated)))
+        return entry
+
+    attempts = 0
+    while len([e for e in evaluated]) < target and attempts < target * 20:
+        attempts += 1
+        combo = {k: rng.choice(PARAM_SPACE[k]) for k in keys}
+        evaluate(combo)
+
+    if not evaluated:  # pathological (empty grid) — cannot happen with the constants
+        raise ValueError("Parameter space is empty.")
+
+    # ---- 3: local refinement / plateau sweep around the current leader ----
+    # Bounded hill-climb: sweep each knob one grid step either way around the
+    # leader; if a neighbour wins, adopt it and sweep again. This is the "fine" of
+    # coarse-to-fine, AND it guarantees the FINAL leader's immediate neighbours
+    # were all evaluated — which is exactly the plateau picture reported below.
+    def current_best() -> dict:
+        return sorted(evaluated.values(), key=_sort_key, reverse=True)[0]
+
+    leader = current_best()
+    for _ in range(len(keys) * 2):  # bound: can't climb forever on a finite grid
+        pivot = leader
+        for key in keys:
+            values = PARAM_SPACE[key]
+            idx = values.index(pivot["combo"][key])
+            for j in (idx - 1, idx + 1):
+                if 0 <= j < len(values):
+                    neighbour = dict(pivot["combo"])
+                    neighbour[key] = values[j]
+                    evaluate(neighbour)
+        leader = current_best()
+        if leader is pivot:  # no neighbour improved on the pivot — settled
+            break
+
+    ranked = sorted(evaluated.values(), key=_sort_key, reverse=True)
+
+    # ---- 4: out-of-sample validation of the top configs ----
+    for entry in ranked[:top_n_validate]:
+        res = run_out_of_sample(entry["combo"])
+        entry["out_of_sample"] = _metrics(res)
+        entry["_oos_full"] = res  # kept transiently for the hold-benchmark read
+
+    results = []
+    for rank, entry in enumerate(ranked[:top_n_validate], start=1):
+        results.append(
+            {
+                "rank": rank,
+                "params": dict(entry["combo"]),
+                "in_sample_score": entry["score"],
+                "in_sample": entry["in_sample"],
+                "out_of_sample": entry["out_of_sample"],
+                "is_best": entry is leader,
+            }
+        )
+
+    # Neighbourhood: per knob, the in-sample scores of the leader plus its one-step
+    # neighbours (same value on the other three knobs). All-similar = a plateau
+    # (trustworthy); leader spiking alone = probably noise.
+    neighbourhood: dict[str, list[dict]] = {}
+    other_keys = {k: {o: leader["combo"][o] for o in keys if o != k} for k in keys}
+    for key in keys:
+        pts = []
+        for entry in evaluated.values():
+            combo = entry["combo"]
+            if all(combo[o] == other_keys[key][o] for o in other_keys[key]):
+                pts.append(
+                    {
+                        "value": combo[key],
+                        "score": entry["score"],
+                        "is_best": entry is leader,
+                    }
+                )
+        pts.sort(key=lambda p: p["value"])
+        neighbourhood[key] = pts
+
+    # Buy-and-hold comparison, on the OUT-OF-SAMPLE slice, for the winner.
+    oos_full = leader.get("_oos_full") or {}
+    hold_series = oos_full.get("hold_benchmark") or []
+    hold_last = next((v for v in reversed(hold_series) if v is not None), None)
+    strat_oos = (leader["out_of_sample"] or {}).get("net_pnl_pct")
+    beat_hold = None
+    if strat_oos is not None and hold_last is not None:
+        beat_hold = strat_oos > hold_last
+
+    warnings: list[str] = []
+    if len(bars_by_symbol) < 2:
+        warnings.append(
+            "Only one symbol was tested — a config that fits one ticker's history "
+            "rarely generalizes. Validate across several symbols or the basket."
+        )
+    if (leader["out_of_sample"] or {}).get("trades", 0) in (0, None):
+        warnings.append(
+            "The winning config made no trades in the out-of-sample period — its "
+            "in-sample result is unconfirmed. Treat it as untested."
+        )
+
+    best_draft = _apply_combo(base_strategy, leader["combo"])["params"]
+
+    return {
+        "tested_combinations": len(evaluated),
+        "iterations": iterations,
+        "in_sample_window": _window(t0, boundary),
+        "out_of_sample_window": _window(boundary, t1),
+        "results": results,
+        "best": results[0] if results else None,
+        "best_draft_params": best_draft,
+        "neighbourhood": neighbourhood,
+        "hold_benchmark_comparison": {
+            "strategy_out_of_sample_pct": strat_oos,
+            "hold_out_of_sample_pct": hold_last,
+            "hold_label": oos_full.get("hold_benchmark_label"),
+            "beat_hold": beat_hold,
+        },
+        "symbols": sorted(bars_by_symbol),
+        "warnings": warnings,
+    }

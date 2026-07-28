@@ -18,6 +18,7 @@ from qt.api import (
     baskets,
     engine as engine_api,
     market,
+    optimizer as optimizer_api,
     setup,
     status,
     strategies,
@@ -239,6 +240,7 @@ app.include_router(backtest.router, dependencies=[Depends(require_user)])
 app.include_router(assets_api.router, dependencies=[Depends(require_user)])
 app.include_router(baskets.router, dependencies=[Depends(require_user)])
 app.include_router(barcache_api.router, dependencies=[Depends(require_user)])
+app.include_router(optimizer_api.router, dependencies=[Depends(require_user)])
 app.include_router(about.router, dependencies=[Depends(require_user)])
 
 

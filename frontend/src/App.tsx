@@ -6,6 +6,7 @@ import Backtest from "./pages/Backtest";
 import Baskets from "./pages/Baskets";
 import Dashboard from "./pages/Dashboard";
 import Journal from "./pages/Journal";
+import Optimizer from "./pages/Optimizer";
 import Scanner from "./pages/Scanner";
 import Settings from "./pages/Settings";
 import Setup from "./pages/Setup";
@@ -19,6 +20,7 @@ type Tab =
   | "baskets"
   | "strategies"
   | "backtest"
+  | "optimizer"
   | "journal"
   | "settings"
   | "about";
@@ -150,7 +152,7 @@ export default function App() {
       {status.alpaca_configured ? (
         <>
           <nav className="tabs">
-            {(["dashboard", "scanner", "watchlist", "baskets", "strategies", "backtest", "journal", "settings", "about"] as Tab[]).map((t) => (
+            {(["dashboard", "scanner", "watchlist", "baskets", "strategies", "backtest", "optimizer", "journal", "settings", "about"] as Tab[]).map((t) => (
               <button key={t} className={tab === t ? "tab active" : "tab"} onClick={() => setTab(t)}>
                 {t.charAt(0).toUpperCase() + t.slice(1)}
               </button>
@@ -162,6 +164,7 @@ export default function App() {
           {tab === "baskets" && <Baskets />}
           {tab === "strategies" && <Strategies />}
           {tab === "backtest" && <Backtest />}
+          {tab === "optimizer" && <Optimizer />}
           {tab === "journal" && <Journal />}
           {tab === "settings" && <Settings />}
           {tab === "about" && <About />}
