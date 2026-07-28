@@ -9,10 +9,11 @@ def test_starter_baskets_seeded_on_init(client):
     baskets = client.get("/api/baskets").json()
     names = {b["name"] for b in baskets}
     assert set(STARTER_BASKETS) <= names
-    defense = next(b for b in baskets if b["name"] == "Defense")
-    assert defense["builtin"] is True
-    assert defense["count"] == len(STARTER_BASKETS["Defense"])
-    assert {s["symbol"] for s in defense["symbols"]} == set(STARTER_BASKETS["Defense"])
+    it = next(b for b in baskets if b["name"] == "Information Technology")
+    expected = set(STARTER_BASKETS["Information Technology"])
+    assert it["builtin"] is True
+    assert it["count"] == len(expected)
+    assert {s["symbol"] for s in it["symbols"]} == expected
 
 
 def test_seed_is_idempotent():
@@ -34,6 +35,52 @@ def test_seed_from_empty_creates_all():
     assert created == len(STARTER_BASKETS)
     with session_scope() as s:
         assert s.query(Basket).count() == len(STARTER_BASKETS)
+
+
+def test_reseed_refreshes_builtin_but_leaves_user_baskets(client):
+    # A user basket named like a shipped one must NOT be clobbered by reseed,
+    # and an edited builtin basket must be refreshed back to canonical members.
+    user = client.post("/api/baskets", json={"name": "My Energy"}).json()
+    client.post(
+        f"/api/baskets/{user['id']}/items",
+        json={"symbol": "PLUG", "asset_class": "stock"},
+    )
+    with session_scope() as s:
+        energy = (
+            s.query(Basket)
+            .filter(Basket.name == "Energy", Basket.builtin.is_(True))
+            .one()
+        )
+        # Vandalise the builtin basket's membership.
+        s.query(BasketItem).filter(BasketItem.basket_id == energy.id).delete()
+        s.add(BasketItem(basket_id=energy.id, symbol="ZZZZ", asset_class="stock"))
+
+    with session_scope() as s:
+        created = seed_starter_baskets(s)  # refresh only, nothing new
+    assert created == 0
+
+    with session_scope() as s:
+        energy = (
+            s.query(Basket)
+            .filter(Basket.name == "Energy", Basket.builtin.is_(True))
+            .one()
+        )
+        symbols = {
+            i.symbol
+            for i in s.query(BasketItem).filter(
+                BasketItem.basket_id == energy.id
+            )
+        }
+        assert symbols == set(STARTER_BASKETS["Energy"])
+        # The user basket is untouched.
+        mine = s.query(Basket).filter(Basket.name == "My Energy").one()
+        mine_symbols = {
+            i.symbol
+            for i in s.query(BasketItem).filter(BasketItem.basket_id == mine.id)
+        }
+        assert mine_symbols == {"PLUG"}
+
+    client.delete(f"/api/baskets/{user['id']}")
 
 
 def test_create_rename_delete_and_items(client):

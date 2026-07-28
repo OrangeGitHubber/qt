@@ -18,45 +18,139 @@ from qt.models import Asset, Basket, BasketItem
 
 log = logging.getLogger("qt.baskets")
 
-# name -> list of stock tickers (all US equities; the ETF basket is stocks too)
+# name -> list of stock tickers (all US equities). These are GICS-style sector
+# baskets of ~30 large-caps each, plus a dividend/high-yield theme. They are a
+# curated convenience, not an authoritative sector index — memberships drift.
 STARTER_BASKETS: dict[str, list[str]] = {
-    "Defense": ["LMT", "RTX", "NOC", "GD", "BA", "LHX", "HII"],
-    "Banking": ["JPM", "BAC", "WFC", "C", "GS", "MS", "USB"],
-    "Gold & Mining": ["NEM", "GOLD", "FCX", "AEM", "SCCO"],
-    "REITs / Property": ["O", "PLD", "AMT", "SPG", "EQIX", "VICI"],
-    "Big Tech": ["AAPL", "MSFT", "GOOGL", "AMZN", "META", "NVDA"],
-    "Semiconductors": ["NVDA", "AMD", "INTC", "AVGO", "MU", "QCOM", "TXN"],
-    "Energy": ["XOM", "CVX", "COP", "SLB", "EOG"],
-    "Healthcare": ["JNJ", "UNH", "PFE", "MRK", "ABBV", "LLY"],
-    "Sector ETFs": ["XLK", "XLF", "XLE", "XLV", "XLI", "ITA", "GDX", "VNQ", "SMH"],
+    "Information Technology": [
+        "NVDA", "AAPL", "MSFT", "AVGO", "AMD", "CRM", "CSCO", "ACN", "ORCL",
+        "INTC", "QCOM", "IBM", "TXN", "NOW", "INTU", "AMAT", "MU", "LRCX",
+        "PANW", "ADI", "KLAC", "SNPS", "CDNS", "ROP", "MSI", "APH", "ADSK",
+        "NXPI", "TEAM", "PLTR",
+    ],
+    "Health Care": [
+        "LLY", "UNH", "JNJ", "MRK", "ABBV", "TMO", "PFE", "AMGN", "ISRG",
+        "BMY", "CVS", "GILD", "MDT", "REGN", "VRTX", "SYK", "ZTS", "CI",
+        "BSX", "ELV", "BDX", "HCA", "A", "MCK", "IQV", "HUM", "CNC", "IDXX",
+        "EW", "MRNA",
+    ],
+    "Financials": [
+        "BRK.B", "JPM", "V", "MA", "BAC", "WFC", "MS", "GS", "SPGI", "BLK",
+        "AXP", "C", "SCHW", "MMC", "PGR", "CB", "AON", "CME", "MCO", "ICE",
+        "USB", "PNC", "COF", "AIG", "MET", "TRV", "TROW", "PRU", "ALL", "BK",
+    ],
+    "Consumer Discretionary": [
+        "AMZN", "TSLA", "HD", "MCD", "NKE", "LOW", "SBUX", "BKNG", "TJX",
+        "CMG", "F", "GM", "MAR", "ORLY", "AZO", "HLT", "ROST", "LULU", "YUM",
+        "TSCO", "LEN", "DHI", "BBY", "GPC", "NVR", "DRI", "PHM", "HAS", "WSM",
+        "RCL",
+    ],
+    "Consumer Staples": [
+        "WMT", "PG", "COST", "KO", "PEP", "PM", "MDLZ", "MO", "TGT", "EL",
+        "CL", "SYY", "KDP", "STZ", "KR", "GIS", "ADM", "MKC", "HSY", "CHD",
+        "CLX", "K", "CAG", "SJM", "TAP", "KMB", "COTY", "TSN", "HRL", "DLTR",
+    ],
+    "Industrials": [
+        "CAT", "GE", "UNP", "HON", "UPS", "RTX", "LMT", "DE", "ADP", "BA",
+        "MMM", "FDX", "CSX", "NSC", "NOC", "GD", "WM", "ETN", "EMR", "ROP",
+        "PAYX", "CPRT", "FAST", "GWW", "DAL", "UAL", "TXT", "CMI", "TT",
+        "CARR",
+    ],
+    "Communication Services": [
+        "GOOGL", "META", "NFLX", "TMUS", "VZ", "T", "DIS", "CMCSA", "CHTR",
+        "WBD", "EA", "TTWO", "OMC", "IPG", "LYV", "MTCH", "FOXA", "NWSA",
+        "PARA", "NYT", "ZG", "DASH", "SPOT", "SNAP", "PINS", "GOOG", "LBRDK",
+        "FWONA", "RBLX",
+    ],
+    "Energy": [
+        "XOM", "CVX", "COP", "EOG", "SLB", "MPC", "PSX", "VLO", "PXD", "OXY",
+        "HES", "HAL", "BKR", "DVN", "WMB", "OKE", "KMI", "FANG", "CTRA",
+        "MRO", "APA", "EQT", "OVV", "TRGP", "CHRD", "MTDR", "PBF", "AMR",
+        "CNX", "RRC",
+    ],
+    "Utilities": [
+        "NEE", "SO", "DUK", "AEP", "SRE", "D", "EXC", "XEL", "ED", "PEG",
+        "WEC", "EIX", "AWK", "FE", "AEE", "ETR", "ES", "DTE", "PPL", "CNP",
+        "CMS", "ATO", "LNT", "NI", "PNW", "OGE", "SR", "BKH", "IDA", "POR",
+    ],
+    "Real Estate": [
+        "PLD", "AMT", "CCI", "EQIX", "PSA", "O", "SPG", "WELL", "VICI",
+        "SBAC", "CBRE", "DLR", "EXR", "AVB", "EQR", "VRE", "ARE", "VNO",
+        "BXP", "MAA", "CPT", "UDR", "REG", "FRT", "KIM", "NNN", "ESS", "HST",
+        "GLPI", "BRX",
+    ],
+    "Materials": [
+        "LIN", "SHW", "FCX", "APD", "ECL", "NUE", "DOW", "CTVA", "DD", "NEM",
+        "ALB", "PPG", "VMC", "MLM", "CE", "FMC", "MOS", "CF", "IP", "WRK",
+        "PKG", "AEM", "GOLD", "STLD", "VALE", "SCCO", "CCK", "BALL", "AA",
+        "EMN",
+    ],
+    "High-Yield & Dividend": [
+        "MO", "VZ", "PFE", "VICI", "GIS", "KHC", "AMCR", "ARE", "UPS", "CLX",
+        "KMB", "O", "ABBV", "HRL", "TROW", "KVUE", "PEP", "ES", "XOM", "MKC",
+        "CVX", "MDT", "BEN", "BKH", "T", "KO", "PG", "JNJ", "MCD", "IBM",
+    ],
 }
 
 
-def seed_starter_baskets(session: Session) -> int:
-    """Create the curated baskets IF none exist yet. Idempotent: a reboot never
-    duplicates them, and a user who deleted every basket is not re-seeded (the
-    guard is "are there ANY baskets", deliberately, so we don't fight edits).
+def _dedupe(symbols: list[str]) -> list[str]:
+    """Uppercase + drop duplicates, preserving first-seen order."""
+    seen: set[str] = set()
+    out: list[str] = []
+    for s in symbols:
+        u = s.upper()
+        if u not in seen:
+            seen.add(u)
+            out.append(u)
+    return out
 
-    Returns the number of baskets created (0 on a no-op reseed).
+
+def seed_starter_baskets(session: Session) -> int:
+    """Upsert the curated builtin baskets so their membership matches
+    STARTER_BASKETS. Idempotent and convergent: a reboot refreshes the shipped
+    baskets' members to the canonical lists rather than duplicating them.
+
+    Only *builtin* baskets are touched. User-created (non-builtin) baskets are
+    never modified, even if a user made one whose name collides with a shipped
+    basket. Builtin baskets that are no longer in STARTER_BASKETS (e.g. an old
+    starter set) are left in place — they are not auto-deleted here, so an
+    already-running instance keeps its stale rows until the user removes them
+    via the UI.
+
+    Returns the number of baskets newly created (0 when all already existed).
 
     Seeding does NOT require the Alpaca asset directory to be populated — these
-    are hand-verified tickers, so a fresh container seeds them before the first
-    asset sync. Where the directory *is* populated, membership is annotated at
-    read time (see api/baskets.py), not pruned here.
+    are curated tickers, so a fresh container seeds them before the first asset
+    sync. Where the directory *is* populated, membership is annotated at read
+    time (see api/baskets.py), not pruned here.
     """
-    if session.query(Basket).count() > 0:
-        return 0
     created = 0
     for name, symbols in STARTER_BASKETS.items():
-        basket = Basket(name=name, builtin=True)
-        session.add(basket)
-        session.flush()  # need basket.id
-        for symbol in symbols:
+        basket = (
+            session.query(Basket)
+            .filter(Basket.name == name, Basket.builtin.is_(True))
+            .one_or_none()
+        )
+        if basket is None:
+            basket = Basket(name=name, builtin=True)
+            session.add(basket)
+            session.flush()  # need basket.id
+            created += 1
+        else:
+            # Refresh membership to the canonical list (overwrite is intended).
+            session.query(BasketItem).filter(
+                BasketItem.basket_id == basket.id
+            ).delete()
+            session.flush()
+        for symbol in _dedupe(symbols):
             session.add(
                 BasketItem(basket_id=basket.id, symbol=symbol, asset_class="stock")
             )
-        created += 1
-    log.info("seeded %d starter baskets", created)
+    log.info(
+        "seeded/refreshed %d starter baskets (%d newly created)",
+        len(STARTER_BASKETS),
+        created,
+    )
     return created
 
 

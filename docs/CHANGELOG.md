@@ -3,6 +3,24 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Starter baskets replaced with 12 sector/theme lists (2026-07-28)
+
+The shipped starter baskets have been swapped out for a broader, more useful set:
+**11 GICS-style sector baskets** — Information Technology, Health Care, Financials,
+Consumer Discretionary, Consumer Staples, Industrials, Communication Services,
+Energy, Utilities, Real Estate, Materials — each with roughly 30 large-cap US
+stocks, plus a **High-Yield & Dividend** theme (30 income-oriented names). The old
+starter set (Defense, Banking, Gold & Mining, REITs, Big Tech, Semiconductors,
+Energy, Healthcare, Sector-ETFs) is gone from what ships to new installs.
+
+Seeding now keeps these baskets in sync: on start-up the shipped baskets are
+refreshed to match the canonical lists, so an update reaches you automatically.
+Baskets *you* created are never touched. Note: on an already-running instance the
+old starter baskets aren't deleted for you — you can remove any you don't want from
+the Baskets screen. A handful of energy/materials names in the sector lists have
+since been acquired or merged away (Pioneer/PXD, Marathon Oil/MRO, WestRock/WRK) —
+they're included as given but may not trade on Alpaca, so prune them if you like.
+
 ## Strategy builder shows the symbols in play — editable inline (2026-07-28)
 
 Pick a universe and the builder now shows **exactly which symbols the strategy
