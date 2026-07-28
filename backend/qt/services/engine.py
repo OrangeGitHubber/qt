@@ -1098,26 +1098,23 @@ async def _symbol_candidates(
     return out
 
 
-async def _ranked_candidates(
-    client: AlpacaClient, asset_class: str, symbols: list[str], rank_by: str, top_n: int
-) -> list[Candidate]:
-    """Snapshot a POOL of symbols, score each by `rank_by`, and return the top-N
-    as candidates. Universe-agnostic: the pool can be a basket's members, a
-    watchlist, or a hand-picked custom list — ranking works the same on any fixed
-    set. The entry rules still filter the result; top-N is the candidate set, not
-    an auto-buy list."""
-    from qt.services import ranking, stats
-
-    symbols = sorted(set(symbols))
-    if not symbols:
-        return []
-
-    is_stock = asset_class == "stock"
-    snaps = await (client.stock_snapshots(symbols) if is_stock else client.crypto_snapshots(symbols))
+async def _pool_metrics(
+    client: AlpacaClient, asset_class: str, symbols: list[str], rank_by: str
+) -> tuple[dict, dict, dict]:
+    """Snapshot a pool and compute the ranking metric for each symbol. Returns
+    (metrics, price_map, vwap_map). Shared by live candidate selection and the
+    'current ranking' view so both rank identically. Only fetches the daily bars
+    a bar-based metric needs; momentum_today rides on the snapshot alone."""
+    from qt.services import stats
 
     price_map: dict[str, float] = {}
     vwap_map: dict[str, float | None] = {}
     metrics: dict[str, dict[str, float | None]] = {}
+    if not symbols:
+        return metrics, price_map, vwap_map
+
+    is_stock = asset_class == "stock"
+    snaps = await (client.stock_snapshots(symbols) if is_stock else client.crypto_snapshots(symbols))
     for sym in symbols:
         snap = snaps.get(sym) or {}
         price, vwap = _price_from_snapshot(snap)
@@ -1134,17 +1131,10 @@ async def _ranked_candidates(
             "rs_vs_spy": None,
         }
 
-    # Benchmark-relative strength ranks each name by its out-performance of SPY
-    # over a lookback window. It's a STOCK-only metric (SPY is the benchmark) — a
-    # crypto pool can't pick it (guarded in the API), so we never fetch SPY for
-    # crypto.
+    # rs_vs_spy is a STOCK-only metric (SPY is the benchmark); never fetch SPY for crypto.
     RS_VS_SPY_WINDOW = 90  # calendar days of relative return
     want_rs_vs_spy = rank_by == "rs_vs_spy" and asset_class == "stock"
 
-    # Bar-based metrics need daily history. Only fetch when the ranking asks for
-    # it — momentum_today rides on the snapshot alone. relative_strength needs the
-    # longest window (~320d for a 200-day SMA); rs_vs_spy reuses that same fetch so
-    # SPY is just one extra symbol in the batch.
     if rank_by in ("return_30d", "relative_strength") or want_rs_vs_spy:
         lookback_days = 320 if rank_by in ("relative_strength", "rs_vs_spy") else 60
         start = (datetime.now(timezone.utc) - timedelta(days=lookback_days)).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -1167,9 +1157,24 @@ async def _ranked_candidates(
                     if member_return is not None:
                         metrics[sym]["rs_vs_spy"] = round(member_return - spy_return, 2)
 
-    ranked = ranking.rank_symbols(metrics, rank_by, top_n)
+    return metrics, price_map, vwap_map
+
+
+async def _ranked_candidates(
+    client: AlpacaClient, asset_class: str, symbols: list[str], rank_by: str, top_n: int
+) -> list[Candidate]:
+    """Snapshot a POOL of symbols, score each by `rank_by`, and return the top-N
+    as candidates. Universe-agnostic: the pool can be a basket's members, a
+    watchlist, or a hand-picked custom list. The entry rules still filter the
+    result; top-N is the candidate set, not an auto-buy list."""
+    from qt.services import ranking
+
+    symbols = sorted(set(symbols))
+    if not symbols:
+        return []
+    metrics, price_map, vwap_map = await _pool_metrics(client, asset_class, symbols, rank_by)
     candidates: list[Candidate] = []
-    for sym, _value in ranked:
+    for sym, _value in ranking.rank_symbols(metrics, rank_by, top_n):
         price = price_map.get(sym)
         if not price:
             continue
@@ -1213,26 +1218,67 @@ async def _basket_candidates(
     )
 
 
-async def _ranked_symbols_now(session: Session, client: AlpacaClient, s: Strategy) -> set[str]:
-    """The set of symbols currently in a ranked strategy's top-N — its live pool
-    (basket members / watchlist / custom list) ranked and cut to top_n. Used by
-    the rotation check to see which open positions have fallen out. Empty set for
-    a non-ranked universe."""
-    if s.universe == "basket":
-        pool = _basket_symbols(session, s)
-    elif s.universe == "custom":
-        pool = json.loads(s.symbols) if s.symbols else []
-    elif s.universe == "watchlist":
+def _strategy_pool(session: Session, strategy: Strategy) -> list[str]:
+    """The full symbol pool a ranked strategy ranks over: basket members, the
+    watchlist for its asset class, or its custom list. Empty for scanner/both
+    (those aren't fixed pools — the scanner ranks by movement itself)."""
+    if strategy.universe == "basket":
+        return _basket_symbols(session, strategy)
+    if strategy.universe == "custom":
+        return sorted(
+            {s.strip().upper() for s in (json.loads(strategy.symbols) if strategy.symbols else []) if s.strip()}
+        )
+    if strategy.universe == "watchlist":
         from qt.models import WatchlistItem
 
-        pool = [
+        return [
             i.symbol
-            for i in session.query(WatchlistItem).filter(WatchlistItem.asset_class == s.asset_class).all()
+            for i in session.query(WatchlistItem).filter(WatchlistItem.asset_class == strategy.asset_class).all()
         ]
-    else:
+    return []
+
+
+async def _ranked_symbols_now(session: Session, client: AlpacaClient, s: Strategy) -> set[str]:
+    """The set of symbols currently in a ranked strategy's top-N — its live pool
+    ranked and cut to top_n. Used by the rotation check to see which open
+    positions have fallen out. Empty set for a non-ranked universe."""
+    pool = _strategy_pool(session, s)
+    if not pool:
         return set()
     cands = await _ranked_candidates(client, s.asset_class, pool, s.rank_by, s.top_n)
     return {c.symbol for c in cands}
+
+
+async def rank_pool(session: Session, client: AlpacaClient, strategy: Strategy) -> list[dict]:
+    """The FULL live ranking of a ranked strategy's pool — every symbol with its
+    metric value, rank, and whether it makes the top-N cut. Symbols the metric
+    can't be computed for (no data) are listed last as unranked. This is what the
+    'current ranking' view shows so you can see why a name is (or isn't) eligible."""
+    from qt.services import ranking
+
+    pool = sorted(set(_strategy_pool(session, strategy)))
+    if not pool:
+        return []
+    metrics, price_map, _vwap = await _pool_metrics(client, strategy.asset_class, pool, strategy.rank_by)
+    rows: list[dict] = []
+    ranked_syms: set[str] = set()
+    for i, (sym, value) in enumerate(ranking.rank_symbols(metrics, strategy.rank_by, len(pool)), start=1):
+        ranked_syms.add(sym)
+        rows.append({
+            "symbol": sym,
+            "rank": i,
+            "value": round(value, 2),
+            "in_top_n": i <= strategy.top_n,
+            "price": price_map.get(sym),
+            "change_pct": metrics[sym]["momentum_today"],
+        })
+    for sym in pool:  # couldn't rank (metric is None) — surface as unranked, last
+        if sym not in ranked_syms:
+            rows.append({
+                "symbol": sym, "rank": None, "value": None, "in_top_n": False,
+                "price": price_map.get(sym), "change_pct": metrics.get(sym, {}).get("momentum_today"),
+            })
+    return rows
 
 
 def _build_rail_context(

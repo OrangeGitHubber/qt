@@ -21,6 +21,19 @@ the Baskets screen. A handful of energy/materials names in the sector lists have
 since been acquired or merged away (Pioneer/PXD, Marathon Oil/MRO, WestRock/WRK) —
 they're included as given but may not trade on Alpaca, so prune them if you like.
 
+## Strategies: "Current ranking" — see who's eligible in a ranked strategy (2026-07-28)
+
+For a ranked strategy (a basket, or a watchlist/custom list with "Rank & take top
+N" on), the card now has a **"Current ranking — who's eligible right now"**
+expander. It ranks the *whole* pool live by the strategy's metric and shows every
+symbol with its rank and value, marking the top-N (✓) that the strategy will
+actually consider and greying out the rest. So if a name you expected (e.g. AAPL)
+isn't being bought, you can see at a glance that it's ranked, say, #12 — well
+outside the top 3 — and never reaches the entry rules. Backed by a new
+`GET /api/strategies/{id}/ranking`; non-ranked strategies get a short note
+explaining why there's nothing to rank. The live ranking uses the exact same code
+path the engine uses to pick candidates, so what you see is what it does.
+
 ## Strategies: "Last run" — see exactly why a strategy did (or didn't) buy (2026-07-28)
 
 Every strategy card gains an expandable **"Last run — why it did / didn't buy"**

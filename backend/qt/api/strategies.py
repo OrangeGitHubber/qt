@@ -417,3 +417,42 @@ def strategy_last_run(strategy_id: int, session: Session = Depends(get_session))
     if trace is None:
         return {"ran": False, "enabled": strategy.enabled}
     return {"ran": True, **trace}
+
+
+@router.get("/{strategy_id}/ranking")
+async def strategy_ranking(strategy_id: int, session: Session = Depends(get_session)) -> dict:
+    """The live top-N ranking of a ranked strategy's pool — every symbol with its
+    rank and metric, so you can see which make the cut and which (like a name you
+    expected) don't. Only meaningful for ranked universes."""
+    strategy = session.get(Strategy, strategy_id)
+    if not strategy:
+        raise HTTPException(status_code=404, detail="Strategy not found.")
+
+    from qt.services.engine import _RANK_LABELS, rank_pool
+
+    if not (strategy.rank_enabled or strategy.universe == "basket"):
+        reason = (
+            "This strategy uses the scanner, which already surfaces the day's top movers — there's no fixed pool to rank."
+            if strategy.universe in ("scanner", "both")
+            else "Ranking is off — this strategy considers the whole list, so there's no top-N cut. "
+            "Turn on “Rank & take top N” to rank."
+        )
+        return {"ranked": False, "reason": reason}
+
+    result: dict = {
+        "ranked": True,
+        "rank_by": strategy.rank_by,
+        "rank_label": _RANK_LABELS.get(strategy.rank_by, strategy.rank_by),
+        "top_n": strategy.top_n,
+        "rows": [],
+        "error": None,
+    }
+    client = get_client(session)
+    if client is None:
+        result["error"] = "Alpaca isn't connected, so the live ranking can't be computed."
+        return result
+    try:
+        result["rows"] = await rank_pool(session, client, strategy)
+    except Exception as exc:  # noqa: BLE001 — never fail the view on a price hiccup
+        result["error"] = f"Couldn't compute the ranking right now: {exc}"
+    return result

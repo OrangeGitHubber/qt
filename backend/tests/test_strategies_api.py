@@ -169,6 +169,53 @@ def test_strategy_last_run_endpoint(client):
     client.delete(f"/api/strategies/{sid}")
 
 
+def test_strategy_ranking_endpoint(client):
+    from unittest.mock import patch
+
+    from qt import security
+    from qt.broker.alpaca import SECRET_KEY_ID, SECRET_KEY_SECRET
+    from qt.db import session_scope
+    from qt.services import engine
+
+    # A non-ranked (scanner) strategy: the endpoint explains there's nothing to rank.
+    sid_scan = client.post("/api/strategies", json=_body(universe="scanner")).json()["id"]
+    r = client.get(f"/api/strategies/{sid_scan}/ranking").json()
+    assert r["ranked"] is False and "scanner" in r["reason"].lower()
+    client.delete(f"/api/strategies/{sid_scan}")
+
+    # A ranked basket strategy returns the full ranking with top-N flags.
+    bid = client.post("/api/baskets", json={"name": "RankView"}).json()["id"]
+    for sym in ("AAA", "BBB", "CCC"):
+        client.post(f"/api/baskets/{bid}/items", json={"symbol": sym, "asset_class": "stock"})
+    sid = client.post(
+        "/api/strategies",
+        json=_body(universe="basket", basket_id=bid, rank_by="momentum_today", top_n=2),
+    ).json()["id"]
+
+    async def fake_rank(session, client_, strategy):
+        return [
+            {"symbol": "BBB", "rank": 1, "value": 5.0, "in_top_n": True, "price": 10, "change_pct": 5.0},
+            {"symbol": "AAA", "rank": 2, "value": 3.0, "in_top_n": True, "price": 10, "change_pct": 3.0},
+            {"symbol": "CCC", "rank": 3, "value": 1.0, "in_top_n": False, "price": 10, "change_pct": 1.0},
+        ]
+
+    with session_scope() as s:
+        security.set_secret(s, SECRET_KEY_ID, "k")
+        security.set_secret(s, SECRET_KEY_SECRET, "s")
+    with patch.object(engine, "rank_pool", new=fake_rank):
+        body = client.get(f"/api/strategies/{sid}/ranking").json()
+    with session_scope() as s:
+        security.delete_secret(s, SECRET_KEY_ID)
+        security.delete_secret(s, SECRET_KEY_SECRET)
+
+    assert body["ranked"] is True and body["top_n"] == 2
+    assert [row["symbol"] for row in body["rows"]] == ["BBB", "AAA", "CCC"]
+    assert body["rows"][2]["in_top_n"] is False  # CCC ranked out of the top 2
+
+    client.delete(f"/api/strategies/{sid}")
+    client.delete(f"/api/baskets/{bid}")
+
+
 def test_presets_available(client):
     presets = client.get("/api/strategies/presets").json()
     assert "momentum_swing_stocks" in presets

@@ -204,6 +204,28 @@ export interface StrategyLastRun {
 
 export const getStrategyLastRun = (id: number) =>
   fetch(`/api/strategies/${id}/last-run`).then((r) => handle<StrategyLastRun>(r));
+
+export interface RankingRow {
+  symbol: string;
+  rank: number | null;
+  value: number | null;
+  in_top_n: boolean;
+  price: number | null;
+  change_pct: number | null;
+}
+
+export interface StrategyRanking {
+  ranked: boolean;
+  reason?: string;
+  rank_by?: string;
+  rank_label?: string;
+  top_n?: number;
+  rows?: RankingRow[];
+  error?: string | null;
+}
+
+export const getStrategyRanking = (id: number) =>
+  fetch(`/api/strategies/${id}/ranking`).then((r) => handle<StrategyRanking>(r));
 export const getPresets = () => fetch("/api/strategies/presets").then((r) => handle<Record<string, Preset>>(r));
 export const createStrategy = (b: Partial<StrategyRow>) =>
   fetch("/api/strategies", json(b)).then((r) => handle<StrategyRow>(r));

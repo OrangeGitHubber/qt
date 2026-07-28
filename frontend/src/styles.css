@@ -1290,6 +1290,14 @@ details.lastrun[open] > summary::before {
   white-space: normal;
   color: var(--muted);
 }
+/* The top-N (eligible) rows in the ranking view stand out from the ranked-out. */
+.ranking-table tr.in-topn td {
+  color: var(--text);
+  font-weight: 500;
+}
+.ranking-table tr:not(.in-topn) td {
+  color: var(--muted);
+}
 .holdings-table {
   width: 100%;
   margin-top: 0.4rem;

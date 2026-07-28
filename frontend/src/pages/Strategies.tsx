@@ -9,10 +9,12 @@ import {
   getStrategies,
   getStrategyHoldings,
   getStrategyLastRun,
+  getStrategyRanking,
   Preset,
   RankBy,
   StrategyHoldings,
   StrategyLastRun,
+  StrategyRanking,
   StrategyRow,
   toggleStrategy,
   updateStrategy,
@@ -263,6 +265,73 @@ function LastRunView({ strategyId }: { strategyId: number }) {
               </table>
             </div>
           )}
+        </>
+      )}
+    </details>
+  );
+}
+
+// "Current ranking" view: for a ranked strategy, the live ranking of its whole
+// pool — which names make the top-N cut and which (e.g. one you expected) don't.
+function RankingView({ strategyId }: { strategyId: number }) {
+  const [data, setData] = useState<StrategyRanking | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  function load() {
+    if (loading) return;
+    setLoading(true);
+    setErr(null);
+    getStrategyRanking(strategyId)
+      .then(setData)
+      .catch((e: Error) => setErr(e.message))
+      .finally(() => setLoading(false));
+  }
+
+  return (
+    <details
+      className="lastrun"
+      onToggle={(e) => {
+        if ((e.target as HTMLDetailsElement).open) load();
+      }}
+    >
+      <summary>Current ranking — who's eligible right now</summary>
+      {loading && <p className="hint">Ranking the pool…</p>}
+      {err && <div className="error">{err}</div>}
+      {data && !data.ranked && <p className="hint">{data.reason}</p>}
+      {data && data.ranked && data.error && <p className="hint">{data.error}</p>}
+      {data && data.ranked && !data.error && (
+        <>
+          <p className="hint">
+            Ranked by <strong>{data.rank_label}</strong>. The top <strong>{data.top_n}</strong> (✓) are the ones this
+            strategy will consider; the rest are ranked out.
+          </p>
+          <div className="table-scroll">
+            <table className="holdings-table ranking-table">
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>Symbol</th>
+                  <th>{data.rank_label}</th>
+                  <th>Day</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(data.rows ?? []).map((r, i) => (
+                  <tr key={i} className={r.in_top_n ? "in-topn" : ""}>
+                    <td>{r.rank ?? "—"}</td>
+                    <td>
+                      {r.symbol} {r.in_top_n ? "✓" : ""}
+                    </td>
+                    <td>{r.value != null ? `${r.value}%` : "—"}</td>
+                    <td className={(r.change_pct ?? 0) >= 0 ? "up" : "down"}>
+                      {r.change_pct != null ? `${r.change_pct >= 0 ? "+" : ""}${r.change_pct}%` : "—"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </>
       )}
     </details>
@@ -880,6 +949,7 @@ export default function Strategies() {
           </dd>
         </dl>
         {(r.open_trades ?? 0) > 0 && <HoldingsView strategyId={r.id} count={r.open_trades ?? 0} />}
+        {(r.rank_enabled || r.universe === "basket") && <RankingView strategyId={r.id} />}
         <LastRunView strategyId={r.id} />
         <div className="card-actions">
           <button
