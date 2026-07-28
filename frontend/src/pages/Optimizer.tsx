@@ -377,17 +377,18 @@ export default function Optimizer() {
             </label>
             <label>
               <span className="field-cap">
-                Starting cash ($) <InfoTip k="starting_cash" />
-              </span>
-              <NumberField min={100} step="any" value={cash} onChange={setCash} />
-            </label>
-            <label>
-              <span className="field-cap">
                 Spread cost per side (%) <InfoTip k="spread_cost" />
               </span>
               <NumberField min={0} max={2} step={0.05} value={spread} onChange={setSpread} />
             </label>
           </div>
+          {strategy && (
+            <p className="hint">
+              Account size is this strategy's <strong>${strategy.sleeve_usd.toLocaleString()}</strong> sleeve (with $
+              {strategy.sizing_usd.toLocaleString()} per trade) — a single-strategy search can't deploy more than its
+              sleeve, so there's no separate "starting cash" to set.
+            </p>
+          )}
           <p className="hint">
             More combinations searches harder but takes longer (each is a full backtest) — and, counter-intuitively,
             trying more settings makes a good in-sample score <em>easier to hit by luck</em>, which is exactly why the
