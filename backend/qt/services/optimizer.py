@@ -217,6 +217,13 @@ def optimize(
             "score": _score(res, min_trades),
             "in_sample": _metrics(res),
             "out_of_sample": None,
+            # Why this combo made no trades — the backtest's plain-English reason
+            # (VWAP rejected / outside entry window / symbols too calm / rails).
+            "no_trade_reason": (
+                (res.get("diagnosis") or {}).get("summary")
+                if not res.get("error") and (res.get("trades") or 0) == 0
+                else None
+            ),
         }
         evaluated[key] = entry
         if progress:
@@ -319,8 +326,21 @@ def optimize(
 
     best_draft = _apply_combo(base_strategy, leader["combo"])["params"]
 
+    # If NOTHING traded across the whole search, the result is meaningless — say
+    # WHY, using the diagnosis of the most permissive combo (lowest min-gain), so
+    # a 0-trade run isn't mistaken for "the strategy is unworkable". Usually it's a
+    # config mismatch (e.g. the VWAP rule or an entry-time window on daily bars).
+    total_in_sample_trades = sum(
+        (e["in_sample"] or {}).get("trades", 0) or 0 for e in evaluated.values()
+    )
+    no_trade_reason = None
+    if total_in_sample_trades == 0 and evaluated:
+        most_permissive = min(evaluated.values(), key=lambda e: e["combo"]["min_day_gain_pct"])
+        no_trade_reason = most_permissive.get("no_trade_reason")
+
     return {
         "tested_combinations": len(evaluated),
+        "no_trade_reason": no_trade_reason,
         "iterations": iterations,
         "in_sample_window": _window(t0, boundary),
         "out_of_sample_window": _window(boundary, t1),

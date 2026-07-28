@@ -431,6 +431,12 @@ export default function Optimizer() {
                 Tested on: <strong>{result.symbols.join(", ")}</strong>
               </p>
             )}
+            {result.no_trade_reason && (
+              <p className="hint warn" style={{ marginTop: "0.5rem" }}>
+                ⚠ <strong>No configuration traded — so this isn't a verdict on the strategy, it's a setup issue.</strong>{" "}
+                {result.no_trade_reason} Fix that and re-run; until something trades, there's nothing to optimize.
+              </p>
+            )}
             <p className="hint">
               <strong>Out-of-sample is the real result.</strong> The search optimized on{" "}
               {result.in_sample_window.days} days ({result.in_sample_window.start.slice(0, 10)} →{" "}

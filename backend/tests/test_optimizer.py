@@ -168,6 +168,23 @@ def test_single_symbol_warns_about_generalization():
     assert any("one symbol" in w for w in result["warnings"])
 
 
+def test_no_trade_reason_surfaced_when_nothing_trades():
+    # When every combo makes 0 trades, the optimizer surfaces the backtest's
+    # diagnosis so a 0-trade result isn't mistaken for "the strategy is unworkable".
+    def zero_trades(strategy, bars_by_symbol, risk, *, starting_cash=5000.0, spread_pct=0.1,
+                    market="stock", eligible_by_day=None):
+        return {
+            "net_pnl_pct": 0.0, "trades": 0, "win_rate": None, "return_on_deployed_pct": 0.0,
+            "max_drawdown_pct": 0.0, "hold_benchmark": [0.0], "hold_benchmark_label": "TEST",
+            "diagnosis": {"summary": "reached the gain threshold but the 'price above VWAP' "
+                          "condition rejected the qualifying bars."},
+        }
+
+    bars = {"AAA": _bars(100), "BBB": _bars(100)}
+    result = optimizer.optimize(BASE_STRATEGY, bars, {}, iterations=8, seed=3, backtest_fn=zero_trades)
+    assert result["no_trade_reason"] and "VWAP" in result["no_trade_reason"]
+
+
 def test_eligible_by_day_is_threaded_to_every_backtest():
     # Scanner-replay mode: the same eligible-by-day map (each day's top-N risers)
     # must reach EVERY backtest call — in-sample and out-of-sample alike — so the

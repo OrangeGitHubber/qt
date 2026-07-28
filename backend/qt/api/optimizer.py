@@ -218,6 +218,17 @@ async def start_optimize(
         # full sector basket with headroom without straining the rate limit.
         if len(symbols) > 50:
             raise HTTPException(status_code=422, detail="Max 50 symbols per search (rate limits).")
+        # VWAP is an intraday measure — on 1Day bars the "price above VWAP" entry
+        # rule can't be evaluated meaningfully, so every entry is rejected and the
+        # whole search comes back with 0 trades (looks like the strategy is broken
+        # when it's really the timeframe). Fail fast with the same guidance the
+        # backtest gives, rather than burn a run on a guaranteed-empty result.
+        if body.timeframe == "1Day" and json.loads(strategy.params).get("entry", {}).get("require_above_vwap"):
+            raise HTTPException(
+                status_code=422,
+                detail="This strategy needs price above VWAP, which requires intraday bars — "
+                "pick 1Hour or 15Min for the search, or turn the VWAP rule off.",
+            )
 
     # Read everything the (session-less) background task needs NOW, while the
     # request's DB session is open — pass plain dicts/lists into the task.

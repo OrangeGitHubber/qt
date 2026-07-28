@@ -21,6 +21,22 @@ the Baskets screen. A handful of energy/materials names in the sector lists have
 since been acquired or merged away (Pioneer/PXD, Marathon Oil/MRO, WestRock/WRK) —
 they're included as given but may not trade on Alpaca, so prune them if you like.
 
+## Optimizer explains a 0-trade result instead of looking like a failure (2026-07-28)
+
+If an optimizer run comes back with 0 trades on every combination (0% in- and
+out-of-sample), that's almost never "the strategy is unworkable" — it's usually a
+setup mismatch (e.g. the **"price above VWAP"** rule or an **entry time window**
+on **daily** bars, which can't be evaluated intraday, so every entry is rejected).
+The backtest already computes a plain-English reason for this; the optimizer was
+throwing it away. Now:
+
+- The optimizer **surfaces that reason** (from the most permissive combo) at the
+  top of the results — "No configuration traded — this isn't a verdict on the
+  strategy, it's a setup issue: …" — so a 0-trade run is self-explanatory.
+- It **fails fast** when you search a VWAP-requiring strategy on 1Day bars (the
+  most common cause), with the same guidance the backtest gives: pick 1Hour/15Min
+  or turn the VWAP rule off — instead of burning a run on a guaranteed-empty result.
+
 ## Optimizer & backtest symbol cap raised 25 → 50 (2026-07-28)
 
 A 30-symbol sector basket wouldn't optimize ("Max 25 symbols per search"). The
