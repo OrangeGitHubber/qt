@@ -777,6 +777,7 @@ export default function Backtest() {
             <LineChart
               labels={result.equity_days}
               markers={compareResult ? [] : markers}
+              noTradeReasons={compareResult ? undefined : result.no_trade_reasons}
               series={[
                 {
                   label: compareResult ? strategies.find((s) => s.id === strategyId)?.name ?? "Strategy A" : "This strategy",

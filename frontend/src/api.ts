@@ -473,6 +473,7 @@ export interface BacktestResult {
     days_reaching_min_gain: number;
     summary: string | null;
   };
+  no_trade_reasons?: Record<string, string>; // {day -> why no entry that day}
   equity_days: string[];
   equity: number[];
   benchmark: (number | null)[] | null;

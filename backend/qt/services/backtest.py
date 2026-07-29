@@ -11,6 +11,7 @@ Honest limitations, surfaced in the UI:
 - Free IEX data; past performance predicts nothing.
 """
 
+from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
@@ -134,6 +135,60 @@ def _entry_qty(asset_class: str, sizing: float, fill: float, fractional: bool) -
     if asset_class == "stock" and not fractional:
         return float(int(sizing // fill))  # whole shares
     return round(sizing / fill, 6)
+
+
+# Human-readable label for each per-day "why no entry" category.
+_REJECT_LABELS = {
+    "gain": "day gain below the minimum",
+    "extended": "too extended (over the max-gain cap)",
+    "price": "outside the share-price band",
+    "vwap": "not above VWAP",
+    "window": "outside the entry-time window",
+    "macd": "MACD not bullish",
+    "rsi": "RSI outside the entry band",
+    "rail": "blocked by a risk rail (max positions / sleeve / cooldown …)",
+    "sizing": "position too small / not enough cash",
+    "not_eligible": "not a top-N riser that day (scanner replay)",
+}
+
+
+def _reject_category(reason: str) -> str:
+    """Bucket an evaluate_entry rejection reason into a short category for the
+    per-day 'why no entry' summary shown on the backtest chart."""
+    if "< required" in reason:
+        return "gain"
+    if "too extended" in reason:
+        return "extended"
+    if "min $" in reason or "max $" in reason:
+        return "price"
+    if "VWAP" in reason:
+        return "vwap"
+    if "entry window" in reason:
+        return "window"
+    if "MACD" in reason:
+        return "macd"
+    if "RSI" in reason:
+        return "rsi"
+    return "other"
+
+
+def _summarize_no_trade_days(
+    day_reject: dict[str, "Counter[str]"], entries_by_day: dict[str, int]
+) -> dict[str, str]:
+    """For each day that evaluated candidates but opened NO position, a plain-
+    English reason (the one or two dominant blockers). Days that traded are
+    omitted. This is what turns a flat stretch on the equity curve into 'here's
+    why it sat out'."""
+    out: dict[str, str] = {}
+    for day, counter in day_reject.items():
+        if entries_by_day.get(day, 0) > 0 or not counter:
+            continue
+        total = sum(counter.values())
+        parts = [
+            f"{n}× {_REJECT_LABELS.get(cat, cat)}" for cat, n in counter.most_common(2)
+        ]
+        out[day] = f"No entry — {total} candidate{'s' if total != 1 else ''} checked, all blocked: " + "; ".join(parts) + "."
+    return out
 
 
 @dataclass
@@ -301,6 +356,9 @@ def run_backtest(
         "max_day_gain_pct": None,
         "days_reaching_min_gain": set(),
     }
+    # Per-day tally of WHY each candidate was rejected — turned into a plain-English
+    # "why no entry" reason for every day that traded nothing (see the chart panel).
+    day_reject: dict[str, Counter] = {}
 
     for ts in sorted(events):
         bars = events[ts]
@@ -340,6 +398,7 @@ def run_backtest(
         eligible = eligible_by_day.get(day) if eligible_by_day is not None else None
         for symbol, bar in bars.items():
             if eligible is not None and symbol not in eligible:
+                day_reject.setdefault(day, Counter())["not_eligible"] += 1
                 continue  # scanner replay: not a top-N riser on this day
             if bar["change_pct"] is None:
                 continue
@@ -376,6 +435,7 @@ def run_backtest(
                     diag["rejected_vwap"] += 1
                 elif "entry window" in entry_reason:
                     diag["rejected_entry_window"] += 1
+                day_reject.setdefault(day, Counter())[_reject_category(entry_reason)] += 1
                 continue
             # ATR sizing (opt-in): size so a stop-out loses ~risk_usd, capped at
             # the sleeve; falls back to the fixed `sizing` when off or atr_pct is
@@ -413,11 +473,13 @@ def run_backtest(
                     rails_ok = False
             if not rails_ok:
                 diag["entry_ok_but_rail_blocked"] += 1
+                day_reject.setdefault(day, Counter())["rail"] += 1
                 continue
             fill = bar["close"] * (1 + slip)
             qty = _entry_qty(strategy["asset_class"], entry_sizing, fill, _fractional(params))
             if qty <= 0 or fill * qty > state.cash:
                 diag["too_small_or_no_cash"] += 1
+                day_reject.setdefault(day, Counter())["sizing"] += 1
                 continue
             state.cash -= fill * qty
             state.entries_by_day[day] = state.entries_by_day.get(day, 0) + 1
@@ -514,6 +576,9 @@ def run_backtest(
         "return_on_deployed_pct": return_on_deployed,
         "time_in_market_pct": time_in_market,
         "diagnosis": diag,
+        # {day -> plain-English reason} for every day that evaluated candidates but
+        # opened nothing — the chart shows it when you land on a no-trade day.
+        "no_trade_reasons": _summarize_no_trade_days(day_reject, state.entries_by_day),
         "equity_days": days_index,
         "equity": [round((v / starting_cash - 1) * 100, 2) for _, v in equity_curve],
         "hold_benchmark": _hold_benchmark(prepared, days_index),

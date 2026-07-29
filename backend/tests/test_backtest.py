@@ -187,6 +187,29 @@ def test_diagnosis_none_when_trades_exist():
     assert result["diagnosis"]["summary"] is None
 
 
+def test_no_trade_reasons_explain_each_flat_day():
+    # Two days that never reach the day-gain minimum → every no-trade day gets a
+    # plain-English reason naming the day-gain block.
+    series = _spread_day([100, 100, 100], [101, 101.5, 102])  # only +2% max, both days
+    result = run_backtest(STRATEGY, {"TEST": series}, RISK, starting_cash=5000, spread_pct=0)
+    assert result["trades"] == 0
+    reasons = result["no_trade_reasons"]
+    assert reasons, "a flat run should explain every no-trade day"
+    # Each entry is keyed by day and names the dominant blocker.
+    for day, text in reasons.items():
+        assert text.startswith("No entry")
+        assert "day gain below the minimum" in text
+
+
+def test_no_trade_reasons_omit_days_that_traded():
+    # A day that opens a position must NOT appear in no_trade_reasons.
+    series = _spread_day([100, 100, 100], [104, 99, 99])  # +4% day → one entry
+    result = run_backtest(STRATEGY, {"TEST": series}, RISK, starting_cash=5000, spread_pct=0)
+    assert result["trades"] == 1
+    entry_day = result["trade_list"][0]["entry_day"]
+    assert entry_day not in result["no_trade_reasons"]
+
+
 def test_rails_respected_in_backtest():
     # Two symbols both trigger; sleeve budget only fits one $1000 position + cash guard.
     strategy = dict(STRATEGY, sleeve_usd=1500.0)

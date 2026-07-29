@@ -19,10 +19,14 @@ export default function LineChart({
   labels,
   series,
   markers = [],
+  noTradeReasons,
 }: {
   labels: string[];
   series: Series[];
   markers?: ChartMarker[];
+  // {day label -> why no entry} — shown on the panel when you land on a day the
+  // strategy traded nothing, so a flat stretch is explained, not a mystery.
+  noTradeReasons?: Record<string, string>;
 }) {
   // `hover` is sticky: once you've moved over a day it stays selected after the
   // cursor leaves, so a value can be read without it blanking the instant you
@@ -148,7 +152,10 @@ export default function LineChart({
           {hover === null ? (
             <span className="cr-trade-empty">Hover a day to see the trades made that day.</span>
           ) : hoverMarkers.length === 0 ? (
-            <span className="cr-trade-empty">{labels[hover]}: no trades this day.</span>
+            <span className="cr-trade-empty">
+              {labels[hover]}: no trades this day.
+              {noTradeReasons?.[labels[hover]] ? ` ${noTradeReasons[labels[hover]]}` : ""}
+            </span>
           ) : (
             <>
               <span className="td-day">{labels[hover]}:</span>{" "}
