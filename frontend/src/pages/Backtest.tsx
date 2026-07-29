@@ -97,6 +97,11 @@ function deriveTimeframe(s: StrategyRow | undefined): "1Day" | "15Min" {
   return s.swing_mode ? "1Day" : "15Min";
 }
 
+// Compare-chart line colours — strategy A (primary) and B (compared). Shared so
+// the "trades in view" log can colour each strategy's name to match its line.
+const SERIES_A_COLOR = "var(--accent)";
+const SERIES_B_COLOR = "#a78bfa";
+
 // Read-only display of a strategy's resolved universe, shown under its dropdown.
 function UniverseChips({ uni }: { uni: { symbols: string[]; label: string } }) {
   if (!uni.label) return null;
@@ -196,7 +201,7 @@ export default function Backtest() {
   // Trades whose entry/exit falls inside the zoomed day-window, tagged by
   // strategy (compare mode) and time-ordered — the "what happened in this span"
   // panel that appears under the chart while zoomed.
-  const zoomEvents = useMemo<(TradeEvent & { strategy?: string })[]>(() => {
+  const zoomEvents = useMemo<(TradeEvent & { strategy?: string; strategyColor?: string })[]>(() => {
     if (!result || !zoomRange) return [];
     const days = result.equity_days;
     const lo = days[Math.max(0, zoomRange[0])];
@@ -205,17 +210,17 @@ export default function Backtest() {
     const inWin = (d?: string | null) => !!d && d >= lo && d <= hi;
     const aName = strategies.find((s) => s.id === strategyId)?.name ?? "A";
     const bName = strategies.find((s) => s.id === compareId)?.name ?? "B";
-    const rows: (TradeEvent & { strategy?: string })[] = [];
-    const push = (res: BacktestResult, name?: string) => {
+    const rows: (TradeEvent & { strategy?: string; strategyColor?: string })[] = [];
+    const push = (res: BacktestResult, name?: string, color?: string) => {
       for (const t of res.trade_list) {
         if (inWin(t.entry_day))
-          rows.push({ at: t.entry_at, action: "Bought", symbol: t.symbol, price: t.entry_price, qty: t.qty, reason: t.entry_reason, strategy: name });
+          rows.push({ at: t.entry_at, action: "Bought", symbol: t.symbol, price: t.entry_price, qty: t.qty, reason: t.entry_reason, strategy: name, strategyColor: color });
         if (t.exit_at && inWin(t.exit_day))
-          rows.push({ at: t.exit_at, action: "Sold", symbol: t.symbol, price: t.exit_price, pnl: t.pnl, reason: t.exit_reason, strategy: name });
+          rows.push({ at: t.exit_at, action: "Sold", symbol: t.symbol, price: t.exit_price, pnl: t.pnl, reason: t.exit_reason, strategy: name, strategyColor: color });
       }
     };
-    push(result, compareResult ? aName : undefined);
-    if (compareResult) push(compareResult, bName);
+    push(result, compareResult ? aName : undefined, SERIES_A_COLOR);
+    if (compareResult) push(compareResult, bName, SERIES_B_COLOR);
     rows.sort((a, b) => new Date(a.at).getTime() - new Date(b.at).getTime());
     return rows;
   }, [result, compareResult, zoomRange, strategies, strategyId, compareId]);
@@ -971,14 +976,14 @@ export default function Backtest() {
               series={[
                 {
                   label: compareResult ? strategies.find((s) => s.id === strategyId)?.name ?? "Strategy A" : "This strategy",
-                  color: "var(--accent)",
+                  color: SERIES_A_COLOR,
                   values: result.equity,
                 },
                 ...(compareResult
                   ? [
                       {
                         label: strategies.find((s) => s.id === compareId)?.name ?? "Strategy B",
-                        color: "#a78bfa",
+                        color: SERIES_B_COLOR,
                         values: compareResult.equity,
                       },
                     ]
@@ -1063,7 +1068,9 @@ export default function Backtest() {
                         {zoomEvents.map((ev, i) => (
                           <tr key={i}>
                             <td>{new Date(ev.at).toLocaleDateString()}</td>
-                            {compareResult && <td className="sym">{ev.strategy}</td>}
+                            {compareResult && (
+                              <td style={{ color: ev.strategyColor, fontWeight: 600 }}>{ev.strategy}</td>
+                            )}
                             <td className={ev.action === "Bought" ? "up" : "down"}>
                               {ev.action === "Bought" ? "▲ Bought" : "▼ Sold"}
                             </td>
