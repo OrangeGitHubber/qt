@@ -1,5 +1,9 @@
 // Every configurable market term gets a plain-English explanation and a link
 // to a reliable source — the UI must teach as it configures.
+//
+// Style: `explain` is rendered as plain text, so reserve capitals for genuine
+// acronyms and proper nouns (MACD, VWAP, ATR, RSI, SPY, IEX, ET…) — never for
+// emphasis. Keep it consistent across every entry.
 
 export interface GlossaryEntry {
   term: string;
@@ -28,7 +32,7 @@ export const GLOSSARY: Record<string, GlossaryEntry> = {
   macd: {
     term: "MACD",
     explain:
-      "Moving Average Convergence Divergence — a momentum gauge built from two moving averages of price. The MACD LINE is the fast average minus the slow one (default 12 vs 26 days); the SIGNAL line is a smoothed version of that (default 9 days); the HISTOGRAM is the gap between them. When the line crosses ABOVE its signal it's a bullish signal (momentum turning up); crossing BELOW is bearish. QT computes it from COMPLETED daily bars only — never today's unfinished bar — and leaves it OFF by default: turn it on to only enter while momentum is bullish, and/or to exit when it turns bearish. Best for swing / daily strategies — it avoids buying into fading momentum. Leave it off for fast intraday trades.",
+      "Moving Average Convergence Divergence — a momentum gauge built from two moving averages of price. The MACD line is the fast average minus the slow one (default 12 vs 26 days); the signal line is a smoothed version of that (default 9 days); the histogram is the gap between them. When the line crosses above its signal it's a bullish signal (momentum turning up); crossing below is bearish. QT computes it from completed daily bars only — never today's unfinished bar — and leaves it off by default: turn it on to only enter while momentum is bullish, and/or to exit when it turns bearish. Best for swing / daily strategies — it avoids buying into fading momentum. Leave it off for fast intraday trades.",
     url: "https://www.investopedia.com/terms/m/macd.asp",
   },
   vwap: {
@@ -40,7 +44,7 @@ export const GLOSSARY: Record<string, GlossaryEntry> = {
   scanner_replay: {
     term: "Scanner replay",
     explain:
-      "Backtests against the market's actual top risers on each past day — the names the live scanner would have surfaced — instead of a fixed symbol list. Risers are reconstructed from a cached year of daily bars, ranked by each day's intraday PEAK gain (so pump-and-fade names aren't missed). Run a daily sweep in Settings first; add an intraday sweep to replay on 15-minute bars, which lets intraday exits (flatten-before-close, VWAP, entry window) behave for real. Each day only that day's top-N are eligible; your entry rules then decide. The closest a backtest gets to the live 'today's risers' engine.",
+      "Backtests against the market's actual top risers on each past day — the names the live scanner would have surfaced — instead of a fixed symbol list. Risers are reconstructed from a cached year of daily bars, ranked by each day's intraday peak gain (so pump-and-fade names aren't missed). Run a daily sweep in Settings first; add an intraday sweep to replay on 15-minute bars, which lets intraday exits (flatten-before-close, VWAP, entry window) behave for real. Each day only that day's top-N are eligible; your entry rules then decide. The closest a backtest gets to the live 'today's risers' engine.",
     url: "https://www.investopedia.com/terms/b/backtesting.asp",
   },
   replay_top_n: {
@@ -70,37 +74,37 @@ export const GLOSSARY: Record<string, GlossaryEntry> = {
   dollar_volume: {
     term: "Dollar volume (on Alpaca's feed)",
     explain:
-      "Quantity traded × price. IMPORTANT: this is only what Alpaca's FREE feed saw, not the whole market. Stocks use the last completed trading session on IEX (~2–3% of US volume) — a stable full day, since today's bar is only partial while the market is open. Crypto is a rolling 24-hour total from Alpaca's aggregated feed. So a real BTC day is billions, but this column may show only a few thousand — treat it as a liquidity signal to compare LIKE-for-like across symbols, not the true market total.",
+      "Quantity traded × price. Note: this is only what Alpaca's free feed saw, not the whole market. Stocks use the last completed trading session on IEX (~2–3% of US volume) — a stable full day, since today's bar is only partial while the market is open. Crypto is a rolling 24-hour total from Alpaca's aggregated feed. So a real BTC day is billions, but this column may show only a few thousand — treat it as a liquidity signal to compare like-for-like across symbols, not the true market total.",
     url: "https://www.investopedia.com/terms/v/volume.asp",
   },
   wash_sale: {
     term: "Wash sale",
     explain:
-      "Selling a stock at a loss and re-buying it within 30 days disallows the tax deduction for that loss. QT can block or warn. The IRS counts your OTHER accounts too — QT can only see its own trades.",
+      "Selling a stock at a loss and re-buying it within 30 days disallows the tax deduction for that loss. QT can block or warn. The IRS counts your other accounts too — QT can only see its own trades.",
     url: "https://www.investopedia.com/terms/w/washsalerule.asp",
   },
   leverage: {
     term: "Leverage / margin",
     explain:
-      "Trading with borrowed money. Since June 2026, accounts over $2k can trade with up to 4x intraday buying power — meaning losses are also 4x faster, and you can lose more than a position's worth in hours. QT keeps this off unless you unlock it at the server level AND confirm the risk.",
+      "Trading with borrowed money. Since June 2026, accounts over $2k can trade with up to 4x intraday buying power — meaning losses are also 4x faster, and you can lose more than a position's worth in hours. QT keeps this off unless you unlock it at the server level and confirm the risk.",
     url: "https://www.investopedia.com/terms/m/margin.asp",
   },
   entry_slippage: {
     term: "Entry slippage (marketable buffer)",
     explain:
-      "QT never sends a naked market order — it sends a 'marketable' limit priced a little THROUGH the market so it crosses the spread and fills. This is how far through, for buys: 0.5% = default. Higher fills more reliably on fast/thin names but at a worse price; 0% is a passive limit at the quote that may not fill. Live/paper only — the backtest models fills with its own spread-cost input.",
+      "QT never sends a naked market order — it sends a 'marketable' limit priced a little through the market so it crosses the spread and fills. This is how far through, for buys: 0.5% = default. Higher fills more reliably on fast/thin names but at a worse price; 0% is a passive limit at the quote that may not fill. Live/paper only — the backtest models fills with its own spread-cost input.",
     url: "https://www.investopedia.com/terms/s/slippage.asp",
   },
   exit_slippage: {
     term: "Exit slippage + escalating chase",
     explain:
-      "How far BELOW the market QT prices the marketable SELL limit when exiting (1% = default). If a sell misses the fill (price dropping faster than the order, or a thin book), QT cancels and retries next cycle. Set 'Max exit slippage' above the base to ESCALATE: each miss widens the sell price one step further down, up to the max, so a fast drop still gets out — still a limit, never a market order. Equal base and max = no escalation. Wider = more certain exits, worse price. Live/paper only.",
+      "How far below the market QT prices the marketable sell limit when exiting (1% = default). If a sell misses the fill (price dropping faster than the order, or a thin book), QT cancels and retries next cycle. Set 'Max exit slippage' above the base to escalate: each miss widens the sell price one step further down, up to the max, so a fast drop still gets out — still a limit, never a market order. Equal base and max = no escalation. Wider = more certain exits, worse price. Live/paper only.",
     url: "https://www.investopedia.com/terms/s/slippage.asp",
   },
   swing_mode: {
     term: "Trading style: Swing vs Intraday",
     explain:
-      "Two opposite styles, so it's one choice. SWING holds positions overnight and judges exits over days (soft exits like take-profit wait until the day after entry; stops still act same-day). INTRADAY flattens before the close and never holds overnight (for stocks; crypto has no close). Stocks default to Swing — spreads and free-data limits punish rapid stock trading, though the trade-off is overnight-gap risk. Crypto is the intraday lab (24/7, cleaner data).",
+      "Two opposite styles, so it's one choice. Swing holds positions overnight and judges exits over days (soft exits like take-profit wait until the day after entry; stops still act same-day). Intraday flattens before the close and never holds overnight (for stocks; crypto has no close). Stocks default to Swing — spreads and free-data limits punish rapid stock trading, though the trade-off is overnight-gap risk. Crypto is the intraday lab (24/7, cleaner data).",
     url: "https://www.investopedia.com/terms/s/swingtrading.asp",
   },
   sleeve: {
@@ -118,14 +122,14 @@ export const GLOSSARY: Record<string, GlossaryEntry> = {
   shadow_mode: {
     term: "Shadow mode",
     explain:
-      "The engine runs its full decision loop and writes every would-be trade to the journal, but places NO orders anywhere — not even simulated ones. The zero-risk first rung of the autonomy ladder.",
+      "The engine runs its full decision loop and writes every would-be trade to the journal, but places no orders anywhere — not even simulated ones. The zero-risk first rung of the autonomy ladder.",
     url: "https://en.wikipedia.org/wiki/Shadow_system",
   },
   daily_loss_limit: {
     term: "Daily loss kill switch",
     explain:
       "If today's realized losses reach this limit (in dollars or % of account, whichever is lower), the bot stops opening new positions until tomorrow and alerts you.",
-    url: "https://www.investopedia.com/terms/d/dailytradinglimit.asp",
+    url: "https://www.investopedia.com/terms/r/riskmanagement.asp",
   },
   bar: {
     term: "Bar (candle)",
@@ -136,7 +140,7 @@ export const GLOSSARY: Record<string, GlossaryEntry> = {
   atr: {
     term: "Average True Range (ATR)",
     explain:
-      "The average size of a symbol's daily move, as a % of price — gaps between one day's close and the next included, not just the day's high-to-low range. It's the noise floor for your stops: a 2% stop on a stock that routinely swings 4% will shake you out of good trades for no reason. QT can use it two ways (both off by default): an ATR STOP places the stop a multiple of ATR below entry, so volatile names get a wider stop and calm ones a tighter stop; ATR SIZING sizes each position so a stop-out loses about the same dollars whatever the symbol's volatility.",
+      "The average size of a symbol's daily move, as a % of price — gaps between one day's close and the next included, not just the day's high-to-low range. It's the noise floor for your stops: a 2% stop on a stock that routinely swings 4% will shake you out of good trades for no reason. QT can use it two ways (both off by default): an ATR stop places the stop a multiple of ATR below entry, so volatile names get a wider stop and calm ones a tighter stop; ATR sizing sizes each position so a stop-out loses about the same dollars whatever the symbol's volatility.",
     url: "https://www.investopedia.com/terms/a/atr.asp",
   },
   change_30d: {
@@ -155,7 +159,7 @@ export const GLOSSARY: Record<string, GlossaryEntry> = {
     term: "Capital deployed",
     explain:
       "How much of your account was actually invested, versus sitting in cash. A bot with $200 per trade on a $5,000 account only ever risks 4% — so even a great return on those trades barely moves the account. Judge the strategy by the return on money used; judge your settings by how much you deployed.",
-    url: "https://www.investopedia.com/terms/c/capital-allocation.asp",
+    url: "https://www.investopedia.com/terms/a/assetallocation.asp",
   },
   hold_benchmark: {
     term: "Buy-and-hold benchmark",
@@ -166,7 +170,7 @@ export const GLOSSARY: Record<string, GlossaryEntry> = {
   basket: {
     term: "Basket (curated symbol list)",
     explain:
-      "A named group of symbols you pick — a theme like Defense or Banking. It is NOT an authoritative sector database: Alpaca provides no sector or industry data on this plan, so the starter baskets are hand-picked and yours to edit, and they drift as companies change. A basket is just a convenient, editable list.",
+      "A named group of symbols you pick — a theme like Defense or Banking. It is not an authoritative sector database: Alpaca provides no sector or industry data on this plan, so the starter baskets are hand-picked and yours to edit, and they drift as companies change. A basket is just a convenient, editable list.",
     url: "https://www.investopedia.com/terms/s/sector.asp",
   },
   dca: {
@@ -178,25 +182,25 @@ export const GLOSSARY: Record<string, GlossaryEntry> = {
   rank_by: {
     term: "Top-N ranking",
     explain:
-      "The live engine snapshots the pool, ranks it by the metric you choose, and considers only the top N as buy candidates (your entry rules still apply). Works for a basket (always ranked) and — when you switch ranking on — a watchlist or a custom list. Metrics: today's % move, 30-day return, relative strength (price vs its own 200-day average), or relative strength vs the S&P 500. A backtest can't do this — it tests the whole pool over history because the historical daily ranking can't be reconstructed. Top-N is a LIVE feature only.",
+      "The live engine snapshots the pool, ranks it by the metric you choose, and considers only the top N as buy candidates (your entry rules still apply). Works for a basket (always ranked) and — when you switch ranking on — a watchlist or a custom list. Metrics: today's % move, 30-day return, relative strength (price vs its own 200-day average), or relative strength vs the S&P 500. A backtest can't do this — it tests the whole pool over history because the historical daily ranking can't be reconstructed. Top-N is a live feature only.",
     url: "https://www.investopedia.com/terms/r/relativestrength.asp",
   },
   rank_enabled: {
     term: "Rank & take top N",
     explain:
-      "For a WATCHLIST or a CUSTOM list, turn this on to trade only the STRONGEST few names instead of the whole list: each cycle the engine ranks the pool by your chosen metric and keeps the top N as candidates (your entry rules still decide from there). Off = consider the whole list, entry rules alone deciding. Baskets are always ranked, so this is implicit there. It's a LIVE feature — a backtest can't reconstruct the historical daily ranking, so it tests the whole pool. Pair it with 'rotate out when it leaves the top N' to rotate into and out of names as their strengths change.",
+      "For a watchlist or a custom list, turn this on to trade only the strongest few names instead of the whole list: each cycle the engine ranks the pool by your chosen metric and keeps the top N as candidates (your entry rules still decide from there). Off = consider the whole list, entry rules alone deciding. Baskets are always ranked, so this is implicit there. It's a live feature — a backtest can't reconstruct the historical daily ranking, so it tests the whole pool. Pair it with 'rotate out when it leaves the top N' to rotate into and out of names as their strengths change.",
     url: "https://www.investopedia.com/terms/r/relativestrength.asp",
   },
   rs_vs_spy: {
     term: "Relative strength vs the market",
     explain:
-      "Ranks each basket member by how much it has OUT-performed the S&P 500 (SPY) over a ~90-day window — the member's return minus SPY's return over the same span. This is the classic sector-rotation 'relative strength', and it differs from 'Relative strength (vs 200-day average)': a name can sit ABOVE its own 200-day trend yet still LAG the market. Positive = beating SPY; negative = trailing it. Stocks only (SPY is a stock benchmark). Like all top-N ranking it's a LIVE feature — a backtest can't reconstruct the historical daily basket ranking.",
+      "Ranks each basket member by how much it has out-performed the S&P 500 (SPY) over a ~90-day window — the member's return minus SPY's return over the same span. This is the classic sector-rotation 'relative strength', and it differs from 'Relative strength (vs 200-day average)': a name can sit above its own 200-day trend yet still lag the market. Positive = beating SPY; negative = trailing it. Stocks only (SPY is a stock benchmark). Like all top-N ranking it's a live feature — a backtest can't reconstruct the historical daily basket ranking.",
     url: "https://www.investopedia.com/terms/r/relativestrength.asp",
   },
   rotate_on_rank_dropout: {
     term: "Rotate on rank drop-out",
     explain:
-      "For a RANKED strategy (a basket, or a watchlist/custom list with 'Rank & take top N' on), sell a holding the moment it falls out of the current top-N ranking — the essence of a rotation strategy: always hold the strongest few, rotating into new leaders as the ranking shifts. It's a LIVE feature (the engine re-ranks each cycle); a backtest can't reconstruct the historical daily ranking. Pair it with a wide stop-loss as a safety net and the rotation does the rest.",
+      "For a ranked strategy (a basket, or a watchlist/custom list with 'Rank & take top N' on), sell a holding the moment it falls out of the current top-N ranking — the essence of a rotation strategy: always hold the strongest few, rotating into new leaders as the ranking shifts. It's a live feature (the engine re-ranks each cycle); a backtest can't reconstruct the historical daily ranking. Pair it with a wide stop-loss as a safety net and the rotation does the rest.",
     url: "https://www.investopedia.com/terms/s/sectorrotation.asp",
   },
   trade_rate: {
@@ -214,7 +218,7 @@ export const GLOSSARY: Record<string, GlossaryEntry> = {
   entry_window: {
     term: "Entry window (ET)",
     explain:
-      "Restricts BUYING only, on purpose, and only WITHIN regular US market hours. New positions are only OPENED between these US-Eastern times; outside the window entries are skipped. SELLING is never narrowed by this window — exits, trailing stops and stop-losses fire whenever they're triggered during market hours, because you must always be able to get out (a window that could block a stop-out would be dangerous). That's why it's an 'entry' window, not a 'trading' window. Note for stocks: QT trades the regular session only, so neither buys nor sells happen in pre-/after-hours anyway — this window just narrows the open further (e.g. skip the chaotic first minutes after 09:30, or stop opening late in the day). Crypto trades 24/7, so ET hours mean little there — usually leave this off for crypto.",
+      "Restricts buying only, on purpose, and only within regular US market hours. New positions are only opened between these US-Eastern times; outside the window entries are skipped. Selling is never narrowed by this window — exits, trailing stops and stop-losses fire whenever they're triggered during market hours, because you must always be able to get out (a window that could block a stop-out would be dangerous). That's why it's an 'entry' window, not a 'trading' window. Note for stocks: QT trades the regular session only, so neither buys nor sells happen in pre-/after-hours anyway — this window just narrows the open further (e.g. skip the chaotic first minutes after 09:30, or stop opening late in the day). Crypto trades 24/7, so ET hours mean little there — usually leave this off for crypto.",
     url: "https://www.investopedia.com/terms/t/tradinghours.asp",
   },
   max_holding: {
@@ -250,13 +254,13 @@ export const GLOSSARY: Record<string, GlossaryEntry> = {
   universe: {
     term: "Universe",
     explain:
-      "Where a strategy's buy candidates come from: Scanner (today's risers), a Basket (your curated list, ranked top-N), Watchlist (your pinned symbols), or a Custom fixed list. The strategy's entry rules and the safety rails then decide what actually trades from that pool. A strategy trades ONE asset class, so its universe is scoped to that class — a stocks strategy never sees crypto, and vice-versa.",
+      "Where a strategy's buy candidates come from: Scanner (today's risers), a Basket (your curated list, ranked top-N), Watchlist (your pinned symbols), or a Custom fixed list. The strategy's entry rules and the safety rails then decide what actually trades from that pool. A strategy trades one asset class, so its universe is scoped to that class — a stocks strategy never sees crypto, and vice-versa.",
     url: "https://www.investopedia.com/terms/s/stockscreener.asp",
   },
   custom_symbols: {
     term: "Specific symbols",
     explain:
-      "The engine considers EXACTLY the symbols you list each cycle — your entry and exit rules still apply. Good for a focused, one-off strategy (e.g. just SPCX) without building a whole basket. Only the current asset class is searchable here, because a strategy trades one asset class.",
+      "The engine considers exactly the symbols you list each cycle — your entry and exit rules still apply. Good for a focused, one-off strategy (e.g. just SPCX) without building a whole basket. Only the current asset class is searchable here, because a strategy trades one asset class.",
     url: "https://www.investopedia.com/terms/s/stock.asp",
   },
   atr_stop: {
@@ -286,13 +290,13 @@ export const GLOSSARY: Record<string, GlossaryEntry> = {
   starting_cash: {
     term: "Starting cash ($)",
     explain:
-      "The simulated account the backtest begins with. It defaults to the selected strategy's SLEEVE (the most that one strategy is ever allowed to deploy) — a single-strategy backtest can never put more than its sleeve to work, so a bigger account would just sit idle and dilute the account-% return. Give it room: several times your $-per-trade, or the account can't hold multiple positions and one early loss can lock it out of further trades. When unsure, read 'return on money used', not account %.",
+      "The simulated account the backtest begins with. It defaults to the selected strategy's sleeve (the most that one strategy is ever allowed to deploy) — a single-strategy backtest can never put more than its sleeve to work, so a bigger account would just sit idle and dilute the account-% return. Give it room: several times your $-per-trade, or the account can't hold multiple positions and one early loss can lock it out of further trades. When unsure, read 'return on money used', not account %.",
     url: "https://www.investopedia.com/terms/b/backtesting.asp",
   },
   spread_cost: {
     term: "Spread cost per side (%)",
     explain:
-      "Models the bid-ask spread you pay on entry AND exit — subtracted from every fill, each side. Thin small-caps have wide spreads, so set this honestly (0.2–0.5%+); too low flatters the result. It does NOT model missed fills, gaps, or slippage beyond the spread — real fills can be worse.",
+      "Models the bid-ask spread you pay on entry and exit — subtracted from every fill, each side. Thin small-caps have wide spreads, so set this honestly (0.2–0.5%+); too low flatters the result. It does not model missed fills, gaps, or slippage beyond the spread — real fills can be worse.",
     url: "https://www.investopedia.com/terms/b/bid-askspread.asp",
   },
   history_days: {
@@ -317,7 +321,7 @@ export const GLOSSARY: Record<string, GlossaryEntry> = {
     term: "Never trade these",
     explain:
       "Symbols the scanner always drops and the engine never buys, in both markets. Use it to permanently avoid names you don't want the bot touching — e.g. a stock you already hold elsewhere, or one that keeps whipsawing you.",
-    url: "https://www.investopedia.com/terms/e/exclusion.asp",
+    url: "https://www.investopedia.com/terms/s/stockscreener.asp",
   },
   overfitting: {
     term: "Overfitting",
@@ -328,7 +332,7 @@ export const GLOSSARY: Record<string, GlossaryEntry> = {
   parameter_search: {
     term: "Parameter search",
     explain:
-      "Systematically trying many settings for a strategy (min gain, stops, take-profit) through the SAME backtester, instead of guessing one by hand — this is a search, not 'AI'. QT searches on the first ~70% of the history and reports the result on the final ~30% it never optimized on, so a lucky in-sample fit gets caught. The output is a HYPOTHESIS: an editable draft strategy, born disabled, that still has to prove itself in shadow then paper. It never enables anything for you.",
+      "Systematically trying many settings for a strategy (min gain, stops, take-profit) through the same backtester, instead of guessing one by hand — this is a search, not 'AI'. QT searches on the first ~70% of the history and reports the result on the final ~30% it never optimized on, so a lucky in-sample fit gets caught. The output is a hypothesis: an editable draft strategy, born disabled, that still has to prove itself in shadow then paper. It never enables anything for you.",
     url: "https://www.investopedia.com/terms/b/backtesting.asp",
   },
 
@@ -336,37 +340,37 @@ export const GLOSSARY: Record<string, GlossaryEntry> = {
   chart_markers: {
     term: "Buy / sell markers",
     explain:
-      "The green ▲ (buys) and red ▼ (sells) come from THIS symbol's trade journal, placed on the day each trade happened — hover for the price, reason and P&L. They let you see where the strategy actually entered and exited against the price action: did it buy strength and sell into weakness, or the other way around? Nothing to interpret numerically — they're a record of what the bot did here.",
+      "The green ▲ (buys) and red ▼ (sells) come from this symbol's trade journal, placed on the day each trade happened — hover for the price, reason and P&L. They let you see where the strategy actually entered and exited against the price action: did it buy strength and sell into weakness, or the other way around? Nothing to interpret numerically — they're a record of what the bot did here.",
     url: "https://www.investopedia.com/terms/t/trade.asp",
   },
   ma_overlay: {
     term: "50 & 200-day moving averages",
     explain:
-      "The average closing price over the last 50 days (gold) and 200 days (cyan), redrawn each day. They smooth out the noise to show the TREND: price above a rising average is an uptrend, below a falling one is a downtrend. Traders watch the cross — the 50-day rising ABOVE the 200-day is the bullish 'golden cross', dropping below is the bearish 'death cross'. The 200-day is the slow, big-picture line; the 50-day turns sooner.",
+      "The average closing price over the last 50 days (gold) and 200 days (cyan), redrawn each day. They smooth out the noise to show the trend: price above a rising average is an uptrend, below a falling one is a downtrend. Traders watch the cross — the 50-day rising above the 200-day is the bullish 'golden cross', dropping below is the bearish 'death cross'. The 200-day is the slow, big-picture line; the 50-day turns sooner.",
     url: "https://www.investopedia.com/terms/m/movingaverage.asp",
   },
   ema_overlay: {
     term: "EMA 9 & 21",
     explain:
-      "Exponential moving averages that weight recent prices more, so they react FASTER than the 50/200-day lines — this is short-term trend and momentum. Price above a rising 9 and 21 EMA, with the 9 above the 21, is short-term bullish; the 9 crossing below the 21 is an early warning that momentum is fading. Use them for timing within a trend, not the big-picture direction.",
+      "Exponential moving averages that weight recent prices more, so they react faster than the 50/200-day lines — this is short-term trend and momentum. Price above a rising 9 and 21 EMA, with the 9 above the 21, is short-term bullish; the 9 crossing below the 21 is an early warning that momentum is fading. Use them for timing within a trend, not the big-picture direction.",
     url: "https://www.investopedia.com/terms/e/ema.asp",
   },
   bollinger_overlay: {
     term: "Bollinger Bands",
     explain:
-      "A 20-day average with an upper and lower band set 2 standard deviations away, so the bands WIDEN when volatility rises and pinch in when it falls. Price riding the upper band = stretched/strong; hugging the lower band = weak or oversold; a 'squeeze' (very narrow bands) often comes before a big move. It frames how far price has stretched from normal — not a buy/sell signal on its own.",
+      "A 20-day average with an upper and lower band set 2 standard deviations away, so the bands widen when volatility rises and pinch in when it falls. Price riding the upper band = stretched/strong; hugging the lower band = weak or oversold; a 'squeeze' (very narrow bands) often comes before a big move. It frames how far price has stretched from normal — not a buy/sell signal on its own.",
     url: "https://www.investopedia.com/terms/b/bollingerbands.asp",
   },
   atr_stop_line: {
     term: "ATR-stop level",
     explain:
-      "An ILLUSTRATIVE trailing stop drawn at close − 2×ATR (ATR = the symbol's typical daily move). It shows how far a volatility-based stop would sit below price and how it 'breathes' — wider when the stock is volatile, tighter when calm — so ordinary wiggle doesn't shake you out. It is NOT a specific position's live stop, just a visual for where a sensible stop might ride.",
+      "An illustrative trailing stop drawn at close − 2×ATR (ATR = the symbol's typical daily move). It shows how far a volatility-based stop would sit below price and how it 'breathes' — wider when the stock is volatile, tighter when calm — so ordinary wiggle doesn't shake you out. It is not a specific position's live stop, just a visual for where a sensible stop might ride.",
     url: "https://www.investopedia.com/terms/a/atr.asp",
   },
   volume_overlay: {
     term: "Volume",
     explain:
-      "Shares (or contracts) traded each day — green when the day closed up, red when down. It's the conviction behind a move: a breakout on HIGH volume is far more trustworthy than one on light volume, and a rally on fading volume is suspect. Note for stocks: the free IEX feed sees only a slice of true volume, so read it for relative comparison (this bar vs recent bars), not absolute size.",
+      "Shares (or contracts) traded each day — green when the day closed up, red when down. It's the conviction behind a move: a breakout on high volume is far more trustworthy than one on light volume, and a rally on fading volume is suspect. Note for stocks: the free IEX feed sees only a slice of true volume, so read it for relative comparison (this bar vs recent bars), not absolute size.",
     url: "https://www.investopedia.com/terms/v/volume.asp",
   },
   rsi: {
@@ -378,7 +382,7 @@ export const GLOSSARY: Record<string, GlossaryEntry> = {
   rs_ratio: {
     term: "Relative strength vs SPY",
     explain:
-      "This symbol's price divided by the S&P 500's (SPY), rebased to 1.0 at the start of the window. ABOVE 1.0 (shaded green) means it has OUT-performed the market since then; a RISING line means it's leading right now. Below 1.0 or falling means it's lagging. It answers 'is this a leader or a laggard?' independent of whether the whole market went up or down — the good zone is above 1.0 and rising.",
+      "This symbol's price divided by the S&P 500's (SPY), rebased to 1.0 at the start of the window. Above 1.0 (shaded green) means it has out-performed the market since then; a rising line means it's leading right now. Below 1.0 or falling means it's lagging. It answers 'is this a leader or a laggard?' independent of whether the whole market went up or down — the good zone is above 1.0 and rising.",
     url: "https://www.investopedia.com/terms/r/relativestrength.asp",
   },
 };
