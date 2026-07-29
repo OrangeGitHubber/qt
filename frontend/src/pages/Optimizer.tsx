@@ -145,6 +145,19 @@ export default function Optimizer() {
     strategy?.params?.entry?.require_above_vwap ||
     (strategy?.params?.entry?.entry_window_start && strategy?.params?.entry?.entry_window_end)
   );
+  // MACD/RSI are daily signals — an intraday search is unfaithful to live, so
+  // lock those strategies to 1 Day (the mirror of stratNeedsIntraday for VWAP).
+  const entryP = strategy?.params?.entry;
+  const exitP = strategy?.params?.exit;
+  const stratWantsDaily =
+    !stratNeedsIntraday &&
+    !!(
+      entryP?.require_macd_bullish ||
+      exitP?.exit_on_macd_bearish ||
+      (entryP?.rsi_min ?? 0) > 0 ||
+      (entryP?.rsi_max ?? 0) > 0 ||
+      (exitP?.exit_rsi_above ?? 0) > 0
+    );
   const running = status?.running ?? false;
   const result: OptimizerResult | null = status && !status.running ? status.result : null;
   // RSI/MACD knobs are only searched when the strategy uses that signal — show
@@ -384,9 +397,15 @@ export default function Optimizer() {
                 title={scannerReplay ? "Ignored in scanner replay — the cache decides (15-min if swept, else daily)" : undefined}
               >
                 <option value="1Day">1 day (fast — recommended for a search)</option>
-                <option value="1Hour">1 hour (slower)</option>
-                <option value="15Min">15 minutes (slowest, precise)</option>
+                <option value="1Hour" disabled={stratWantsDaily}>1 hour (slower)</option>
+                <option value="15Min" disabled={stratWantsDaily}>15 minutes (slowest, precise)</option>
               </select>
+              {stratWantsDaily && !scannerReplay && (
+                <span className="field-help warn">
+                  <IconWarn className="icon-inline" /> This strategy uses MACD/RSI (daily signals), so the search is
+                  locked to 1 Day — on intraday bars they whipsaw and won't match the live engine.
+                </span>
+              )}
               {stratNeedsIntraday && !scannerReplay && (
                 <span className="field-help">
                   This strategy uses VWAP / an entry window (intraday rules), so daily bars would reject every entry —

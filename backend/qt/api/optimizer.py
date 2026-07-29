@@ -229,6 +229,17 @@ async def start_optimize(
                 detail="This strategy needs price above VWAP, which requires intraday bars — "
                 "pick 1Hour or 15Min for the search, or turn the VWAP rule off.",
             )
+        # The mirror of the above: MACD/RSI are DAILY signals live, so an intraday
+        # search computes a twitchy intraday MACD/RSI that whipsaws and won't match
+        # the live engine — lock the search to 1 Day (same as the backtest).
+        from qt.api.backtest import _uses_daily_only_signals
+
+        if body.timeframe in ("15Min", "1Hour") and _uses_daily_only_signals(json.loads(strategy.params)):
+            raise HTTPException(
+                status_code=422,
+                detail="This strategy uses MACD/RSI, which are daily signals — an intraday search "
+                "whipsaws and won't match the live engine. Use 1 Day.",
+            )
 
     # Read everything the (session-less) background task needs NOW, while the
     # request's DB session is open — pass plain dicts/lists into the task.
