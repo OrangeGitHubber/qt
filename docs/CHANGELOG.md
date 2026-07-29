@@ -11,6 +11,16 @@ Lucide SVG icon set, driven from one place so size, stroke and colour stay in
 step across the app. Sort arrows, disclosure carets and prose marks stay as
 text. Purely a look-and-feel change — nothing about behaviour moved.
 
+## Optimizer now tunes MACD speed + fuller RSI (2026-07-29)
+
+The parameter search can now tune the **MACD speed** — it searches the slow-EMA
+period (lower = a faster, less-laggy MACD) and scales the fast line along your
+strategy's own ratio, so the whole MACD gets faster/slower while keeping its
+shape. This is the knob for the "MACD is too laggy" problem. RSI tuning is also
+completed: alongside Max RSI and the overbought exit, it now tunes **Min RSI**
+too. As before, each knob is searched **only when your strategy already uses that
+signal**, and the results table / plateau grid show the extra columns only then.
+
 ## Rotation-strategy tooling: regime exit, MACD ranking column, RSI optimizer (2026-07-29)
 
 A batch that makes the rank-and-rotate workflow more complete:

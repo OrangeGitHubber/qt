@@ -567,7 +567,9 @@ export interface OptimizerComboParams {
   stop_loss_pct: number;
   take_profit_pct: number;
   rsi_max?: number; // searched only when the strategy uses an RSI entry cap
+  rsi_min?: number; // searched only when the strategy uses an RSI entry floor
   exit_rsi_above?: number; // searched only when the strategy uses the RSI exit
+  macd_slow?: number; // MACD slow-EMA period — searched only when the strategy uses MACD
 }
 
 export interface OptimizerResultRow {

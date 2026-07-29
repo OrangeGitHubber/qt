@@ -49,29 +49,45 @@ PARAM_SPACE: dict[str, list[float]] = {
     "take_profit_pct": [0.0, 5.0, 8.0, 10.0, 12.0, 15.0, 20.0],
 }
 
-# RSI knobs are searched ONLY when the base strategy already opted into them, so
-# the optimizer tunes the factors you're using rather than inventing new ones.
-# 0.0 stays in each range so the search can also decide the threshold isn't
-# helping and turn it back off.
+# RSI/MACD knobs are searched ONLY when the base strategy already uses that
+# signal, so the optimizer tunes the factors you're using rather than inventing
+# new ones. For RSI, 0.0 stays in range so the search can also decide the
+# threshold isn't helping and turn it back off.
 RSI_PARAM_SPACE: dict[str, list[float]] = {
     "rsi_max": [0.0, 60.0, 65.0, 70.0, 75.0, 80.0],       # entry: skip overbought
+    "rsi_min": [0.0, 30.0, 40.0, 50.0, 55.0, 60.0],       # entry: require some strength
     "exit_rsi_above": [0.0, 65.0, 70.0, 75.0, 80.0, 85.0],  # exit: sell on froth
 }
 
-# Which strategy-params section each searchable knob belongs to.
-_ENTRY_KNOBS = {"min_day_gain_pct", "rsi_max"}
+# MACD tuning = the LAG knob. We search the slow-EMA period (lower = a faster,
+# less-laggy MACD) and derive the fast line from the strategy's own fast/slow
+# ratio, so the whole MACD scales faster/slower while keeping its shape — always
+# valid (fast < slow), one clean numeric knob that fits the plateau report.
+MACD_PARAM_SPACE: dict[str, list[float]] = {
+    "macd_slow": [13.0, 17.0, 21.0, 26.0, 34.0],
+}
+
+# Which strategy-params section each searchable knob belongs to (macd_slow is
+# routed to the `macd` block specially in _apply_combo).
+_ENTRY_KNOBS = {"min_day_gain_pct", "rsi_max", "rsi_min"}
 
 
 def _active_param_space(base_strategy: dict) -> dict[str, list[float]]:
     """The knobs to search for THIS strategy: always the core four, plus an RSI
-    knob for each RSI rule the strategy already has on. Keeps non-RSI strategies'
-    search (and their tests) byte-identical to before."""
+    knob for each RSI rule it uses and the MACD speed knob if it uses MACD. Keeps
+    a plain (no RSI/MACD) strategy's search — and its tests — byte-identical."""
     space = dict(PARAM_SPACE)
     params = base_strategy.get("params") or {}
-    if float((params.get("entry") or {}).get("rsi_max", 0) or 0) > 0:
+    entry = params.get("entry") or {}
+    exit_rules = params.get("exit") or {}
+    if float(entry.get("rsi_max", 0) or 0) > 0:
         space["rsi_max"] = RSI_PARAM_SPACE["rsi_max"]
-    if float((params.get("exit") or {}).get("exit_rsi_above", 0) or 0) > 0:
+    if float(entry.get("rsi_min", 0) or 0) > 0:
+        space["rsi_min"] = RSI_PARAM_SPACE["rsi_min"]
+    if float(exit_rules.get("exit_rsi_above", 0) or 0) > 0:
         space["exit_rsi_above"] = RSI_PARAM_SPACE["exit_rsi_above"]
+    if entry.get("require_macd_bullish") or exit_rules.get("exit_on_macd_bearish"):
+        space["macd_slow"] = MACD_PARAM_SPACE["macd_slow"]
     return space
 
 ProgressFn = Callable[[int, int], None]
@@ -124,7 +140,20 @@ def _apply_combo(base_strategy: dict, combo: dict) -> dict:
     entry = params.setdefault("entry", {})
     exit_rules = params.setdefault("exit", {})
     for key, value in combo.items():
-        (entry if key in _ENTRY_KNOBS else exit_rules)[key] = value
+        if key == "macd_slow":
+            # Scale MACD along the strategy's own fast/slow ratio: a smaller slow
+            # period = a faster, less-laggy MACD. Keeps fast < slow by construction.
+            m = params.setdefault("macd", {})
+            base_slow = float(m.get("slow", 26) or 26)
+            base_fast = float(m.get("fast", 12) or 12)
+            ratio = (base_fast / base_slow) if base_slow else (12 / 26)
+            slow = int(value)
+            fast = max(2, min(slow - 1, round(slow * ratio)))
+            m["fast"], m["slow"], m["signal"] = fast, slow, int(m.get("signal", 9) or 9)
+        elif key in _ENTRY_KNOBS:
+            entry[key] = value
+        else:
+            exit_rules[key] = value
     return {**base_strategy, "params": params}
 
 

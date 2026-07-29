@@ -207,6 +207,43 @@ def test_rsi_knob_searched_only_when_the_strategy_uses_rsi():
     assert "exit_rsi_above" not in plain["neighbourhood"]
 
 
+def test_macd_speed_searched_only_when_the_strategy_uses_macd():
+    # A MACD strategy → the optimizer searches the MACD speed (slow-EMA) knob, and
+    # the winning draft carries a valid scaled MACD block (fast < slow).
+    base = {
+        **BASE_STRATEGY,
+        "params": {
+            "entry": {**BASE_STRATEGY["params"]["entry"], "require_macd_bullish": True},
+            "exit": {**BASE_STRATEGY["params"]["exit"]},
+        },
+    }
+    fake = RecordingFake()
+    bars = {"AAA": _bars(100), "BBB": _bars(100)}
+    result = optimizer.optimize(base, bars, {}, iterations=20, seed=7, backtest_fn=fake)
+    assert "macd_slow" in result["neighbourhood"]
+    macd = result["best_draft_params"]["macd"]
+    assert macd["fast"] < macd["slow"]
+    assert macd["slow"] in optimizer.MACD_PARAM_SPACE["macd_slow"]
+
+    # A plain strategy (no MACD) never searches MACD speed.
+    plain, _ = _run()
+    assert "macd_slow" not in plain["neighbourhood"]
+
+
+def test_rsi_min_searched_when_the_strategy_uses_a_floor():
+    base = {
+        **BASE_STRATEGY,
+        "params": {
+            "entry": {**BASE_STRATEGY["params"]["entry"], "rsi_min": 40.0},
+            "exit": {**BASE_STRATEGY["params"]["exit"]},
+        },
+    }
+    fake = RecordingFake()
+    bars = {"AAA": _bars(100), "BBB": _bars(100)}
+    result = optimizer.optimize(base, bars, {}, iterations=15, seed=3, backtest_fn=fake)
+    assert "rsi_min" in result["neighbourhood"]
+
+
 def test_eligible_by_day_is_threaded_to_every_backtest():
     # Scanner-replay mode: the same eligible-by-day map (each day's top-N risers)
     # must reach EVERY backtest call — in-sample and out-of-sample alike — so the
