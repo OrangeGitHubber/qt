@@ -744,19 +744,6 @@ function Editor({
               </Param>
             </div>
           )}
-          {macdOn && (
-            <div className="param-grid">
-              <Param label="MACD fast" tip="macd_fast">
-                <NumberField step="1" min="1" value={macd.fast} onChange={(n) => setMacd("fast", n)} />
-              </Param>
-              <Param label="MACD slow" tip="macd_slow">
-                <NumberField step="1" min="2" value={macd.slow} onChange={(n) => setMacd("slow", n)} />
-              </Param>
-              <Param label="MACD signal" tip="macd_signal">
-                <NumberField step="1" min="1" value={macd.signal} onChange={(n) => setMacd("signal", n)} />
-              </Param>
-            </div>
-          )}
         </details>
       </section>
 
@@ -827,6 +814,30 @@ function Editor({
           </div>
         </details>
       </section>
+
+      {/* MACD periods — ONE indicator shared by the entry filter AND the exit
+          signal, so it lives in its own block (not owned by either) and appears
+          whenever either MACD toggle above is on. */}
+      {macdOn && (
+        <section className="builder-sec">
+          <h4 className="builder-head">MACD periods</h4>
+          <p className="sec-sub">
+            The shared MACD used by "Require bullish MACD" (entry) and "Exit when MACD turns bearish" (exit) above.
+            Lower = a faster, less-laggy MACD.
+          </p>
+          <div className="param-grid">
+            <Param label="MACD fast" tip="macd_fast">
+              <NumberField step="1" min="1" value={macd.fast} onChange={(n) => setMacd("fast", n)} />
+            </Param>
+            <Param label="MACD slow" tip="macd_slow">
+              <NumberField step="1" min="2" value={macd.slow} onChange={(n) => setMacd("slow", n)} />
+            </Param>
+            <Param label="MACD signal" tip="macd_signal">
+              <NumberField step="1" min="1" value={macd.signal} onChange={(n) => setMacd("signal", n)} />
+            </Param>
+          </div>
+        </section>
+      )}
 
       {/* 5 — SIZING & RISK: how much, and the safety knobs */}
       <section className="builder-sec">
