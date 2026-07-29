@@ -37,6 +37,24 @@ export const GLOSSARY: Record<string, GlossaryEntry> = {
       "Moving Average Convergence Divergence — a momentum gauge built from two moving averages of price. The MACD line is the fast average minus the slow one (default 12 vs 26 days); the signal line is a smoothed version of that (default 9 days); the histogram is the gap between them. When the line crosses above its signal it's a bullish signal (momentum turning up); crossing below is bearish. QT computes it from completed daily bars only — never today's unfinished bar — and leaves it off by default: turn it on to only enter while momentum is bullish, and/or to exit when it turns bearish. Best for swing / daily strategies — it avoids buying into fading momentum. Leave it off for fast intraday trades.",
     url: "https://www.investopedia.com/terms/m/macd.asp",
   },
+  macd_fast: {
+    term: "MACD fast period",
+    explain:
+      "The length of the FAST moving average (default 12 days). It reacts to recent price, so lowering it makes the MACD line hug the price more tightly and cross its signal sooner — quicker to spot a turn, but with more false starts (whipsaw). Raising it smooths the line, so it reacts slower and signals later but more reliably. Must stay below the slow period. Rule of thumb: lower = faster & twitchier, higher = slower & steadier.",
+    url: "https://www.investopedia.com/terms/m/macd.asp",
+  },
+  macd_slow: {
+    term: "MACD slow period",
+    explain:
+      "The length of the SLOW moving average (default 26 days) — the main lag knob. A smaller slow period makes the WHOLE MACD faster: crosses fire sooner and you sit out less of a move (less lag), at the cost of more false signals in choppy stretches. A larger slow period makes it slower and laggier, but the crosses it does give are more trustworthy. If MACD feels 'too laggy' (buying in late, selling late), this is the number to lower. Must stay above the fast period.",
+    url: "https://www.investopedia.com/terms/m/macd.asp",
+  },
+  macd_signal: {
+    term: "MACD signal period",
+    explain:
+      "The smoothing applied to the MACD line to make the signal line it crosses (default 9 days). Lowering it makes the signal line track the MACD line more closely, so bullish/bearish crosses trigger sooner — more responsive but twitchier. Raising it delays the crosses, giving fewer, steadier signals with more lag. It fine-tunes how eager the cross itself is, on top of the speed set by the fast/slow periods.",
+    url: "https://www.investopedia.com/terms/m/macd.asp",
+  },
   vwap: {
     term: "VWAP",
     explain:

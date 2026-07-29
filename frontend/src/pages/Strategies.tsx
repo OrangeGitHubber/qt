@@ -746,13 +746,13 @@ function Editor({
           )}
           {macdOn && (
             <div className="param-grid">
-              <Param label="MACD fast" tip="macd">
+              <Param label="MACD fast" tip="macd_fast">
                 <NumberField step="1" min="1" value={macd.fast} onChange={(n) => setMacd("fast", n)} />
               </Param>
-              <Param label="MACD slow" tip="macd">
+              <Param label="MACD slow" tip="macd_slow">
                 <NumberField step="1" min="2" value={macd.slow} onChange={(n) => setMacd("slow", n)} />
               </Param>
-              <Param label="MACD signal" tip="macd">
+              <Param label="MACD signal" tip="macd_signal">
                 <NumberField step="1" min="1" value={macd.signal} onChange={(n) => setMacd("signal", n)} />
               </Param>
             </div>
