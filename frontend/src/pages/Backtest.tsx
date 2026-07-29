@@ -564,31 +564,41 @@ export default function Backtest() {
               to override.
             </p>
           )}
-          <label className="check">
-            <input
-              type="checkbox"
-              checked={scannerReplay}
-              onChange={(e) => setScannerReplay(e.target.checked)}
-            />
-            Scanner replay — test against the historical <strong>top risers each day</strong> (not a fixed list){" "}
-            <InfoTip k="scanner_replay" />
-          </label>
-          {scannerReplay && (
+          {/* Scanner replay is ONLY meaningful for a scanner-universe strategy —
+              it reconstructs each day's top risers. A basket / custom / watchlist
+              strategy has a FIXED universe, so replaying scanner risers would test
+              a universe the strategy never trades. Hidden for those (the backtest
+              honours whatever universe the strategy is set to). */}
+          {strategy?.universe === "scanner" && (
             <>
-              <label style={{ display: "block", marginTop: 8 }}>
-                <span className="field-cap">
-                  Risers per day (top N) <InfoTip k="replay_top_n" />
-                </span>
-                <NumberField min={1} max={100} step={1} value={replayTopN} onChange={setReplayTopN} />
+              <label className="check">
+                <input
+                  type="checkbox"
+                  checked={scannerReplay}
+                  onChange={(e) => setScannerReplay(e.target.checked)}
+                />
+                Scanner replay — test against the historical <strong>top risers each day</strong> (not a fixed list){" "}
+                <InfoTip k="scanner_replay" />
               </label>
-              <p className="hint">
-                Each day, only that day's <strong>top {replayTopN}</strong> risers are eligible to enter; your
-                strategy's entry rules then decide. The cache stores a wide set, so changing this number re-runs
-                instantly — no re-sweep. Needs a completed sweep first (Settings → Historical bar cache). If you've also
-                run an <strong>intraday sweep</strong>, replay uses 15-minute bars so intraday exits
-                (flatten-before-close, VWAP, the entry window) behave for real; otherwise it falls back to daily bars,
-                which can't simulate those. Works for stock and crypto strategies — each replays off its own cache.
-              </p>
+              {scannerReplay && (
+                <>
+                  <label style={{ display: "block", marginTop: 8 }}>
+                    <span className="field-cap">
+                      Risers per day (top N) <InfoTip k="replay_top_n" />
+                    </span>
+                    <NumberField min={1} max={100} step={1} value={replayTopN} onChange={setReplayTopN} />
+                  </label>
+                  <p className="hint">
+                    Each day, only that day's <strong>top {replayTopN}</strong> risers are eligible to enter; your
+                    strategy's entry rules then decide. The cache stores a wide set, so changing this number re-runs
+                    instantly — no re-sweep. Needs a completed sweep first (Settings → Historical bar cache). If you've
+                    also run an <strong>intraday sweep</strong>, replay uses 15-minute bars so intraday exits
+                    (flatten-before-close, VWAP, the entry window) behave for real; otherwise it falls back to daily
+                    bars, which can't simulate those. Works for stock and crypto strategies — each replays off its own
+                    cache.
+                  </p>
+                </>
+              )}
             </>
           )}
           {/* HOW to test: numeric/timeframe params, all uniform height. */}
