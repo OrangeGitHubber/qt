@@ -215,6 +215,9 @@ def test_macd_speed_searched_only_when_the_strategy_uses_macd():
         "params": {
             "entry": {**BASE_STRATEGY["params"]["entry"], "require_macd_bullish": True},
             "exit": {**BASE_STRATEGY["params"]["exit"]},
+            # A real MACD strategy that never customized its periods serializes
+            # "macd": null — this must NOT crash _apply_combo (regression guard).
+            "macd": None,
         },
     }
     fake = RecordingFake()

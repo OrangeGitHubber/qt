@@ -143,7 +143,11 @@ def _apply_combo(base_strategy: dict, combo: dict) -> dict:
         if key == "macd_slow":
             # Scale MACD along the strategy's own fast/slow ratio: a smaller slow
             # period = a faster, less-laggy MACD. Keeps fast < slow by construction.
-            m = params.setdefault("macd", {})
+            # NOTE: a strategy that uses MACD but never customized its periods
+            # serializes "macd": null, so setdefault would hand back None — take
+            # `get(...) or {}` and reassign to cover both null and absent.
+            m = params.get("macd") or {}
+            params["macd"] = m
             base_slow = float(m.get("slow", 26) or 26)
             base_fast = float(m.get("fast", 12) or 12)
             ratio = (base_fast / base_slow) if base_slow else (12 / 26)
