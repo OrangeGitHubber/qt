@@ -361,6 +361,21 @@ function Editor({
   const [s, setS] = useState<Partial<StrategyRow>>(JSON.parse(JSON.stringify(initial)));
   const [error, setError] = useState<string | null>(null);
 
+  // What this strategy already holds (cost basis) — the same number the sleeve
+  // rail measures against. Only meaningful when editing an existing strategy;
+  // used to warn if the new sleeve is set below current holdings.
+  const [heldExposure, setHeldExposure] = useState<number | null>(null);
+  useEffect(() => {
+    if (typeof initial.id !== "number") return;
+    let alive = true;
+    getStrategyHoldings(initial.id)
+      .then((h) => alive && setHeldExposure(h.total_cost))
+      .catch(() => alive && setHeldExposure(null));
+    return () => {
+      alive = false;
+    };
+  }, [initial.id]);
+
   // Live sleeve-allocation readout. Sleeves are allowed to overlap (sum > equity)
   // on purpose — whichever strategy trades first draws the shared cash, and the
   // no-leverage rail caps total spending at real equity. So this only informs,
@@ -382,6 +397,9 @@ function Editor({
   const stopPct = s.params?.exit.stop_loss_pct ?? 0;
   // A tight stop held overnight is hit by normal daily noise — a swing killer.
   const tightSwingStop = !!s.swing_mode && stopPct > 0 && stopPct < 3;
+  // Setting the sleeve below what the strategy already holds sells nothing — it
+  // just freezes NEW buys until exits free up room. Reassure, don't alarm.
+  const sleeveBelowHoldings = heldExposure != null && sleeve > 0 && sleeve < heldExposure;
 
   function applyPreset(key: string) {
     if (key === "custom") {
@@ -870,6 +888,13 @@ function Editor({
           {stopPct}% move means normal daily noise (most stocks swing more than that intraday) will stop you out almost
           immediately — usually at a small loss. Swing stops should be wider than the symbol's typical daily move (ATR),
           often 5–8%. For a stop this tight, set <strong>Trading style</strong> to <em>Intraday</em> instead.
+        </p>
+      )}
+      {sleeveBelowHoldings && (
+        <p className="hint">
+          This is below the <strong>{money(heldExposure!)}</strong> this strategy currently holds. Nothing will be sold —
+          your open positions keep running under their exit rules — but the strategy won't open any new positions until
+          exits bring it back under {money(sleeve)}.
         </p>
       )}
       {error && <div className="error">{error}</div>}
