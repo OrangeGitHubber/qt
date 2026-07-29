@@ -618,7 +618,7 @@ export default function Backtest() {
               <div className="card">
                 <h3>
                   Per-strategy contribution{" "}
-                  <span className="hint">(realized P&amp;L sums to the portfolio total ${portfolioResult.realized_total.toLocaleString()})</span>
+                  <span className="hint">(realized + unrealized per sleeve sums to the portfolio net P&amp;L)</span>
                 </h3>
                 <div className="table-scroll">
                   <table>
@@ -626,6 +626,7 @@ export default function Backtest() {
                       <tr>
                         <th>Strategy</th>
                         <th>Realized P&L</th>
+                        <th>Unrealized</th>
                         <th>Share</th>
                         <th>Trades</th>
                         <th>Win rate</th>
@@ -638,6 +639,9 @@ export default function Backtest() {
                           <td className={c.realized_pnl >= 0 ? "up" : "down"}>
                             {c.realized_pnl >= 0 ? "+" : ""}${c.realized_pnl.toLocaleString()}
                           </td>
+                          <td className={c.unrealized_pnl > 0 ? "up" : c.unrealized_pnl < 0 ? "down" : ""}>
+                            {c.unrealized_pnl === 0 ? "—" : `${c.unrealized_pnl >= 0 ? "+" : ""}$${c.unrealized_pnl.toLocaleString()}`}
+                          </td>
                           <td>{c.share_pct != null ? `${c.share_pct}%` : "—"}</td>
                           <td>{c.trades}</td>
                           <td>{c.win_rate != null ? `${c.win_rate}%` : "—"}</td>
@@ -647,6 +651,46 @@ export default function Backtest() {
                   </table>
                 </div>
               </div>
+
+              {portfolioResult.open_positions.length > 0 && (
+                <div className="card">
+                  <h3>
+                    Still open at test end{" "}
+                    <span className="hint">(held, not sold — unrealized P&amp;L is already in the result)</span>
+                  </h3>
+                  <div className="table-scroll">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>Strategy</th>
+                          <th>Symbol</th>
+                          <th>Entry</th>
+                          <th>Now</th>
+                          <th>Unrealized P&L</th>
+                          <th>Held since</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {portfolioResult.open_positions.map((p, i) => (
+                          <tr key={i}>
+                            <td className="sym">{p.strategy_name}</td>
+                            <td className="sym">{p.symbol}</td>
+                            <td>
+                              ${p.entry_price.toFixed(4)}
+                              <span className="hint"> ×{p.qty}</span>
+                            </td>
+                            <td>${p.mark_price.toFixed(4)}</td>
+                            <td className={p.unrealized_pnl >= 0 ? "up" : "down"}>
+                              {p.unrealized_pnl >= 0 ? "+" : ""}${p.unrealized_pnl.toFixed(2)}
+                            </td>
+                            <td>{new Date(`${p.entry_day}T00:00:00`).toLocaleDateString()}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
 
               <div className="card">
                 <h3>
@@ -1088,6 +1132,61 @@ export default function Backtest() {
                 )}
               </div>
             )}
+            {/* Positions still held when the window ended — not force-sold, just
+                marked to market (their unrealized P&L is already in the result).
+                In compare mode both strategies' holdings show, tagged by colour. */}
+            {(() => {
+              const aName = strategies.find((s) => s.id === strategyId)?.name ?? "A";
+              const bName = strategies.find((s) => s.id === compareId)?.name ?? "B";
+              const rows = compareResult
+                ? [
+                    ...result.open_positions.map((p) => ({ p, name: aName, color: SERIES_A_COLOR })),
+                    ...compareResult.open_positions.map((p) => ({ p, name: bName, color: SERIES_B_COLOR })),
+                  ]
+                : result.open_positions.map((p) => ({ p, name: undefined as string | undefined, color: undefined as string | undefined }));
+              if (rows.length === 0) return null;
+              return (
+                <div className="deployment">
+                  <h4>
+                    Still open at test end{" "}
+                    <span className="hint">(held, not sold — unrealized P&amp;L is already in the result)</span>
+                  </h4>
+                  <div className="table-scroll">
+                    <table>
+                      <thead>
+                        <tr>
+                          {compareResult && <th>Strategy</th>}
+                          <th>Symbol</th>
+                          <th>Entry</th>
+                          <th>Now</th>
+                          <th>Unrealized P&amp;L</th>
+                          <th>Held since</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {rows.map(({ p, name, color }, i) => (
+                          <tr key={i}>
+                            {compareResult && (
+                              <td style={{ color, fontWeight: 600 }}>{name}</td>
+                            )}
+                            <td className="sym">{p.symbol}</td>
+                            <td>
+                              ${p.entry_price.toFixed(4)}
+                              <span className="hint"> ×{p.qty}</span>
+                            </td>
+                            <td>${p.mark_price.toFixed(4)}</td>
+                            <td className={p.unrealized_pnl >= 0 ? "up" : "down"}>
+                              {p.unrealized_pnl >= 0 ? "+" : ""}${p.unrealized_pnl.toFixed(2)}
+                            </td>
+                            <td>{new Date(`${p.entry_day}T00:00:00`).toLocaleDateString()}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              );
+            })()}
             {/* Zoom in on a busy stretch → the trades inside that window, tagged
                 by strategy in compare mode, so a divergence between two similar
                 strategies can be read trade-by-trade without the full log. */}

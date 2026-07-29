@@ -39,6 +39,23 @@ in-sample window — feeding the indicators. So both slices judge the strategy
 with live signals from their very first traded bar. If you optimized a MACD or
 RSI strategy before, re-run it: the out-of-sample numbers were understated.
 
+## Backtest: positions open at the end stay open (no forced sale) (2026-07-29)
+
+A backtest used to **force-sell** every position still held on the last bar and
+count that synthetic sale as a completed trade. That polluted the stats — a
+position the strategy never chose to exit could show up as a "win" or "loss" it
+never actually took, skewing win rate and profit factor. Now those positions
+**stay open**: they're marked to market (so their unrealized gain/loss still
+counts in net P&L and the equity curve, unchanged), but they're no longer
+counted as trades. Win rate, profit factor, avg win/loss and the trade count now
+reflect only **real strategy exits**.
+
+A new **"Still open at test end"** panel lists what was held — symbol, entry,
+current mark, unrealized P&L, and how long it was held — in the single, compare,
+and portfolio views (tagged by strategy where more than one is involved). The
+portfolio contribution table gains an **Unrealized** column, and realized +
+unrealized per sleeve reconciles to the portfolio's net P&L.
+
 ## Backtest results: one metrics table, not stat boxes (2026-07-29)
 
 The row of big stat boxes (Net P&L, Trades, Win rate, …) at the top of a backtest

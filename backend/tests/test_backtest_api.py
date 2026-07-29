@@ -65,6 +65,13 @@ def _make(client, asset_class: str) -> int:
     return client.post("/api/strategies", json=_strategy(asset_class)).json()["id"]
 
 
+def _entries(body: dict) -> int:
+    """Closed round-trips + positions still open at the test end. A mover that
+    enters and holds through a short window is now an open position, not a
+    force-sold 'trade'."""
+    return body["trades"] + len(body["open_positions"])
+
+
 def test_market_benchmark_skipped_when_it_is_the_tested_symbol(client, configured):
     """A BTC/USD strategy tested on BTC/USD must not plot BTC/USD twice."""
     sid = _make(client, "crypto")
@@ -136,8 +143,8 @@ def test_scanner_replay_gates_to_cached_movers(client, configured, seeded_cache)
     assert body["universe_size"] == 1        # one unique mover across the window
     assert body["days_replayed"] == 1
     assert body["timeframe"] == "1Day"
-    assert body["trades"] == 1               # MOVER entered; OTHER gated out
-    assert body["trade_list"][0]["symbol"] == "MOVER"
+    assert _entries(body) == 1               # MOVER entered (held to end); OTHER gated out
+    assert body["open_positions"][0]["symbol"] == "MOVER"
 
 
 def test_scanner_replay_top_n_narrows_the_eligible_movers(client, configured, monkeypatch):
@@ -171,10 +178,10 @@ def test_scanner_replay_top_n_narrows_the_eligible_movers(client, configured, mo
     sid = _make(client, "stock")
     one = run(1)
     assert one["replay_top_n"] == 1 and one["universe_size"] == 1
-    assert [t["symbol"] for t in one["trade_list"]] == ["TOP"]
+    assert [p["symbol"] for p in one["open_positions"]] == ["TOP"]
     three = run(3)
     assert three["universe_size"] == 3
-    assert {t["symbol"] for t in three["trade_list"]} == {"TOP", "MID", "LOW"}
+    assert {p["symbol"] for p in three["open_positions"]} == {"TOP", "MID", "LOW"}
 
 
 def test_scanner_replay_prefers_intraday_bars_when_cached(client, configured, monkeypatch):
@@ -247,7 +254,7 @@ def test_scanner_replay_heals_a_cache_missing_the_intraday_table(client, configu
             "starting_cash": 5000, "spread_pct": 0})
     assert r.status_code == 200, r.text  # not a 500 on the missing table
     body = r.json()
-    assert body["replay_intraday"] is False and body["trades"] == 1  # healed → daily fallback
+    assert body["replay_intraday"] is False and _entries(body) == 1  # healed → daily fallback
 
 
 def test_scanner_replay_needs_a_sweep_first(client, configured, monkeypatch):
@@ -306,9 +313,9 @@ def test_scanner_replay_crypto_gates_to_cached_movers_by_utc_day(client, configu
     assert body["universe_size"] == 1        # one unique crypto mover
     assert body["days_replayed"] == 1
     assert body["timeframe"] == "1Day"
-    assert body["trades"] == 1               # BTC entered; ETH gated out
-    assert body["trade_list"][0]["symbol"] == "BTC/USD"
-    assert body["trade_list"][0]["entry_day"] == d1   # UTC-day bucket, not ET
+    assert _entries(body) == 1               # BTC entered (held to end); ETH gated out
+    assert body["open_positions"][0]["symbol"] == "BTC/USD"
+    assert body["open_positions"][0]["entry_day"] == d1   # UTC-day bucket, not ET
 
 
 def test_scanner_replay_crypto_prefers_intraday_bars(client, configured, monkeypatch):
@@ -340,7 +347,7 @@ def test_scanner_replay_crypto_prefers_intraday_bars(client, configured, monkeyp
             "starting_cash": 5000, "spread_pct": 0}).json()
     assert body["replay_intraday"] is True
     assert body["timeframe"] == "15Min"
-    assert body["trades"] == 1
+    assert _entries(body) == 1  # entered on the intraday crypto mover, held to window end
 
 
 def test_macd_strategy_rejects_intraday_bars(client, configured):

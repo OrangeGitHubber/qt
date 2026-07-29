@@ -20,6 +20,12 @@ from qt.services.engine import RISK_DEFAULTS
 RISK = dict(RISK_DEFAULTS, max_total_exposure_usd=1_000_000, max_daily_loss_usd=1_000_000)
 
 
+def _entries(r: dict) -> int:
+    """Closed round-trips + positions still open at the end (marked to market,
+    not force-sold). A riser that holds flat to the end is now an open position."""
+    return r["trades"] + len(r["open_positions"])
+
+
 def bars_from(closes: list[float], start: str = "2026-05-04T14:00:00Z") -> list[dict]:
     t0 = datetime.fromisoformat(start.replace("Z", "+00:00"))
     return [
@@ -64,15 +70,15 @@ def test_two_strategies_share_one_account_and_both_contribute():
         {1: {"AAA": RISER}, 2: {"BBB": RISER}},
         RISK, starting_cash=5000, spread_pct=0,
     )
-    # both strategies traded their own symbol on the shared account
-    assert result["trades"] == 2
-    assert {t["symbol"] for t in result["trade_list"]} == {"AAA", "BBB"}
+    # both strategies entered their own symbol on the shared account (each holds
+    # flat to the end → an open position, not a closed trade)
+    assert _entries(result) == 2
+    assert {p["symbol"] for p in result["open_positions"]} == {"AAA", "BBB"}
     assert result["strategy_count"] == 2
 
     contribs = {c["strategy_id"]: c for c in result["contributions"]}
     assert contribs[1]["strategy_name"] == "Alpha"
-    assert contribs[1]["trades"] == 1 and contribs[2]["trades"] == 1
-    assert {t["strategy_id"] for t in result["trade_list"]} == {1, 2}
+    assert {p["strategy_id"] for p in result["open_positions"]} == {1, 2}
 
 
 def test_contributions_sum_to_the_portfolio_realized_total():
@@ -84,13 +90,14 @@ def test_contributions_sum_to_the_portfolio_realized_total():
         {1: {"AAA": win}, 2: {"BBB": lose}},
         RISK, starting_cash=5000, spread_pct=0,
     )
-    total = round(sum(c["realized_pnl"] for c in result["contributions"]), 2)
-    assert total == result["realized_total"] == result["net_pnl"]
-    # each side landed on the expected sign
+    # realized (closed) + unrealized (still open) across strategies reconciles to
+    # net_pnl. AAA holds up (unrealized win), BBB stops out (realized loss).
+    total = round(sum(c["realized_pnl"] + c["unrealized_pnl"] for c in result["contributions"]), 2)
+    assert total == result["net_pnl"]
     by_id = {c["strategy_id"]: c for c in result["contributions"]}
-    assert by_id[1]["realized_pnl"] > 0
-    assert by_id[2]["realized_pnl"] < 0
-    # shares are sign-preserving and there are exactly two sleeves
+    assert by_id[1]["unrealized_pnl"] > 0  # winner held to the end
+    assert by_id[2]["realized_pnl"] < 0    # loser exited on the stop
+    # there are exactly two sleeves
     assert len(result["contributions"]) == 2
 
 
@@ -104,12 +111,12 @@ def test_max_total_positions_caps_combined_open_positions():
     capped = run_portfolio_backtest(
         strategies, bars, dict(RISK, max_total_positions=1), starting_cash=5000, spread_pct=0,
     )
-    assert capped["trades"] == 1  # one strategy filled, the other blocked by the shared cap
+    assert _entries(capped) == 1  # one strategy filled, the other blocked by the shared cap
 
     opened = run_portfolio_backtest(
         strategies, bars, dict(RISK, max_total_positions=6), starting_cash=5000, spread_pct=0,
     )
-    assert opened["trades"] == 2  # cap lifted → both share the account
+    assert _entries(opened) == 2  # cap lifted → both share the account
 
 
 def test_exposure_never_exceeds_equity_no_leverage():
@@ -120,7 +127,7 @@ def test_exposure_never_exceeds_equity_no_leverage():
         strategies, {1: {"AAA": RISER}, 2: {"BBB": RISER}},
         dict(RISK, max_total_positions=6), starting_cash=1500, spread_pct=0,
     )
-    assert result["trades"] == 1  # only one $1000 position fits under equity
+    assert _entries(result) == 1  # only one $1000 position fits under equity
     # invariant: the account was never leveraged
     assert result["max_deployed_usd"] <= result["starting_cash"]
 
@@ -192,10 +199,10 @@ def test_portfolio_endpoint_runs_two_strategies_on_one_account(client, configure
                   "starting_cash": 5000, "spread_pct": 0},
         ).json()
     assert body["strategy_count"] == 2
-    assert body["trades"] == 2
+    assert _entries(body) == 2
     assert fetch.await_count == 1  # both stock symbols fetched in one call
-    total = round(sum(c["realized_pnl"] for c in body["contributions"]), 2)
-    assert total == body["realized_total"] == body["net_pnl"]
+    total = round(sum(c["realized_pnl"] + c["unrealized_pnl"] for c in body["contributions"]), 2)
+    assert total == body["net_pnl"]
     assert {c["strategy_id"] for c in body["contributions"]} == {a, b}
 
 

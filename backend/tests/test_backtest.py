@@ -36,6 +36,13 @@ STRATEGY = {
 RISK = dict(RISK_DEFAULTS, max_total_exposure_usd=1_000_000, max_daily_loss_usd=1_000_000)
 
 
+def _entries(result: dict) -> int:
+    """Entries made = closed round-trips + positions still open at the test end.
+    Open positions are marked to market, not force-sold, so a strategy that
+    entered and simply held to the end has trades == 0 but one open position."""
+    return result["trades"] + len(result["open_positions"])
+
+
 def bars_from(closes: list[float], start: str = "2026-05-04T14:00:00Z") -> list[dict]:
     """One bar per hour; day 1 establishes the previous close baseline."""
     t0 = datetime.fromisoformat(start.replace("Z", "+00:00"))
@@ -78,14 +85,14 @@ def test_eligible_by_day_gates_entries_to_the_days_movers():
         STRATEGY, {"AAA": aaa, "BBB": bbb}, RISK,
         starting_cash=5000, spread_pct=0, eligible_by_day=eligible,
     )
-    assert result["trades"] == 1
-    assert result["trade_list"][0]["symbol"] == "AAA"
+    assert _entries(result) == 1  # held to end → an open position, not a closed trade
+    assert result["open_positions"][0]["symbol"] == "AAA"
 
     # Without the gate, both enter — proving the gate, not the data, blocked BBB.
     ungated = run_backtest(
         STRATEGY, {"AAA": aaa, "BBB": bbb}, RISK, starting_cash=5000, spread_pct=0,
     )
-    assert ungated["trades"] == 2
+    assert _entries(ungated) == 2
 
 
 def test_flatten_before_close_fires_on_last_intraday_bar():
@@ -235,16 +242,19 @@ def test_rails_respected_in_backtest():
     series_b = _spread_day([50, 50, 50], [52, 52.2, 52.5, 52.5, 52.5])
     result = run_backtest(strategy, {"AAA": series_a, "BBB": series_b}, RISK, starting_cash=5000, spread_pct=0)
     # first entry consumes ~$1000 of the $1500 sleeve → second is blocked
-    assert result["trades"] == 1
-    assert result["trade_list"][0]["exit_reason"].startswith("end of backtest")
+    assert _entries(result) == 1
+    assert result["open_positions"][0]["symbol"] == "AAA"  # held to end, never sold
 
 
-def test_forced_liquidation_marks_open_positions():
+def test_open_position_at_end_is_marked_to_market_not_sold():
     series = _spread_day([100, 100, 100], [104, 106, 108])  # never hits an exit rule
     result = run_backtest(STRATEGY, {"TEST": series}, RISK, starting_cash=5000, spread_pct=0)
-    assert result["trades"] == 1
-    assert result["trade_list"][0]["exit_reason"] == "end of backtest (forced liquidation)"
-    assert result["net_pnl"] > 0  # rode 104 → 108
+    assert result["trades"] == 0  # no strategy exit fired — nothing is a closed trade
+    assert len(result["open_positions"]) == 1
+    pos = result["open_positions"][0]
+    assert pos["symbol"] == "TEST"
+    assert pos["unrealized_pnl"] > 0  # rode 104 → 108, marked to market
+    assert result["net_pnl"] > 0  # the unrealized gain still counts toward equity
     assert result["equity"][-1] > 0
 
 
@@ -335,8 +345,8 @@ def test_macd_entry_filter_allows_entry_when_bullish():
     strat["params"]["macd"] = {"fast": 2, "slow": 3, "signal": 2}
     series = _spread_day([90, 92, 94, 96, 100], [104, 104])  # day1 rising, day2 +4%
     result = run_backtest(strat, {"TEST": series}, RISK, starting_cash=5000, spread_pct=0)
-    assert result["trades"] == 1
-    assert "MACD bullish" in result["trade_list"][0]["entry_reason"]
+    assert _entries(result) == 1  # entered on the +4% bar, then held to the end
+    assert "MACD bullish" in result["open_positions"][0]["entry_reason"]
 
 
 # ---- ATR stops & sizing (off by default) ----
@@ -376,8 +386,9 @@ def test_atr_sizing_enlarges_position_for_a_calm_name():
     strat = copy.deepcopy(STRATEGY)
     strat["params"]["atr"] = {"period": 14, "stop_mult": 2.0, "risk_usd": 50.0}
     sized = run_backtest(strat, {"TEST": series}, RISK, starting_cash=5000, spread_pct=0)
-    assert fixed["trades"] == 1 and sized["trades"] == 1
-    assert sized["trade_list"][0]["qty"] > fixed["trade_list"][0]["qty"]
+    # Both enter on the riser and hold to the end (no exit fires) → open positions.
+    assert len(fixed["open_positions"]) == 1 and len(sized["open_positions"]) == 1
+    assert sized["open_positions"][0]["qty"] > fixed["open_positions"][0]["qty"]
 
 
 def test_atr_stop_widens_and_holds_a_drop_the_fixed_stop_would_catch():
@@ -394,8 +405,10 @@ def test_atr_stop_widens_and_holds_a_drop_the_fixed_stop_would_catch():
     strat = copy.deepcopy(base)
     strat["params"]["atr"] = {"period": 14, "stop_mult": 5.0, "risk_usd": 0.0}  # ATR stop ≈ 10%
     wide = run_backtest(strat, {"TEST": series}, RISK, starting_cash=5000, spread_pct=0)
-    # The wide ATR stop is not hit by the 5% drop — it survives to forced liquidation.
-    assert "forced liquidation" in wide["trade_list"][0]["exit_reason"]
+    # The wide ATR stop is not hit by the 5% drop — no exit fires, so the position
+    # is still open at the end (not force-sold).
+    assert wide["trades"] == 0
+    assert len(wide["open_positions"]) == 1
 
 
 # 40 warm-up days rising ~1%/day (MACD turns bullish), then 6 window days that
@@ -450,10 +463,13 @@ def test_macd_strategy_trades_from_window_start_when_warmup_precedes_it():
     warm = run_backtest(
         strat, {"TEST": bars}, RISK, starting_cash=5000, spread_pct=0, sim_start=sim_start,
     )
-    # It traded — and every trade is inside the window, never in the warm-up run.
-    assert warm["trades"] >= 1
+    # It entered — and every entry is inside the window, never in the warm-up run.
+    # (A rising MACD name never trips a stop, so the position is still open at the
+    # end rather than a closed trade.)
+    assert _entries(warm) >= 1
     window_day = sim_start.date().isoformat()
-    assert all(t["entry_day"] >= window_day for t in warm["trade_list"])
+    entry_days = [t["entry_day"] for t in warm["trade_list"]] + [p["entry_day"] for p in warm["open_positions"]]
+    assert entry_days and all(d >= window_day for d in entry_days)
 
     # Control: hand it ONLY the window bars (no warm-up) — MACD is undefined for
     # all of them, so require_macd_bullish blocks every entry. This is the old
@@ -461,7 +477,7 @@ def test_macd_strategy_trades_from_window_start_when_warmup_precedes_it():
     cold = run_backtest(
         strat, {"TEST": bars[_MACD_WINDOW_START_IDX:]}, RISK, starting_cash=5000, spread_pct=0,
     )
-    assert cold["trades"] == 0
+    assert _entries(cold) == 0
 
 
 def test_warmup_bars_never_touch_equity_or_the_trade_log():
@@ -480,7 +496,8 @@ def test_warmup_bars_never_touch_equity_or_the_trade_log():
         strat, {"TEST": bars}, RISK, starting_cash=5000, spread_pct=0, sim_start=sim_start,
     )
     window_day = sim_start.date().isoformat()
-    assert result["trades"] >= 1
-    assert all(t["entry_day"] >= window_day for t in result["trade_list"])
+    assert _entries(result) >= 1
+    entry_days = [t["entry_day"] for t in result["trade_list"]] + [p["entry_day"] for p in result["open_positions"]]
+    assert entry_days and all(d >= window_day for d in entry_days)
     # No warm-up bar leaked into the equity curve.
     assert all(day >= window_day for day in result["equity_days"])

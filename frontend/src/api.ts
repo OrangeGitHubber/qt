@@ -481,6 +481,22 @@ export interface BacktestResult {
   benchmark: (number | null)[] | null;
   benchmark_symbol: string | null;
   trade_list: BacktestTrade[];
+  // Positions still held when the window ended — marked to market (not sold), so
+  // their unrealized P&L is already in net_pnl / the equity curve.
+  open_positions: OpenPosition[];
+}
+
+export interface OpenPosition {
+  symbol: string;
+  qty: number;
+  entry_price: number;
+  entry_at: string;
+  entry_day: string;
+  entry_reason: string;
+  mark_price: number;
+  unrealized_pnl: number;
+  strategy_id?: number; // portfolio only
+  strategy_name?: string; // portfolio only
 }
 
 export const runBacktest = (body: {
@@ -500,10 +516,11 @@ export interface PortfolioContribution {
   strategy_id: number;
   strategy_name: string;
   realized_pnl: number;
+  unrealized_pnl: number; // from positions still open at the window end
   trades: number;
   wins: number;
   win_rate: number | null;
-  share_pct: number | null; // sign-preserving share of the portfolio realized total
+  share_pct: number | null; // sign-preserving share of the portfolio total P&L
 }
 
 export interface PortfolioBacktestTrade extends BacktestTrade {
@@ -538,6 +555,7 @@ export interface PortfolioBacktestResult {
   hold_benchmark: (number | null)[] | null;
   hold_benchmark_label: string | null;
   trade_list: PortfolioBacktestTrade[];
+  open_positions: OpenPosition[];
 }
 
 export const runPortfolioBacktest = (body: {

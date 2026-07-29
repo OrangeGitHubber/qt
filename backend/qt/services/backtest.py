@@ -644,21 +644,28 @@ def run_backtest(
         else:
             equity_curve[-1] = (day, mark)
 
-    # liquidate leftovers at the last seen price so metrics are complete
-    for symbol, trade in list(state.open_trades.items()):
-        fill = last_price.get(symbol, trade.entry_price) * (1 - slip)
-        trade.exit_price = fill
-        trade.exit_at = max(events)
-        trade.exit_reason = "end of backtest (forced liquidation)"
-        trade.pnl = round((fill - trade.entry_price) * trade.qty, 2)
-        state.cash += fill * trade.qty
-        state.closed.append(trade)
-    state.open_trades.clear()
+    # Positions still open at the end are NOT force-sold: the strategy never
+    # signalled an exit, so a synthetic end-of-test sale would invent a trade and
+    # skew win-rate / profit-factor. Mark them to market instead — their value
+    # counts toward equity / net P&L (unrealized), while the closed-trade stats
+    # below cover only REAL strategy exits.
+    open_positions = []
+    open_value = 0.0
+    for symbol, trade in state.open_trades.items():
+        mark_price = last_price.get(symbol, trade.entry_price)
+        open_value += mark_price * trade.qty
+        open_positions.append({
+            "symbol": symbol, "qty": trade.qty,
+            "entry_price": round(trade.entry_price, 4), "entry_at": trade.entry_at.isoformat(),
+            "entry_day": day_of(trade.entry_at), "entry_reason": trade.entry_reason,
+            "mark_price": round(mark_price, 4),
+            "unrealized_pnl": round((mark_price - trade.entry_price) * trade.qty, 2),
+        })
 
     min_gain = params.get("entry", {}).get("min_day_gain_pct", 0)
     qualifying_days = len(diag.pop("days_reaching_min_gain"))
     diag["days_reaching_min_gain"] = qualifying_days
-    if not state.closed:
+    if not state.closed and not open_positions:
         if diag["max_day_gain_pct"] is not None and diag["max_day_gain_pct"] < min_gain:
             diag["summary"] = (
                 f"No bar ever reached the {min_gain}% day-gain threshold — the biggest day-gain "
@@ -691,7 +698,7 @@ def run_backtest(
     losses = [t for t in closed if (t.pnl or 0) <= 0]
     gross_win = sum(t.pnl or 0 for t in wins)
     gross_loss = -sum(t.pnl or 0 for t in losses)
-    final_equity = state.cash
+    final_equity = state.cash + open_value  # cash + open positions marked to market
     equity_values = [v for _, v in equity_curve]
     net_pnl = round(final_equity - starting_cash, 2)
     days_index = [d for d, _ in equity_curve]
@@ -701,6 +708,8 @@ def run_backtest(
         action_days.add(day_of(t.entry_at))
         if t.exit_at:
             action_days.add(day_of(t.exit_at))
+    for p in open_positions:
+        action_days.add(p["entry_day"])  # an entry that never exited is still an action
 
     # Capital deployment: a great return on 4% of the account is a small
     # return on the account. Surface both so they can't be confused.
@@ -737,6 +746,9 @@ def run_backtest(
         "hold_benchmark_label": (
             list(prepared)[0] if len(prepared) == 1 else f"{len(prepared)} symbols (equal weight)"
         ),
+        # Positions still held when the test window ended (marked to market, not
+        # sold). Their unrealized P&L is already in net_pnl / the equity curve.
+        "open_positions": open_positions,
         "trade_list": [
             {
                 "symbol": t.symbol, "qty": t.qty,
@@ -958,22 +970,29 @@ def run_portfolio_backtest(
         else:
             equity_curve[-1] = (day, mark)
 
-    # liquidate leftovers at the last seen price so metrics are complete
-    for symbol, trade in list(open_trades.items()):
-        fill = last_price.get(symbol, trade.entry_price) * (1 - slip)
-        trade.exit_price = fill
-        trade.exit_at = max(events)
-        trade.exit_reason = "end of backtest (forced liquidation)"
-        trade.pnl = round((fill - trade.entry_price) * trade.qty, 2)
-        cash += fill * trade.qty
-        closed.append(trade)
-    open_trades.clear()
+    # Open positions at the end aren't force-sold (see run_backtest) — marked to
+    # market so their value is in equity / net P&L, but never counted as trades.
+    open_positions = []
+    open_value = 0.0
+    unrealized_by_strat: dict[int, float] = {}
+    for symbol, trade in open_trades.items():
+        mark_price = last_price.get(symbol, trade.entry_price)
+        open_value += mark_price * trade.qty
+        u = round((mark_price - trade.entry_price) * trade.qty, 2)
+        unrealized_by_strat[trade.strategy_id] = unrealized_by_strat.get(trade.strategy_id, 0.0) + u
+        open_positions.append({
+            "symbol": symbol, "qty": trade.qty,
+            "entry_price": round(trade.entry_price, 4), "entry_at": trade.entry_at.isoformat(),
+            "entry_day": day_of(trade.entry_at), "entry_reason": trade.entry_reason,
+            "mark_price": round(mark_price, 4), "unrealized_pnl": u,
+            "strategy_id": trade.strategy_id, "strategy_name": trade.strategy_name,
+        })
 
     wins = [t for t in closed if (t.pnl or 0) > 0]
     losses = [t for t in closed if (t.pnl or 0) <= 0]
     gross_win = sum(t.pnl or 0 for t in wins)
     gross_loss = -sum(t.pnl or 0 for t in losses)
-    final_equity = cash
+    final_equity = cash + open_value  # cash + open positions marked to market
     net_pnl = round(final_equity - starting_cash, 2)
     equity_values = [v for _, v in equity_curve]
     days_index = [d for d, _ in equity_curve]
@@ -982,27 +1001,29 @@ def run_portfolio_backtest(
     return_on_deployed = round(net_pnl / max_deployed * 100, 2) if max_deployed > 0 else None
     time_in_market = round(bars_with_position / total_bar_ticks * 100, 1) if total_bar_ticks else 0.0
 
-    # Per-strategy contribution: realized P&L, trade count, and share of the
-    # portfolio result. These realized totals sum EXACTLY to net_pnl (every fill
-    # flows through the one shared cash balance).
-    realized_total = round(sum(t.pnl or 0 for t in closed), 2)
+    # Per-strategy contribution: realized P&L (closed trades) + unrealized (still
+    # open, marked to market), trade count, and share of the portfolio's TOTAL
+    # P&L. realized + unrealized across all strategies sums EXACTLY to net_pnl.
     contributions = []
     for strat in strategies:
         sid = strat["id"]
         mine = [t for t in closed if t.strategy_id == sid]
         my_wins = [t for t in mine if (t.pnl or 0) > 0]
         realized = round(sum(t.pnl or 0 for t in mine), 2)
+        unrealized = round(unrealized_by_strat.get(sid, 0.0), 2)
+        total = round(realized + unrealized, 2)
         contributions.append(
             {
                 "strategy_id": sid,
                 "strategy_name": strat.get("name", ""),
                 "realized_pnl": realized,
+                "unrealized_pnl": unrealized,
                 "trades": len(mine),
                 "wins": len(my_wins),
                 "win_rate": round(len(my_wins) / len(mine) * 100, 1) if mine else None,
-                # Share of the portfolio's realized total. Sign-preserving, so a
-                # losing sleeve inside a winning book shows a negative share.
-                "share_pct": round(realized / realized_total * 100, 1) if realized_total else None,
+                # Share of the portfolio's total P&L. Sign-preserving, so a losing
+                # sleeve inside a winning book shows a negative share.
+                "share_pct": round(total / net_pnl * 100, 1) if net_pnl else None,
             }
         )
 
@@ -1023,7 +1044,8 @@ def run_portfolio_backtest(
         "pct_capital_deployed": pct_deployed,
         "return_on_deployed_pct": return_on_deployed,
         "time_in_market_pct": time_in_market,
-        "realized_total": realized_total,
+        "realized_total": round(sum(t.pnl or 0 for t in closed), 2),
+        "open_positions": open_positions,
         "contributions": contributions,
         "strategy_count": len(strategies),
         "strategy_names": [s.get("name", "") for s in strategies],
