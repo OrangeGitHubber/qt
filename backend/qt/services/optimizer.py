@@ -427,6 +427,10 @@ def optimize(
 
     return {
         "tested_combinations": len(evaluated),
+        # Total size of the grid the random search samples from — so "tested N"
+        # reads as a deliberate coarse-to-fine SAMPLE, not the whole space. It's
+        # the product of every active knob's value count (grows fast with knobs).
+        "search_space_size": space_size,
         "no_trade_reason": no_trade_reason,
         "iterations": iterations,
         "in_sample_window": _window(t0, boundary),

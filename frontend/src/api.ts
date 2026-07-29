@@ -595,6 +595,7 @@ export interface OptimizerNeighbourPoint {
 
 export interface OptimizerResult {
   tested_combinations: number;
+  search_space_size?: number;
   no_trade_reason?: string | null;
   iterations: number;
   in_sample_window: OptimizerWindow;

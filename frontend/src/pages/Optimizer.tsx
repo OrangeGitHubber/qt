@@ -464,8 +464,12 @@ export default function Optimizer() {
           <div className="card">
             <h3>
               {result.strategy_name} · tested{" "}
-              <strong>{result.tested_combinations.toLocaleString()} combinations</strong> · {result.symbols.length}{" "}
-              symbol{result.symbols.length === 1 ? "" : "s"} · last {result.days} days ({result.timeframe})
+              <strong>{result.tested_combinations.toLocaleString()} combinations</strong>
+              {result.search_space_size ? (
+                <> of ~{result.search_space_size.toLocaleString()} possible</>
+              ) : null}{" "}
+              · {result.symbols.length} symbol{result.symbols.length === 1 ? "" : "s"} · last {result.days} days (
+              {result.timeframe})
             </h3>
             {result.scanner_replay ? (
               <p className="hint">
