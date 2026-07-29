@@ -11,6 +11,7 @@ Honest limitations, surfaced in the UI:
 - Free IEX data; past performance predicts nothing.
 """
 
+import os
 from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -28,6 +29,29 @@ from qt.services.engine import (
 )
 
 ET = ZoneInfo("America/New_York")
+
+
+def _btlog(day: str, symbol: str, bar: dict, params: dict, decision: str) -> None:
+    """One compact per-candidate diagnostic line (QT_BACKTEST_DEBUG only): the
+    day-gain, the MACD state (bull/bear/none + raw line vs signal), RSI, and the
+    exact accept/reject/rail decision — so a 'why didn't this day trade' question
+    is answerable from the container logs."""
+    chg = bar.get("change_pct")
+    chg_txt = "  n/a" if chg is None else f"{chg:+.2f}%"
+    macd = bar.get("macd_raw")
+    if not _macd_on(params):
+        macd_txt = "off"
+    elif macd is None:
+        macd_txt = "None(warmup)"
+    else:
+        macd_txt = f"{'BULL' if bar.get('macd_bullish') else 'BEAR'}(l={macd[0]:+.4f} s={macd[1]:+.4f})"
+    rsi = bar.get("rsi")
+    rsi_txt = "" if rsi is None else f" rsi={rsi:.1f}"
+    print(
+        f"BTDBG {day} {symbol:<6} close={bar['close']:.2f} chg={chg_txt} "
+        f"macd={macd_txt}{rsi_txt} -> {decision}",
+        flush=True,
+    )
 
 
 def _macd_on(params: dict) -> bool:
@@ -81,7 +105,11 @@ def _annotate_macd(prepared: dict[str, list[dict]], params: dict) -> None:
     for series in prepared.values():
         closes = [b["close"] for b in series]
         for i, bar in enumerate(series):
-            bar["macd_bullish"] = stats.macd_bullish(closes[:i], fast, slow, signal)
+            # One macd() call (bullish is just line > signal), keeping the raw
+            # (line, signal, hist) tuple around for QT_BACKTEST_DEBUG logging.
+            m = stats.macd(closes[:i], fast, slow, signal)
+            bar["macd_raw"] = m
+            bar["macd_bullish"] = None if m is None else (m[0] > m[1])
 
 
 def _rsi_on(params: dict) -> bool:
@@ -410,6 +438,22 @@ def run_backtest(
     # "why no entry" reason for every day that traded nothing (see the chart panel).
     day_reject: dict[str, Counter] = {}
 
+    debug = bool(os.getenv("QT_BACKTEST_DEBUG"))
+    if debug:
+        print(
+            f"BTDBG === run_backtest symbols={sorted(prepared)} "
+            f"min_gain={params.get('entry', {}).get('min_day_gain_pct')} macd_on={_macd_on(params)} "
+            f"require_macd={params.get('entry', {}).get('require_macd_bullish')} sim_start={sim_start} ===",
+            flush=True,
+        )
+        for sym, ser in prepared.items():
+            defined = [b["day"] for b in ser if b.get("macd_bullish") is not None]
+            print(
+                f"BTDBG   {sym}: {len(ser)} bars [{ser[0]['day']}..{ser[-1]['day']}] "
+                f"macd_defined_from={defined[0] if defined else 'never'}",
+                flush=True,
+            )
+
     for ts in sorted(events):
         bars = events[ts]
         for symbol, bar in bars.items():
@@ -445,6 +489,8 @@ def run_backtest(
                 state.last_loss_at[symbol] = ts
             state.closed.append(trade)
             del state.open_trades[symbol]
+            if debug:
+                _btlog(day, symbol, bar, params, f"EXIT {reason} @ {fill:.2f} pnl={trade.pnl}")
 
         # ---- entries ----
         eligible = eligible_by_day.get(day) if eligible_by_day is not None else None
@@ -488,6 +534,8 @@ def run_backtest(
                 elif "entry window" in entry_reason:
                     diag["rejected_entry_window"] += 1
                 day_reject.setdefault(day, Counter())[_reject_category(entry_reason)] += 1
+                if debug:
+                    _btlog(day, symbol, bar, params, f"reject-entry: {entry_reason}")
                 continue
             # ATR sizing (opt-in): size so a stop-out loses ~risk_usd, capped at
             # the sleeve; falls back to the fixed `sizing` when off or atr_pct is
@@ -523,18 +571,28 @@ def run_backtest(
                 cooldown = timedelta(hours=risk.get("cooldown_hours_after_loss", 24))
                 if ts - last_loss < cooldown:
                     rails_ok = False
+                    rails_reason = (
+                        f"rail: cooldown after loss ({(ts - last_loss).days}d since {last_loss.date()} "
+                        f"< {risk.get('cooldown_hours_after_loss', 24)}h)"
+                    )
             if not rails_ok:
                 diag["entry_ok_but_rail_blocked"] += 1
                 day_reject.setdefault(day, Counter())["rail"] += 1
+                if debug:
+                    _btlog(day, symbol, bar, params, f"reject-rail: {rails_reason}")
                 continue
             fill = bar["close"] * (1 + slip)
             qty = _entry_qty(strategy["asset_class"], entry_sizing, fill, _fractional(params))
             if qty <= 0 or fill * qty > state.cash:
                 diag["too_small_or_no_cash"] += 1
                 day_reject.setdefault(day, Counter())["sizing"] += 1
+                if debug:
+                    _btlog(day, symbol, bar, params, f"reject-sizing: qty={qty} cost={fill * qty:.2f} cash={state.cash:.2f}")
                 continue
             state.cash -= fill * qty
             state.entries_by_day[day] = state.entries_by_day.get(day, 0) + 1
+            if debug:
+                _btlog(day, symbol, bar, params, f"ENTER @ {fill:.2f} x{qty} ({entry_reason})")
             state.open_trades[symbol] = SimTrade(
                 symbol=symbol, qty=qty, entry_price=fill, entry_at=ts,
                 entry_reason=entry_reason, high_water=fill,
