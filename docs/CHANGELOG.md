@@ -3,6 +3,24 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Backtest fix: MACD/RSI now work from day one of the window (2026-07-29)
+
+Fixed a real bug that cost a lot of debugging time: a MACD or RSI strategy
+couldn't trade for roughly the **first 35 days** of a backtest window, because
+those indicators need a run-up of prior closes to be defined and the backtest
+only ever fetched the window itself — so the signal sat "dead" until enough bars
+had accumulated *inside* the window. That's why an obviously-bullish day early in
+the window would show "MACD not bullish" and skip the trade.
+
+Now, when a strategy uses a daily indicator (MACD, RSI, or ATR) on **1 Day**
+bars, the backtest quietly fetches ~150 extra calendar days of history *before*
+your window. Those warm-up bars feed the indicators only — they never trade,
+never touch the equity curve, and never appear in the trade log — so MACD/RSI/ATR
+are live from the very first day of the window you actually asked about. This
+mirrors the live engine, which already looks back 120 days for its MACD. Warm-up
+is skipped on intraday bars (where windows already hold plenty of bars, and
+MACD/RSI backtests are locked to daily anyway).
+
 ## UI: consistent Lucide SVG icons (2026-07-29)
 
 Swapped the text-glyph action icons (Enable/Pause/Edit/Delete, the modal close

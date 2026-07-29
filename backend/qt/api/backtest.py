@@ -158,6 +158,31 @@ def _uses_daily_only_signals(params: dict) -> bool:
     return macd or rsi
 
 
+# Calendar days of history fetched BEFORE the tested window so the daily
+# indicators (MACD/RSI/ATR) are defined from day one of the window — the backtest
+# equivalent of the live engine's 120-day MACD lookback. ~150 days ≈ 100 trading
+# bars, comfortably above MACD's slow+signal warm-up.
+WARMUP_DAYS = 150
+
+
+def _needs_warmup(params: dict) -> bool:
+    """Whether the strategy uses a daily indicator (MACD / RSI / ATR) that needs
+    prior history to be defined — if so, the backtest fetches WARMUP_DAYS before
+    the window so those signals aren't dead for the window's first ~35 bars."""
+    entry = params.get("entry") or {}
+    exit_rules = params.get("exit") or {}
+    atr = params.get("atr") or {}
+    return bool(
+        entry.get("require_macd_bullish")
+        or exit_rules.get("exit_on_macd_bearish")
+        or float(entry.get("rsi_min", 0) or 0) > 0
+        or float(entry.get("rsi_max", 0) or 0) > 0
+        or float(exit_rules.get("exit_rsi_above", 0) or 0) > 0
+        or float(atr.get("stop_mult", 0) or 0) > 0
+        or float(atr.get("risk_usd", 0) or 0) > 0
+    )
+
+
 @router.post("/portfolio")
 async def run_portfolio(
     body: PortfolioBacktestBody,
@@ -203,7 +228,19 @@ async def run_portfolio(
     if total_symbols > 40:
         raise HTTPException(status_code=422, detail="Too many symbols across those strategies (max 40; rate limits).")
 
-    start = (datetime.now(timezone.utc) - timedelta(days=body.days)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    # Warm-up the daily indicators before the window (if any strategy uses them),
+    # so MACD/RSI/ATR are live from day one of the tested window.
+    window_start = datetime.now(timezone.utc) - timedelta(days=body.days)
+    # Only DAILY bars need warm-up: on daily bars body.days calendar days yield
+    # ~35 fewer usable bars once MACD warms up, hence the dead zone. Intraday
+    # windows already hold plenty of bars for any indicator (and MACD/RSI are
+    # 422-blocked there anyway), so warm-up is a daily-only concern.
+    warmup = (
+        WARMUP_DAYS
+        if body.timeframe == "1Day" and any(_needs_warmup(json.loads(s.params)) for s in strategies)
+        else 0
+    )
+    start = (window_start - timedelta(days=warmup)).strftime("%Y-%m-%dT%H:%M:%SZ")
     by_class: dict[str, list[str]] = {}
     for s in strategies:
         by_class.setdefault(s.asset_class, [])
@@ -242,6 +279,7 @@ async def run_portfolio(
     result = backtest.run_portfolio_backtest(
         strategy_dicts, bars_by_strategy, get_risk(session),
         starting_cash=body.starting_cash, spread_pct=body.spread_pct, market=market,
+        sim_start=window_start if warmup else None,
     )
     if "error" in result:
         raise HTTPException(status_code=422, detail=result["error"])
@@ -301,15 +339,22 @@ async def run(
             "whipsaw and won't match the live engine. Use 1 Day.",
         )
 
-    start = (datetime.now(timezone.utc) - timedelta(days=body.days)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    # Fetch WARM-UP history before the window when the strategy uses daily
+    # indicators, so MACD/RSI/ATR are defined from day one of the tested window
+    # (the sim ignores warm-up bars for trading — see run_backtest's sim_start).
+    window_start = datetime.now(timezone.utc) - timedelta(days=body.days)
+    warmup = WARMUP_DAYS if body.timeframe == "1Day" and _needs_warmup(strategy_dict["params"]) else 0
+    fetch_start = (window_start - timedelta(days=warmup)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    window_start_str = window_start.strftime("%Y-%m-%dT%H:%M:%SZ")
     try:
-        bars = await client.historical_bars(symbols, strategy.asset_class, body.timeframe, start)
+        bars = await client.historical_bars(symbols, strategy.asset_class, body.timeframe, fetch_start)
     except AlpacaError as exc:
         raise HTTPException(status_code=502, detail=f"Bar download failed ({exc.status_code}): {exc}")
 
     result = backtest.run_backtest(
         strategy_dict, bars, get_risk(session),
         starting_cash=body.starting_cash, spread_pct=body.spread_pct,
+        sim_start=window_start if warmup else None,
     )
     if "error" in result:
         raise HTTPException(status_code=422, detail=result["error"])
@@ -324,7 +369,7 @@ async def run(
     if [market_symbol] != symbols:
         try:
             result["benchmark"] = await backtest.fetch_benchmark(
-                client, strategy.asset_class, start, result["equity_days"]
+                client, strategy.asset_class, window_start_str, result["equity_days"]
             )
             result["benchmark_symbol"] = market_symbol
         except Exception:

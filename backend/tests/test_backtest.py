@@ -396,3 +396,67 @@ def test_atr_stop_widens_and_holds_a_drop_the_fixed_stop_would_catch():
     wide = run_backtest(strat, {"TEST": series}, RISK, starting_cash=5000, spread_pct=0)
     # The wide ATR stop is not hit by the 5% drop — it survives to forced liquidation.
     assert "forced liquidation" in wide["trade_list"][0]["exit_reason"]
+
+
+# 40 warm-up days rising ~1%/day (MACD turns bullish), then 6 window days that
+# keep rising — enough history that MACD is defined the instant the window opens.
+_MACD_WARMUP_CLOSES = [round(100 * (1.01 ** i), 2) for i in range(46)]
+_MACD_WINDOW_START_IDX = 40
+
+
+def _macd_strategy() -> dict:
+    strat = copy.deepcopy(STRATEGY)
+    strat["params"]["entry"]["min_day_gain_pct"] = 0.5
+    strat["params"]["entry"]["require_macd_bullish"] = True
+    strat["params"]["macd"] = None  # default 12/26/9 — also exercises the null-macd path
+    return strat
+
+
+def test_macd_strategy_trades_from_window_start_when_warmup_precedes_it():
+    # THE dead-zone bug: a MACD strategy couldn't trade until ~35 bars into the
+    # test window because the backtest never fetched warm-up history. With warm-up
+    # bars before sim_start, MACD is already defined at the window's first bar, so
+    # the strategy can enter on day one of the window.
+    bars = _daily(_MACD_WARMUP_CLOSES)
+    sim_start = datetime.fromisoformat(
+        bars[_MACD_WINDOW_START_IDX]["t"].replace("Z", "+00:00")
+    )
+    strat = _macd_strategy()
+
+    warm = run_backtest(
+        strat, {"TEST": bars}, RISK, starting_cash=5000, spread_pct=0, sim_start=sim_start,
+    )
+    # It traded — and every trade is inside the window, never in the warm-up run.
+    assert warm["trades"] >= 1
+    window_day = sim_start.date().isoformat()
+    assert all(t["entry_day"] >= window_day for t in warm["trade_list"])
+
+    # Control: hand it ONLY the window bars (no warm-up) — MACD is undefined for
+    # all of them, so require_macd_bullish blocks every entry. This is the old
+    # behaviour the fix corrects.
+    cold = run_backtest(
+        strat, {"TEST": bars[_MACD_WINDOW_START_IDX:]}, RISK, starting_cash=5000, spread_pct=0,
+    )
+    assert cold["trades"] == 0
+
+
+def test_warmup_bars_never_touch_equity_or_the_trade_log():
+    # A plain momentum strategy (no MACD) would happily buy during the warm-up
+    # days if they were simulated. With sim_start set, those bars must feed nothing
+    # but indicators: no trades before the window, and the equity curve starts at
+    # the window, not the warm-up.
+    bars = _daily(_MACD_WARMUP_CLOSES)
+    sim_start = datetime.fromisoformat(
+        bars[_MACD_WINDOW_START_IDX]["t"].replace("Z", "+00:00")
+    )
+    strat = copy.deepcopy(STRATEGY)
+    strat["params"]["entry"]["min_day_gain_pct"] = 0.5  # every rising day qualifies
+
+    result = run_backtest(
+        strat, {"TEST": bars}, RISK, starting_cash=5000, spread_pct=0, sim_start=sim_start,
+    )
+    window_day = sim_start.date().isoformat()
+    assert result["trades"] >= 1
+    assert all(t["entry_day"] >= window_day for t in result["trade_list"])
+    # No warm-up bar leaked into the equity curve.
+    assert all(day >= window_day for day in result["equity_days"])

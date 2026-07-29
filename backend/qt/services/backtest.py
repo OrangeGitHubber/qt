@@ -351,9 +351,18 @@ def run_backtest(
     spread_pct: float = 0.1,
     eligible_by_day: dict[str, set[str]] | None = None,
     market: str = "stock",
+    sim_start: datetime | None = None,
 ) -> dict:
     """Pure simulation: strategy dict (same shape as the DB row), raw bars per
     symbol, global risk config. Returns metrics + equity curve + trades.
+
+    `sim_start` marks where TRADING begins: bars before it are WARM-UP only — they
+    feed the daily indicators (MACD/RSI/ATR need ~35+ prior bars to even be
+    defined, exactly like the live engine's 120-day lookback) but never trade,
+    never touch equity, and never appear in the trade log or diagnostics. Without
+    it a MACD strategy backtested over a short window couldn't trade for its first
+    ~35 days because MACD was undefined — unfaithful to live. None = trade every
+    bar (the old behaviour, for callers that pre-trim).
 
     `eligible_by_day` powers "scanner replay": when given, a symbol may only be
     ENTERED on a day it appears in that day's set (the day's reconstructed
@@ -406,6 +415,8 @@ def run_backtest(
         for symbol, bar in bars.items():
             last_price[symbol] = bar["close"]
         day = day_of(ts)
+        if sim_start is not None and ts < sim_start:
+            continue  # warm-up bar: fed the indicators above; no trading / equity / diagnostics
 
         # ---- exits first ----
         for symbol, trade in list(state.open_trades.items()):
@@ -671,6 +682,7 @@ def run_portfolio_backtest(
     starting_cash: float = 5000.0,
     spread_pct: float = 0.1,
     market: str = "stock",
+    sim_start: datetime | None = None,
 ) -> dict:
     """Portfolio simulation: replay N strategies over ONE merged timeline sharing
     a SINGLE cash account and the GLOBAL risk rails — exactly like the live engine,
@@ -733,6 +745,8 @@ def run_portfolio_backtest(
             bar_at[(sid, symbol)] = bar
             last_price[symbol] = bar["close"]
         day = day_of(ts)
+        if sim_start is not None and ts < sim_start:
+            continue  # warm-up bar: feeds indicators only, no trading / equity
 
         # ---- exits first (each trade managed by ITS OWN strategy's rules) ----
         for symbol, trade in list(open_trades.items()):
