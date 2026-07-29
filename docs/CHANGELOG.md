@@ -11,6 +11,26 @@ Lucide SVG icon set, driven from one place so size, stroke and colour stay in
 step across the app. Sort arrows, disclosure carets and prose marks stay as
 text. Purely a look-and-feel change — nothing about behaviour moved.
 
+## Rotation-strategy tooling: regime exit, MACD ranking column, RSI optimizer (2026-07-29)
+
+A batch that makes the rank-and-rotate workflow more complete:
+
+- **"Sell to cash when the market turns down"** — a new stock exit that flattens
+  the strategy's positions when the S&P 500 drops below its 200-day average (the
+  exit-side companion to the regime *entry* filter). This is the real "go to cash
+  in a downturn" switch: pure rank-and-rotate otherwise just holds the least-bad
+  names. Off by default, fail-safe on missing data. Like the entry regime filter,
+  it's a **live overlay not modelled in backtests** — for downturn behaviour in a
+  backtest, lean on the MACD-bearish / stop exits (which are modelled).
+- **MACD column in "Current ranking"** — see each candidate's daily momentum
+  direction (Bullish/Bearish) next to its rank metric.
+- **Optimizer tunes RSI thresholds** (Max RSI / Sell-if-RSI-above) — but only for
+  strategies that already use them, so it refines your factors rather than adding
+  new ones.
+- **Backtest** hides the scanner-replay option for non-scanner strategies (it
+  honours whatever universe the strategy is set to), and the **strategy builder**
+  warns when the intraday-only VWAP rule is left on a swing/rotation strategy.
+
 ## RSI as a strategy factor — rank, entry band, and overbought exit (2026-07-29)
 
 RSI (the 14-day momentum oscillator, already shown on the watchlist) is now a

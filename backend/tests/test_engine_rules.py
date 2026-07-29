@@ -428,6 +428,41 @@ def test_exit_rsi_suppressed_same_day_in_swing_mode():
     assert not should
 
 
+# ---- optional market-regime exit (off by default) ----
+
+def test_exit_regime_off_never_fires():
+    should, _ = evaluate_exit(
+        params(), True, 100.0, YESTERDAY, 105.0, 104.5, None, NOW, False, regime_bearish=True
+    )
+    assert not should
+
+
+def test_exit_regime_bear_triggers_when_on_and_bearish():
+    p = params(exit={"exit_on_regime_bear": True})
+    should, reason = evaluate_exit(
+        p, True, 100.0, YESTERDAY, 105.0, 104.5, None, NOW, False, regime_bearish=True
+    )
+    assert should and "regime bearish" in reason and "200-day" in reason
+
+
+def test_exit_regime_bull_or_unknown_does_not_fire():
+    # regime_bearish=False covers both "SPY above its 200-day" and "unknown"
+    # (the caller passes False when the regime can't be determined — fail-safe).
+    p = params(exit={"exit_on_regime_bear": True})
+    should, _ = evaluate_exit(
+        p, True, 100.0, YESTERDAY, 105.0, 104.5, None, NOW, False, regime_bearish=False
+    )
+    assert not should
+
+
+def test_hard_stop_wins_over_regime_exit():
+    p = params(exit={"exit_on_regime_bear": True})
+    should, reason = evaluate_exit(
+        p, True, 100.0, NOW - timedelta(hours=1), 100.0, 95.9, None, NOW, False, regime_bearish=True
+    )
+    assert should and "stop-loss" in reason
+
+
 # ---- optional ATR stop (off by default) ----
 
 def atr_params(**overrides) -> dict:

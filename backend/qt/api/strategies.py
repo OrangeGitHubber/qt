@@ -54,6 +54,7 @@ class ExitRules(BaseModel):
     exit_below_vwap: bool = False
     exit_on_macd_bearish: bool = False  # optional daily-MACD exit signal (off by default)
     exit_rsi_above: float = Field(default=0, ge=0, le=100)  # 0 = off; sell when RSI >= this (overbought)
+    exit_on_regime_bear: bool = False  # stocks: sell to cash when SPY < its 200-day MA (live-only overlay)
     rotate_on_rank_dropout: bool = False  # basket rotation: sell when it leaves the top-N
     # Advanced execution: how far BELOW the market to price the marketable sell
     # limit (1% = default). exit_slippage_max_pct >= exit_slippage_pct enables an

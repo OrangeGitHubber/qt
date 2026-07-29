@@ -51,6 +51,7 @@ export interface StrategyParams {
     exit_below_vwap: boolean;
     exit_on_macd_bearish?: boolean; // optional daily-MACD exit signal (off by default)
     exit_rsi_above?: number; // sell when RSI >= this (overbought take-profit); 0 = off
+    exit_on_regime_bear?: boolean; // stocks: sell to cash when SPY < its 200-day MA (live-only)
     rotate_on_rank_dropout?: boolean; // basket rotation: sell when it leaves the top-N
     exit_slippage_pct: number;
     exit_slippage_max_pct: number;

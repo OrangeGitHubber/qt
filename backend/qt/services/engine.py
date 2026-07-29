@@ -198,6 +198,7 @@ def evaluate_exit(
     macd_bullish: bool | None = None,
     atr_pct: float | None = None,
     rsi: float | None = None,
+    regime_bearish: bool = False,
 ) -> tuple[bool, str]:
     """Return (should_exit, reason). Stops always apply; in swing mode the
     softer exits (take-profit, VWAP, time, MACD) wait until the day after entry.
@@ -259,6 +260,14 @@ def evaluate_exit(
     exit_rsi_above = exit_rules.get("exit_rsi_above", 0) or 0
     if exit_rsi_above and rsi is not None and rsi >= exit_rsi_above:
         return True, f"RSI {rsi:.0f} ≥ {exit_rsi_above:g} (overbought)"
+
+    # Optional market-regime exit (opt-in, stocks): sell into cash when the broad
+    # market is in a downtrend (SPY below its 200-day MA). The caller supplies the
+    # bearish flag ONLY for a stock strategy that opted in, and only when the
+    # regime is genuinely known (an unknown regime is passed as False), so a data
+    # blip never triggers a sell.
+    if exit_rules.get("exit_on_regime_bear") and regime_bearish:
+        return True, "market regime bearish — SPY below its 200-day average"
 
     max_hold = exit_rules.get("max_holding_hours", 0)
     if max_hold:
@@ -372,6 +381,17 @@ def _entry_rsi_enabled(params: dict) -> bool:
 def _exit_rsi_enabled(params: dict) -> bool:
     """The RSI overbought exit is on when its threshold is set (> 0)."""
     return float((params.get("exit") or {}).get("exit_rsi_above", 0) or 0) > 0
+
+
+def _wants_regime_exit(strategy: Strategy | None) -> bool:
+    """A stock strategy that opted into the market-regime exit (sell to cash when
+    SPY is below its 200-day). Stocks only — crypto has no SPY regime."""
+    if strategy is None or strategy.asset_class != "stock":
+        return False
+    try:
+        return bool(json.loads(strategy.params).get("exit", {}).get("exit_on_regime_bear"))
+    except (TypeError, ValueError):
+        return False
 
 
 def atr_position_size(
@@ -654,6 +674,19 @@ async def _manage_exits(
     # each). Empty dicts when nobody opted in.
     macd_exit_flags, atr_exit_pcts, rsi_exit_flags = await _daily_exit_signals(session, client, open_trades)
 
+    # Market-regime exit (opt-in, stocks): compute the regime ONCE, and only if
+    # some open stock position's strategy wants it (otherwise zero extra work — and
+    # regime_status is cached anyway). Fail-safe: an unknown regime (insufficient
+    # data / fetch blip) is treated as NOT bearish, so a data hiccup never sells
+    # everything to cash.
+    regime_bearish = False
+    if any(_wants_regime_exit(session.get(Strategy, t.strategy_id)) for t in open_trades):
+        try:
+            rs = await regime.regime_status(client)
+            regime_bearish = rs.get("ok") is False and not rs.get("insufficient_data", False)
+        except Exception as exc:  # noqa: BLE001 — never force exits on a regime fetch failure
+            log.warning("regime exit check failed — holding positions: %s", exc)
+
     for trade in open_trades:
         if trade.asset_class == "stock" and not market_open:
             continue  # can't exit a stock while the market is closed
@@ -688,6 +721,7 @@ async def _manage_exits(
                 macd_bullish=macd_exit_flags.get(trade.id),
                 atr_pct=atr_exit_pcts.get(trade.id),
                 rsi=rsi_exit_flags.get(trade.id),
+                regime_bearish=regime_bearish and trade.asset_class == "stock",
             )
         if not should_exit:
             continue

@@ -73,6 +73,12 @@ export const GLOSSARY: Record<string, GlossaryEntry> = {
       "Only buy stocks while the S&P 500 is above its 200-day moving average — a common definition of a rising market. When it's below, QT stops opening stock positions (exits still work).",
     url: "https://www.investopedia.com/terms/m/movingaverage.asp",
   },
+  regime_exit: {
+    term: "Sell to cash when the market turns down",
+    explain:
+      "The exit-side companion to the regime filter (stocks only). When the S&P 500 (SPY) falls below its 200-day moving average — the market's tide going out — this sells the strategy's stock positions so you sit in cash through the downturn, rather than riding the ranked \"least-bad\" names down. It's a blunt, market-wide safety overlay: it fires off SPY, not each stock, so it can pull you out ahead of a name's own stop or MACD signal. Fail-safe: if the regime can't be read (data blip) it does nothing. Note it's a LIVE overlay and, like the entry-side regime filter, isn't reflected in backtests — to see downturn behaviour in a backtest, lean on the MACD-bearish and stop-loss exits, which are.",
+    url: "https://www.investopedia.com/terms/m/movingaverage.asp",
+  },
   dollar_volume: {
     term: "Dollar volume (on Alpaca's feed)",
     explain:

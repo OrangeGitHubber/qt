@@ -68,6 +68,7 @@ const EMPTY: Partial<StrategyRow> = {
       flatten_before_close: false,
       exit_below_vwap: false,
       exit_rsi_above: 0,
+      exit_on_regime_bear: false,
       exit_slippage_pct: 1,
       exit_slippage_max_pct: 1,
     },
@@ -806,6 +807,13 @@ function Editor({
                 onChange={(e) => setExit("exit_on_macd_bearish", e.target.checked)} />
               Exit when MACD turns bearish <InfoTip k="macd" />
             </label>
+            {s.asset_class === "stock" && (
+              <label className="check">
+                <input type="checkbox" checked={!!p.exit.exit_on_regime_bear}
+                  onChange={(e) => setExit("exit_on_regime_bear", e.target.checked)} />
+                Sell to cash when the market turns down (SPY &lt; 200-day) <InfoTip k="regime_exit" />
+              </label>
+            )}
             {ranking && (
               <label className="check">
                 <input type="checkbox" checked={!!p.exit.rotate_on_rank_dropout}
