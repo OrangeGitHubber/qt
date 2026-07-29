@@ -23,6 +23,10 @@ class EntryRules(BaseModel):
     max_price: float = Field(default=0, ge=0)  # $/share cap; 0 = none (e.g. only movers under $10)
     require_above_vwap: bool = True
     require_macd_bullish: bool = False  # optional daily-MACD entry filter (off by default)
+    # Optional RSI entry band (Wilder 14, computed from completed daily closes).
+    # 0 = that bound is off. rsi_max caps overbought entries; rsi_min sets a floor.
+    rsi_min: float = Field(default=0, ge=0, le=100)
+    rsi_max: float = Field(default=0, ge=0, le=100)
     entry_window_start: str | None = None  # "HH:MM" US/Eastern; None = any time
     entry_window_end: str | None = None
     # Advanced execution: how far THROUGH the market to price the marketable buy
@@ -30,6 +34,12 @@ class EntryRules(BaseModel):
     # passive limit AT the quote (may not fill). Paper/live only — the backtest
     # uses its own spread-cost input.
     entry_slippage_pct: float = Field(default=0.5, ge=0, le=5)
+
+    @model_validator(mode="after")
+    def _rsi_band(self) -> "EntryRules":
+        if self.rsi_min and self.rsi_max and self.rsi_min >= self.rsi_max:
+            raise ValueError("RSI min must be below RSI max.")
+        return self
 
 
 class ExitRules(BaseModel):
@@ -43,6 +53,7 @@ class ExitRules(BaseModel):
     flatten_before_close: bool = False
     exit_below_vwap: bool = False
     exit_on_macd_bearish: bool = False  # optional daily-MACD exit signal (off by default)
+    exit_rsi_above: float = Field(default=0, ge=0, le=100)  # 0 = off; sell when RSI >= this (overbought)
     rotate_on_rank_dropout: bool = False  # basket rotation: sell when it leaves the top-N
     # Advanced execution: how far BELOW the market to price the marketable sell
     # limit (1% = default). exit_slippage_max_pct >= exit_slippage_pct enables an
@@ -139,7 +150,7 @@ class StrategyBody(BaseModel):
     symbols: list[str] = []  # for universe="custom": the hand-picked symbol list
     rank_by: str = Field(
         default="momentum_today",
-        pattern="^(momentum_today|return_30d|relative_strength|rs_vs_spy)$",
+        pattern="^(momentum_today|return_30d|relative_strength|rs_vs_spy|rsi)$",
     )
     top_n: int = Field(default=10, ge=1, le=50)
     rank_enabled: bool = False  # rank the pool + keep top N (basket forces this on)

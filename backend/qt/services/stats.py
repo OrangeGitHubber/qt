@@ -65,19 +65,16 @@ def vs_sma_pct(bars: list[dict], period: int = 200, current_price: float | None 
     return round((price / average - 1) * 100, 2)
 
 
-def rsi(bars: list[dict], period: int = 14, current_price: float | None = None) -> float | None:
-    """Wilder's Relative Strength Index over the daily closes (0–100). >70 is
-    conventionally "overbought", <30 "oversold". Needs at least `period`+1 bars.
-    `current_price` (the live quote) replaces the last close so the reading is
-    up to date intraday, matching the other stats here.
+def rsi_from_closes(closes: list[float], period: int = 14) -> float | None:
+    """Wilder's Relative Strength Index (0–100) over a list of closes, oldest
+    first. >70 is conventionally "overbought", <30 "oversold". Needs at least
+    `period`+1 closes, else None. Uses Wilder's smoothing: a simple average of the
+    first `period` gains/losses, then an exponential-style running average.
 
-    Uses Wilder's smoothing: a simple average of the first `period` gains/losses,
-    then an exponential-style running average for the rest."""
-    if len(bars) < period + 1:
+    This is the pure core — the live engine and the backtester both call it so
+    RSI can't drift between them (mirrors how MACD is shared)."""
+    if len(closes) < period + 1:
         return None
-    closes = [float(b["c"]) for b in bars]
-    if current_price is not None:
-        closes[-1] = current_price
     deltas = [closes[i] - closes[i - 1] for i in range(1, len(closes))]
     gains = [max(d, 0.0) for d in deltas]
     losses = [max(-d, 0.0) for d in deltas]
@@ -90,6 +87,19 @@ def rsi(bars: list[dict], period: int = 14, current_price: float | None = None) 
         return 100.0 if avg_gain > 0 else 50.0  # no losses = maxed; flat = neutral
     rs = avg_gain / avg_loss
     return round(100 - 100 / (1 + rs), 1)
+
+
+def rsi(bars: list[dict], period: int = 14, current_price: float | None = None) -> float | None:
+    """RSI over daily bars. `current_price` (the live quote), when given, replaces
+    the last close so the watchlist reading is up to date intraday. The engine's
+    signal path passes only COMPLETED daily bars and no current_price, so it gets
+    a stable daily RSI that doesn't wiggle with each intraday tick (like MACD)."""
+    if len(bars) < period + 1:
+        return None
+    closes = [float(b["c"]) for b in bars]
+    if current_price is not None:
+        closes[-1] = current_price
+    return rsi_from_closes(closes, period)
 
 
 def _ema_series(values: list[float], period: int) -> list[float | None]:

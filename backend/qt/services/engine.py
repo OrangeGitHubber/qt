@@ -75,6 +75,9 @@ class Candidate:
     # set when a strategy opts into ATR sizing; otherwise stays None. Drives the
     # ATR position size at entry (see atr_position_size).
     atr_pct: float | None = None
+    # Wilder's 14-day RSI from COMPLETED daily closes. Only set when a strategy
+    # opts into an RSI entry band; otherwise None and ignored.
+    rsi: float | None = None
 
 
 @dataclass
@@ -125,9 +128,22 @@ def evaluate_entry(params: dict, candidate: Candidate, now_et: datetime) -> tupl
     if entry.get("require_macd_bullish") and candidate.macd_bullish is not True:
         detail = "not enough daily history" if candidate.macd_bullish is None else "line ≤ signal (bearish)"
         return False, f"MACD not bullish — {detail}"
+    # Optional RSI entry band (rsi_min / rsi_max, 0 = that bound is off). Fail-
+    # closed on missing RSI, like MACD — an unknown reading is not a green light.
+    rsi_min = entry.get("rsi_min", 0) or 0
+    rsi_max = entry.get("rsi_max", 0) or 0
+    if rsi_min or rsi_max:
+        if candidate.rsi is None:
+            return False, "RSI unavailable — rule requires an RSI band"
+        if rsi_min and candidate.rsi < rsi_min:
+            return False, f"RSI {candidate.rsi:.0f} < min {rsi_min:g}"
+        if rsi_max and candidate.rsi > rsi_max:
+            return False, f"RSI {candidate.rsi:.0f} > max {rsi_max:g} (overbought)"
     return True, f"up {candidate.change_pct:.2f}% today" + (
         f", above VWAP" if entry.get("require_above_vwap") else ""
-    ) + (", MACD bullish" if entry.get("require_macd_bullish") else "")
+    ) + (", MACD bullish" if entry.get("require_macd_bullish") else "") + (
+        f", RSI {candidate.rsi:.0f}" if (rsi_min or rsi_max) and candidate.rsi is not None else ""
+    )
 
 
 def check_rails(strategy_cfg: dict, sizing_usd: float, ctx: RailContext) -> tuple[bool, str]:
@@ -181,6 +197,7 @@ def evaluate_exit(
     market_closes_soon: bool,
     macd_bullish: bool | None = None,
     atr_pct: float | None = None,
+    rsi: float | None = None,
 ) -> tuple[bool, str]:
     """Return (should_exit, reason). Stops always apply; in swing mode the
     softer exits (take-profit, VWAP, time, MACD) wait until the day after entry.
@@ -236,6 +253,12 @@ def evaluate_exit(
     # None means we can't tell right now — never force an exit on that.
     if exit_rules.get("exit_on_macd_bearish") and macd_bullish is False:
         return True, "MACD turned bearish"
+
+    # Optional RSI overbought exit: take profit on froth. 0 = off; None RSI (not
+    # enough history / fetch blip) never forces an exit.
+    exit_rsi_above = exit_rules.get("exit_rsi_above", 0) or 0
+    if exit_rsi_above and rsi is not None and rsi >= exit_rsi_above:
+        return True, f"RSI {rsi:.0f} ≥ {exit_rsi_above:g} (overbought)"
 
     max_hold = exit_rules.get("max_holding_hours", 0)
     if max_hold:
@@ -337,6 +360,20 @@ def _atr_sizing_enabled(params: dict) -> bool:
     return float(a.get("risk_usd", 0) or 0) > 0 and float(a.get("stop_mult", 0) or 0) > 0
 
 
+RSI_PERIOD = 14  # standard Wilder period; fixed (not a user knob) to keep the config lean
+
+
+def _entry_rsi_enabled(params: dict) -> bool:
+    """The RSI entry band is on when either bound is set (> 0)."""
+    e = params.get("entry", {})
+    return float(e.get("rsi_min", 0) or 0) > 0 or float(e.get("rsi_max", 0) or 0) > 0
+
+
+def _exit_rsi_enabled(params: dict) -> bool:
+    """The RSI overbought exit is on when its threshold is set (> 0)."""
+    return float((params.get("exit") or {}).get("exit_rsi_above", 0) or 0) > 0
+
+
 def atr_position_size(
     params: dict, sizing_usd: float, sleeve_usd: float, atr_pct: float | None
 ) -> float:
@@ -408,7 +445,8 @@ async def _apply_daily_signals(
     correct and independent of whatever the ranking happened to pull.)"""
     want_macd = bool(params.get("entry", {}).get("require_macd_bullish"))
     want_atr = _atr_sizing_enabled(params)
-    if not candidates or not (want_macd or want_atr):
+    want_rsi = _entry_rsi_enabled(params)
+    if not candidates or not (want_macd or want_atr or want_rsi):
         return
     fast, slow, signal = _macd_periods(params)
     period = _atr_period(params)
@@ -432,11 +470,13 @@ async def _apply_daily_signals(
             )
         if want_atr:
             cand.atr_pct = stats.atr_pct(daily, period, current_price=cand.price)
+        if want_rsi:
+            cand.rsi = stats.rsi(daily, RSI_PERIOD)
 
 
 async def _daily_exit_signals(
     session: Session, client: AlpacaClient, open_trades: list[Trade]
-) -> tuple[dict[int, bool | None], dict[int, float | None]]:
+) -> tuple[dict[int, bool | None], dict[int, float | None], dict[int, float | None]]:
     """For every open trade whose strategy opted into exit_on_macd_bearish and/or
     the ATR stop, return ({trade_id: macd_bullish}, {trade_id: atr_pct}). Computed
     once up front — mirroring _rotation_dropout_reasons — with one batched
@@ -461,17 +501,20 @@ async def _daily_exit_signals(
             params = {}
         want_macd = bool(params.get("exit", {}).get("exit_on_macd_bearish"))
         want_atr = _atr_stop_enabled(params)
-        if not (want_macd or want_atr):
+        want_rsi = _exit_rsi_enabled(params)
+        if not (want_macd or want_atr or want_rsi):
             continue
         grouped[t.strategy_id] = (s, params, {t.symbol})
 
     macd_flags: dict[int, bool | None] = {}
     atr_pcts: dict[int, float | None] = {}
+    rsi_flags: dict[int, float | None] = {}
     for sid, (s, params, symbols) in grouped.items():
         fast, slow, signal = _macd_periods(params)
         period = _atr_period(params)
         want_macd = bool(params.get("exit", {}).get("exit_on_macd_bearish"))
         want_atr = _atr_stop_enabled(params)
+        want_rsi = _exit_rsi_enabled(params)
         start = (
             datetime.now(timezone.utc) - timedelta(days=_daily_lookback_days(params, want_atr))
         ).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -493,7 +536,9 @@ async def _daily_exit_signals(
                 )
             if want_atr:
                 atr_pcts[t.id] = stats.atr_pct(daily, period)
-    return macd_flags, atr_pcts
+            if want_rsi:
+                rsi_flags[t.id] = stats.rsi(daily, RSI_PERIOD)
+    return macd_flags, atr_pcts, rsi_flags
 
 
 async def tick(leverage_unlocked: bool = False) -> None:
@@ -607,7 +652,7 @@ async def _manage_exits(
     # Daily-MACD exit signal AND the ATR stop's current ATR%, both computed once up
     # front for the strategies that opted in (one shared batched daily-bars call
     # each). Empty dicts when nobody opted in.
-    macd_exit_flags, atr_exit_pcts = await _daily_exit_signals(session, client, open_trades)
+    macd_exit_flags, atr_exit_pcts, rsi_exit_flags = await _daily_exit_signals(session, client, open_trades)
 
     for trade in open_trades:
         if trade.asset_class == "stock" and not market_open:
@@ -642,6 +687,7 @@ async def _manage_exits(
                 closes_soon and trade.asset_class == "stock",
                 macd_bullish=macd_exit_flags.get(trade.id),
                 atr_pct=atr_exit_pcts.get(trade.id),
+                rsi=rsi_exit_flags.get(trade.id),
             )
         if not should_exit:
             continue
@@ -671,6 +717,7 @@ _RANK_LABELS = {
     "return_30d": "30-day return",
     "relative_strength": "relative strength (vs 200-day avg)",
     "rs_vs_spy": "relative strength vs the S&P 500",
+    "rsi": "RSI (14-day)",
 }
 
 
@@ -1137,13 +1184,14 @@ async def _pool_metrics(
             "return_30d": None,
             "relative_strength": None,
             "rs_vs_spy": None,
+            "rsi": None,
         }
 
     # rs_vs_spy is a STOCK-only metric (SPY is the benchmark); never fetch SPY for crypto.
     RS_VS_SPY_WINDOW = 90  # calendar days of relative return
     want_rs_vs_spy = rank_by == "rs_vs_spy" and asset_class == "stock"
 
-    if rank_by in ("return_30d", "relative_strength") or want_rs_vs_spy:
+    if rank_by in ("return_30d", "relative_strength", "rsi") or want_rs_vs_spy:
         lookback_days = 320 if rank_by in ("relative_strength", "rs_vs_spy") else 60
         start = (datetime.now(timezone.utc) - timedelta(days=lookback_days)).strftime("%Y-%m-%dT%H:%M:%SZ")
         fetch_symbols = symbols + ["SPY"] if want_rs_vs_spy else symbols
@@ -1153,6 +1201,7 @@ async def _pool_metrics(
             cur = price_map.get(sym)
             metrics[sym]["return_30d"] = stats.pct_change_over(bars, 30, cur)
             metrics[sym]["relative_strength"] = stats.vs_sma_pct(bars, 200, cur)
+            metrics[sym]["rsi"] = stats.rsi(bars, RSI_PERIOD, cur)
         if want_rs_vs_spy:
             spy_bars = bars_by_symbol.get("SPY") or []
             spy_last = float(spy_bars[-1]["c"]) if spy_bars else None

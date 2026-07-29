@@ -6,16 +6,17 @@ from qt.services.ranking import RANK_METRICS, rank_symbols
 
 
 def _metrics(**by_symbol):
-    """Helper: {'AAA': (mom, ret, rs[, rs_vs_spy])} -> full metrics dict.
+    """Helper: {'AAA': (mom, ret, rs[, rs_vs_spy[, rsi]])} -> full metrics dict.
 
-    The 4th tuple element (rs_vs_spy) is optional so the existing 3-tuple
-    callers keep working; it defaults to None."""
+    The 4th (rs_vs_spy) and 5th (rsi) tuple elements are optional so the existing
+    3-tuple callers keep working; they default to None."""
     return {
         sym: {
             "momentum_today": t[0],
             "return_30d": t[1],
             "relative_strength": t[2],
             "rs_vs_spy": t[3] if len(t) > 3 else None,
+            "rsi": t[4] if len(t) > 4 else None,
         }
         for sym, t in by_symbol.items()
     }
@@ -61,7 +62,7 @@ def test_unknown_metric_raises():
 
 
 def test_all_metrics_are_rankable():
-    m = _metrics(A=(1.0, 2.0, 3.0, 4.0), B=(5.0, 6.0, 7.0, 8.0))
+    m = _metrics(A=(1.0, 2.0, 3.0, 4.0, 5.0), B=(6.0, 7.0, 8.0, 9.0, 10.0))
     for metric in RANK_METRICS:
         ranked = rank_symbols(m, metric, 1)
         assert ranked == [("B", pytest.approx(m["B"][metric]))]

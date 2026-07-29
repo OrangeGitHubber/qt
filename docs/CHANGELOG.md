@@ -11,6 +11,26 @@ Lucide SVG icon set, driven from one place so size, stroke and colour stay in
 step across the app. Sort arrows, disclosure carets and prose marks stay as
 text. Purely a look-and-feel change — nothing about behaviour moved.
 
+## RSI as a strategy factor — rank, entry band, and overbought exit (2026-07-29)
+
+RSI (the 14-day momentum oscillator, already shown on the watchlist) is now a
+**strategy signal**, wired the same way MACD is — so you can build a rank-and-
+rotate strategy on RSI + MACD together:
+
+- **Rank a basket by RSI** — a new `rank_by` option; ranked highest-first
+  (strongest recent momentum). Because that also means the most *overbought*
+  names rank top, it pairs naturally with the overbought exit below.
+- **RSI entry band** — "Min RSI / Max RSI" (0 = off) under Advanced entry options.
+  Setting Max RSI to ~70 skips names that are already overbought, so you enter
+  strength that still has room instead of buying the top.
+- **Overbought exit** — "Sell if RSI above" (0 = off) under Advanced exit options:
+  book the gain when a holding gets stretched.
+
+All three are computed from **completed daily closes** (a swing-timeframe signal,
+like MACD — it doesn't wiggle intraday), and the **backtester** evaluates them
+identically, so a strategy that uses RSI backtests faithfully. RSI stays off by
+default; existing strategies are unchanged.
+
 ## Watchlist: RSI column + a column configurator (2026-07-29)
 
 The watchlist now computes **RSI (14)** per symbol — the 0–100 momentum

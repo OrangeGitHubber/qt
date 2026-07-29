@@ -83,6 +83,32 @@ def _annotate_macd(prepared: dict[str, list[dict]], params: dict) -> None:
             bar["macd_bullish"] = stats.macd_bullish(closes[:i], fast, slow, signal)
 
 
+def _rsi_on(params: dict) -> bool:
+    """Whether any RSI rule is set — the entry band (rsi_min/rsi_max) or the
+    overbought exit (exit_rsi_above)."""
+    e = params.get("entry", {})
+    x = params.get("exit", {})
+    return (
+        float(e.get("rsi_min", 0) or 0) > 0
+        or float(e.get("rsi_max", 0) or 0) > 0
+        or float(x.get("exit_rsi_above", 0) or 0) > 0
+    )
+
+
+def _annotate_rsi(prepared: dict[str, list[dict]], params: dict) -> None:
+    """Attach `rsi` (Wilder 14) to each prepared bar, in place, when the strategy
+    opts into an RSI rule. The value at bar i uses the replayed closes up to and
+    INCLUDING the prior completed bar (closes[:i]) — no look-ahead — mirroring
+    _annotate_macd. No-op when RSI is off, keeping non-RSI backtests byte-
+    identical. Same daily/swing timeframe caveat as MACD."""
+    if not _rsi_on(params):
+        return
+    for series in prepared.values():
+        closes = [b["close"] for b in series]
+        for i, bar in enumerate(series):
+            bar["rsi"] = stats.rsi_from_closes(closes[:i])
+
+
 @dataclass
 class SimTrade:
     symbol: str
@@ -250,6 +276,7 @@ def run_backtest(
     prepared = {s: _prepare(b, day_of) for s, b in bars_by_symbol.items() if b}
     _annotate_macd(prepared, params)  # no-op unless the strategy opts into MACD
     _annotate_atr(prepared, bars_by_symbol, params)  # no-op unless the strategy opts into ATR
+    _annotate_rsi(prepared, params)  # no-op unless the strategy opts into an RSI rule
     # chronological event stream across all symbols
     events: dict[datetime, dict[str, dict]] = {}
     for symbol, series in prepared.items():
@@ -293,6 +320,7 @@ def run_backtest(
                 trade.high_water, price, bar["vwap"], ts, bar.get("last_of_day", False),
                 macd_bullish=bar.get("macd_bullish"),
                 atr_pct=bar.get("atr_pct"),
+                rsi=bar.get("rsi"),
             )
             if not should_exit:
                 continue
@@ -338,6 +366,7 @@ def run_backtest(
                 symbol=symbol, asset_class=strategy["asset_class"],
                 price=bar["close"], change_pct=bar["change_pct"], vwap=bar["vwap"],
                 macd_bullish=bar.get("macd_bullish"),
+                rsi=bar.get("rsi"),
             )
             ok, entry_reason = evaluate_entry(params, cand, ts.astimezone(ET))
             if not ok:
@@ -560,6 +589,7 @@ def run_portfolio_backtest(
     for sid, prepared in prepared_by_strategy.items():
         _annotate_macd(prepared, strat_by_id[sid]["params"])
         _annotate_atr(prepared, bars_by_strategy.get(sid) or {}, strat_by_id[sid]["params"])
+        _annotate_rsi(prepared, strat_by_id[sid]["params"])
     events: dict[datetime, list[tuple[int, str, dict]]] = {}
     for sid, series_map in prepared_by_strategy.items():
         for symbol, series in series_map.items():
@@ -602,6 +632,7 @@ def run_portfolio_backtest(
                 trade.high_water, price, bar["vwap"], ts, bar.get("last_of_day", False),
                 macd_bullish=bar.get("macd_bullish"),
                 atr_pct=bar.get("atr_pct"),
+                rsi=bar.get("rsi"),
             )
             if not should_exit:
                 continue
@@ -638,6 +669,7 @@ def run_portfolio_backtest(
                 symbol=symbol, asset_class=strat["asset_class"],
                 price=bar["close"], change_pct=bar["change_pct"], vwap=bar["vwap"],
                 macd_bullish=bar.get("macd_bullish"),
+                rsi=bar.get("rsi"),
             )
             ok, entry_reason = evaluate_entry(params, cand, ts.astimezone(ET))
             if not ok:

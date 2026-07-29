@@ -359,6 +359,75 @@ def test_hard_stop_wins_over_macd_exit():
     assert should and "stop-loss" in reason
 
 
+# ---- optional RSI entry band (off by default) ----
+
+def test_entry_rsi_off_ignores_reading():
+    # No band set → RSI is never consulted, even a wild reading is moot.
+    ok, _ = evaluate_entry(params(), cand(rsi=95.0), NOON_ET)
+    assert ok
+
+
+def test_entry_rsi_max_blocks_overbought():
+    p = params(entry={"rsi_max": 70})
+    ok, reason = evaluate_entry(p, cand(rsi=82.0), NOON_ET)
+    assert not ok and "overbought" in reason and "82" in reason
+
+
+def test_entry_rsi_max_allows_below_threshold():
+    p = params(entry={"rsi_max": 70})
+    ok, reason = evaluate_entry(p, cand(rsi=55.0), NOON_ET)
+    assert ok and "RSI 55" in reason
+
+
+def test_entry_rsi_min_blocks_below_floor():
+    p = params(entry={"rsi_min": 40})
+    ok, reason = evaluate_entry(p, cand(rsi=30.0), NOON_ET)
+    assert not ok and "< min 40" in reason
+
+
+def test_entry_rsi_band_fail_closed_when_unknown():
+    # A set band with no RSI reading (too little history) must fail CLOSED.
+    p = params(entry={"rsi_max": 70})
+    ok, reason = evaluate_entry(p, cand(rsi=None), NOON_ET)
+    assert not ok and "RSI unavailable" in reason
+
+
+# ---- optional RSI overbought exit (off by default) ----
+
+def test_exit_rsi_off_never_fires():
+    should, _ = evaluate_exit(
+        params(), True, 100.0, YESTERDAY, 105.0, 104.5, None, NOW, False, rsi=95.0
+    )
+    assert not should
+
+
+def test_exit_rsi_above_triggers_when_overbought():
+    p = params(exit={"exit_rsi_above": 70})
+    should, reason = evaluate_exit(
+        p, True, 100.0, YESTERDAY, 105.0, 104.5, None, NOW, False, rsi=78.0
+    )
+    assert should and "78" in reason and "overbought" in reason
+
+
+def test_exit_rsi_below_threshold_or_unknown_holds():
+    p = params(exit={"exit_rsi_above": 70})
+    for reading in (65.0, None):
+        should, _ = evaluate_exit(
+            p, True, 100.0, YESTERDAY, 105.0, 104.5, None, NOW, False, rsi=reading
+        )
+        assert not should
+
+
+def test_exit_rsi_suppressed_same_day_in_swing_mode():
+    # RSI exit is a soft exit — waits until the day after entry when swinging.
+    same_day_entry = NOW - timedelta(hours=2)
+    p = params(exit={"exit_rsi_above": 70})
+    should, _ = evaluate_exit(
+        p, True, 100.0, same_day_entry, 101.0, 100.5, None, NOW, False, rsi=90.0
+    )
+    assert not should
+
+
 # ---- optional ATR stop (off by default) ----
 
 def atr_params(**overrides) -> dict:

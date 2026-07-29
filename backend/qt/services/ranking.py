@@ -13,13 +13,18 @@ The metrics are all derived from price data QT already computes:
                          relative_strength (price vs its OWN 200-day average), a
                          name can be above its own trend yet still LAGGING SPY.
                          Stocks only (SPY is the benchmark).
+  - rsi                : Wilder's 14-day RSI (0–100). Ranked descending like the
+                         rest, so a higher RSI ranks first — i.e. the strongest
+                         recent momentum. Note this also means the MOST overbought
+                         names rank top, so RSI ranking pairs best with an
+                         overbought EXIT (exit_rsi_above) to take profit on froth.
 
 Ranking is descending (bigger metric = better) with a deterministic tie-break
 on symbol, and symbols whose chosen metric is missing (None) are dropped — you
 cannot rank on data you don't have.
 """
 
-RANK_METRICS = ("momentum_today", "return_30d", "relative_strength", "rs_vs_spy")
+RANK_METRICS = ("momentum_today", "return_30d", "relative_strength", "rs_vs_spy", "rsi")
 
 
 def rank_symbols(

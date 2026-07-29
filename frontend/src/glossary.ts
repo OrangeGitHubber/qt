@@ -387,6 +387,18 @@ export const GLOSSARY: Record<string, GlossaryEntry> = {
       "A 0–100 momentum oscillator over 14 days. Above 70 = overbought (stretched, prone to pull back); below 30 = oversold; the 50 line is the momentum midline — above 50 is bullish, below is bearish. The shaded 50–70 band (green) is the sweet spot: healthy uptrend momentum that isn't yet overbought. Above 70 momentum is strong but chasing it is risky; that's why 'good' here is the band, not simply 'as high as possible'.",
     url: "https://www.investopedia.com/terms/r/rsi.asp",
   },
+  rsi_entry: {
+    term: "RSI entry band",
+    explain:
+      "Only buy when the symbol's 14-day RSI sits inside this band (0 on a bound = that side is off). Max RSI is the useful one for chasing risers: set it to, say, 70 to skip names that are already overbought and prone to pull back, so you enter strength that still has room rather than buying the top. Min RSI sets a floor if you only want names with real momentum behind them. RSI is measured on completed daily closes, so it's a swing-timeframe filter, not an intraday one.",
+    url: "https://www.investopedia.com/terms/r/rsi.asp",
+  },
+  rsi_exit: {
+    term: "Sell when RSI is overbought",
+    explain:
+      "Sell the position once its 14-day RSI rises to or above this level (0 = off). It's a take-profit on froth: an RSI of 70–80+ means the move is stretched and often about to cool, so this books the gain into strength instead of waiting for a stop. Pairs naturally with ranking a basket by RSI (you rotate into the strongest names, then step out as each gets overextended). Like the entry band it's computed on completed daily closes, so it fires at most once per day, not on every intraday wiggle.",
+    url: "https://www.investopedia.com/terms/r/rsi.asp",
+  },
   rs_ratio: {
     term: "Relative strength vs SPY",
     explain:

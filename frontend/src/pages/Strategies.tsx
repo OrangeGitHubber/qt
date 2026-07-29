@@ -29,6 +29,7 @@ const RANK_LABELS: Record<RankBy, string> = {
   return_30d: "30-day return",
   relative_strength: "Relative strength (vs 200-day average)",
   rs_vs_spy: "Relative strength vs S&P 500",
+  rsi: "RSI (14-day) — highest first",
 };
 
 const EMPTY: Partial<StrategyRow> = {
@@ -53,6 +54,8 @@ const EMPTY: Partial<StrategyRow> = {
       min_price: 0,
       max_price: 0,
       require_above_vwap: true,
+      rsi_min: 0,
+      rsi_max: 0,
       entry_window_start: "09:30",
       entry_window_end: "15:30",
       entry_slippage_pct: 0.5,
@@ -64,6 +67,7 @@ const EMPTY: Partial<StrategyRow> = {
       max_holding_hours: 120,
       flatten_before_close: false,
       exit_below_vwap: false,
+      exit_rsi_above: 0,
       exit_slippage_pct: 1,
       exit_slippage_max_pct: 1,
     },
@@ -683,6 +687,14 @@ function Editor({
               <NumberField step="any" min="0" value={p.entry.max_price ?? 0}
                 onChange={(n) => setEntry("max_price", n)} />
             </Param>
+            <Param label="Min RSI (0 = off)" tip="rsi_entry">
+              <NumberField step="1" min="0" max="100" value={p.entry.rsi_min ?? 0}
+                onChange={(n) => setEntry("rsi_min", n)} />
+            </Param>
+            <Param label="Max RSI (0 = off)" tip="rsi_entry">
+              <NumberField step="1" min="0" max="100" value={p.entry.rsi_max ?? 0}
+                onChange={(n) => setEntry("rsi_max", n)} />
+            </Param>
             <Param label="Entry slippage (%)" tip="entry_slippage">
               <NumberField step="0.1" min="0" max="5" value={p.entry.entry_slippage_pct ?? 0.5}
                 onChange={(n) => setEntry("entry_slippage_pct", n)} />
@@ -767,6 +779,10 @@ function Editor({
             <Param label="Max exit slippage (%)" tip="exit_slippage">
               <NumberField step="0.1" min="0" max="20" value={p.exit.exit_slippage_max_pct ?? 1}
                 onChange={(n) => setExit("exit_slippage_max_pct", n)} />
+            </Param>
+            <Param label="Sell if RSI above (0 = off)" tip="rsi_exit">
+              <NumberField step="1" min="0" max="100" value={p.exit.exit_rsi_above ?? 0}
+                onChange={(n) => setExit("exit_rsi_above", n)} />
             </Param>
           </div>
           <div className="check-row">

@@ -36,6 +36,8 @@ export interface StrategyParams {
     max_price: number;
     require_above_vwap: boolean;
     require_macd_bullish?: boolean; // optional daily-MACD entry filter (off by default)
+    rsi_min?: number; // RSI entry band floor (0 = off)
+    rsi_max?: number; // RSI entry band cap — avoid overbought entries (0 = off)
     entry_window_start: string | null;
     entry_window_end: string | null;
     entry_slippage_pct: number;
@@ -48,6 +50,7 @@ export interface StrategyParams {
     flatten_before_close: boolean;
     exit_below_vwap: boolean;
     exit_on_macd_bearish?: boolean; // optional daily-MACD exit signal (off by default)
+    exit_rsi_above?: number; // sell when RSI >= this (overbought take-profit); 0 = off
     rotate_on_rank_dropout?: boolean; // basket rotation: sell when it leaves the top-N
     exit_slippage_pct: number;
     exit_slippage_max_pct: number;
@@ -69,7 +72,7 @@ export interface StrategyParams {
   execution?: { market_orders: boolean };
 }
 
-export type RankBy = "momentum_today" | "return_30d" | "relative_strength" | "rs_vs_spy";
+export type RankBy = "momentum_today" | "return_30d" | "relative_strength" | "rs_vs_spy" | "rsi";
 
 export interface StrategyRow {
   id: number;
