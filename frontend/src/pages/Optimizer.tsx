@@ -22,8 +22,19 @@ const KNOB_LABELS: Record<string, string> = {
   trailing_stop_pct: "Trailing stop (%)",
   stop_loss_pct: "Stop-loss (%)",
   take_profit_pct: "Take-profit (%)",
+  rsi_max: "Max RSI (entry)",
+  exit_rsi_above: "Sell if RSI above",
 };
-const KNOB_ORDER = ["min_day_gain_pct", "trailing_stop_pct", "stop_loss_pct", "take_profit_pct"];
+// RSI knobs are searched only when the strategy uses them; the plateau grid
+// filters by presence in the neighbourhood, so they simply don't appear otherwise.
+const KNOB_ORDER = [
+  "min_day_gain_pct",
+  "trailing_stop_pct",
+  "stop_loss_pct",
+  "take_profit_pct",
+  "rsi_max",
+  "exit_rsi_above",
+];
 
 function pct(v: number | null | undefined): string {
   return v != null ? `${v}%` : "—";
@@ -131,6 +142,10 @@ export default function Optimizer() {
   );
   const running = status?.running ?? false;
   const result: OptimizerResult | null = status && !status.running ? status.result : null;
+  // RSI knobs are only searched when the strategy uses them — show those result
+  // columns only when they were actually part of the search.
+  const showRsiMax = !!result && result.results.some((r) => (r.params.rsi_max ?? 0) > 0);
+  const showRsiExit = !!result && result.results.some((r) => (r.params.exit_rsi_above ?? 0) > 0);
 
   useEffect(() => {
     getStrategies().then((rows) => {
@@ -559,6 +574,8 @@ export default function Optimizer() {
                     <th>Trail</th>
                     <th>Stop</th>
                     <th>Take-profit</th>
+                    {showRsiMax && <th>Max RSI</th>}
+                    {showRsiExit && <th>Sell RSI&gt;</th>}
                     <th>In-sample</th>
                     <th>Out-of-sample (real)</th>
                     <th>OOS trades</th>
@@ -572,6 +589,8 @@ export default function Optimizer() {
                       <td>{r.params.trailing_stop_pct}</td>
                       <td>{r.params.stop_loss_pct}</td>
                       <td>{r.params.take_profit_pct}</td>
+                      {showRsiMax && <td>{r.params.rsi_max || "off"}</td>}
+                      {showRsiExit && <td>{r.params.exit_rsi_above || "off"}</td>}
                       <td>{pct(r.in_sample?.net_pnl_pct)}</td>
                       <td className={(r.out_of_sample?.net_pnl_pct ?? 0) >= 0 ? "up" : "down"}>
                         {pct(r.out_of_sample?.net_pnl_pct)}

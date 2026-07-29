@@ -185,6 +185,28 @@ def test_no_trade_reason_surfaced_when_nothing_trades():
     assert result["no_trade_reason"] and "VWAP" in result["no_trade_reason"]
 
 
+def test_rsi_knob_searched_only_when_the_strategy_uses_rsi():
+    # A strategy with an RSI entry cap on → the optimizer adds rsi_max to the
+    # search space (and thus the neighbourhood report).
+    base = {
+        **BASE_STRATEGY,
+        "params": {
+            "entry": {**BASE_STRATEGY["params"]["entry"], "rsi_max": 70.0},
+            "exit": {**BASE_STRATEGY["params"]["exit"]},
+        },
+    }
+    fake = RecordingFake()
+    bars = {"AAA": _bars(100), "BBB": _bars(100)}
+    result = optimizer.optimize(base, bars, {}, iterations=20, seed=7, backtest_fn=fake)
+    assert "rsi_max" in result["neighbourhood"]
+    assert "exit_rsi_above" not in result["neighbourhood"]  # that RSI rule wasn't on
+
+    # A vanilla strategy (no RSI rules) searches exactly the core four — no RSI.
+    plain, _ = _run()
+    assert "rsi_max" not in plain["neighbourhood"]
+    assert "exit_rsi_above" not in plain["neighbourhood"]
+
+
 def test_eligible_by_day_is_threaded_to_every_backtest():
     # Scanner-replay mode: the same eligible-by-day map (each day's top-N risers)
     # must reach EVERY backtest call — in-sample and out-of-sample alike — so the

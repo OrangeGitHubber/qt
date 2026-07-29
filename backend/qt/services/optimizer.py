@@ -49,6 +49,31 @@ PARAM_SPACE: dict[str, list[float]] = {
     "take_profit_pct": [0.0, 5.0, 8.0, 10.0, 12.0, 15.0, 20.0],
 }
 
+# RSI knobs are searched ONLY when the base strategy already opted into them, so
+# the optimizer tunes the factors you're using rather than inventing new ones.
+# 0.0 stays in each range so the search can also decide the threshold isn't
+# helping and turn it back off.
+RSI_PARAM_SPACE: dict[str, list[float]] = {
+    "rsi_max": [0.0, 60.0, 65.0, 70.0, 75.0, 80.0],       # entry: skip overbought
+    "exit_rsi_above": [0.0, 65.0, 70.0, 75.0, 80.0, 85.0],  # exit: sell on froth
+}
+
+# Which strategy-params section each searchable knob belongs to.
+_ENTRY_KNOBS = {"min_day_gain_pct", "rsi_max"}
+
+
+def _active_param_space(base_strategy: dict) -> dict[str, list[float]]:
+    """The knobs to search for THIS strategy: always the core four, plus an RSI
+    knob for each RSI rule the strategy already has on. Keeps non-RSI strategies'
+    search (and their tests) byte-identical to before."""
+    space = dict(PARAM_SPACE)
+    params = base_strategy.get("params") or {}
+    if float((params.get("entry") or {}).get("rsi_max", 0) or 0) > 0:
+        space["rsi_max"] = RSI_PARAM_SPACE["rsi_max"]
+    if float((params.get("exit") or {}).get("exit_rsi_above", 0) or 0) > 0:
+        space["exit_rsi_above"] = RSI_PARAM_SPACE["exit_rsi_above"]
+    return space
+
 ProgressFn = Callable[[int, int], None]
 BacktestFn = Callable[..., dict]
 
@@ -90,16 +115,16 @@ def split_in_out_of_sample(
 
 
 def _apply_combo(base_strategy: dict, combo: dict) -> dict:
-    """A copy of the base strategy dict with the four searched knobs overwritten.
-    Everything else (asset class, sizing, sleeve, entry window, VWAP rule…) is
-    left exactly as the user configured it — the search tunes momentum/exit
-    aggressiveness, not the whole strategy."""
+    """A copy of the base strategy dict with the searched knobs overwritten, each
+    routed to its params section (entry vs exit). Everything else (asset class,
+    sizing, sleeve, entry window, VWAP rule, MACD toggles…) is left exactly as the
+    user configured it — the search tunes momentum/exit aggressiveness (and, when
+    the strategy uses RSI, its thresholds), not the whole strategy."""
     params = copy.deepcopy(base_strategy["params"])
-    params.setdefault("entry", {})["min_day_gain_pct"] = combo["min_day_gain_pct"]
+    entry = params.setdefault("entry", {})
     exit_rules = params.setdefault("exit", {})
-    exit_rules["trailing_stop_pct"] = combo["trailing_stop_pct"]
-    exit_rules["stop_loss_pct"] = combo["stop_loss_pct"]
-    exit_rules["take_profit_pct"] = combo["take_profit_pct"]
+    for key, value in combo.items():
+        (entry if key in _ENTRY_KNOBS else exit_rules)[key] = value
     return {**base_strategy, "params": params}
 
 
@@ -197,13 +222,16 @@ def optimize(
         )
 
     # ---- 1 & 2: random search over the coarse grid (in-sample only) ----
-    keys = list(PARAM_SPACE)
+    # The active space is the core four knobs plus an RSI knob per RSI rule the
+    # strategy already uses (non-RSI strategies search exactly as before).
+    space = _active_param_space(base_strategy)
+    keys = list(space)
     evaluated: dict[tuple, dict] = {}  # combo-tuple -> {combo, score, in_sample metrics}
 
     # De-dupe: with a small grid, random draws collide; keep sampling (bounded)
     # until we have `iterations` DISTINCT combos or exhaust the space.
     space_size = 1
-    for values in PARAM_SPACE.values():
+    for values in space.values():
         space_size *= len(values)
     target = min(iterations, space_size)
 
@@ -233,7 +261,7 @@ def optimize(
     attempts = 0
     while len([e for e in evaluated]) < target and attempts < target * 20:
         attempts += 1
-        combo = {k: rng.choice(PARAM_SPACE[k]) for k in keys}
+        combo = {k: rng.choice(space[k]) for k in keys}
         evaluate(combo)
 
     if not evaluated:  # pathological (empty grid) — cannot happen with the constants
@@ -251,7 +279,7 @@ def optimize(
     for _ in range(len(keys) * 2):  # bound: can't climb forever on a finite grid
         pivot = leader
         for key in keys:
-            values = PARAM_SPACE[key]
+            values = space[key]
             idx = values.index(pivot["combo"][key])
             for j in (idx - 1, idx + 1):
                 if 0 <= j < len(values):

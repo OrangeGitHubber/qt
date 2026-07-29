@@ -562,6 +562,8 @@ export interface OptimizerComboParams {
   trailing_stop_pct: number;
   stop_loss_pct: number;
   take_profit_pct: number;
+  rsi_max?: number; // searched only when the strategy uses an RSI entry cap
+  exit_rsi_above?: number; // searched only when the strategy uses the RSI exit
 }
 
 export interface OptimizerResultRow {
