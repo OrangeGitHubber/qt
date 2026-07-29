@@ -220,6 +220,11 @@ input:focus {
   border-color: transparent;
 }
 
+input:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 /* Keyboard focus indicator for EVERY interactive control (buttons, nav tabs,
    the mode switch, sortable headers, links, summaries, InfoTip triggers). Uses
    :focus-visible so it shows for keyboard/AT users but not on mouse click.

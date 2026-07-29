@@ -15,6 +15,7 @@ export default function NumberField({
   max,
   step,
   required,
+  disabled,
 }: {
   value: number;
   onChange: (n: number) => void;
@@ -22,6 +23,7 @@ export default function NumberField({
   max?: number | string;
   step?: number | string;
   required?: boolean;
+  disabled?: boolean;
 }) {
   const [text, setText] = useState(String(value));
   const [focused, setFocused] = useState(false);
@@ -38,6 +40,7 @@ export default function NumberField({
       max={max}
       step={step}
       required={required}
+      disabled={disabled}
       value={focused ? text : String(value)}
       onFocus={() => {
         setText(String(value));

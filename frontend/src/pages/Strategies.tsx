@@ -500,6 +500,9 @@ function Editor({
   }
 
   const p = s.params!;
+  // Market orders have no limit price, so the marketable-limit slippage buffers
+  // (entry + exit) don't apply — grey them out when market mode is on.
+  const marketMode = !!p.execution?.market_orders;
   // The MACD period fields appear only when at least one MACD toggle is on.
   const macdOn = !!(p.entry.require_macd_bullish || p.exit.exit_on_macd_bearish);
   const macd = p.macd ?? { fast: 12, slow: 26, signal: 9 };
@@ -706,9 +709,9 @@ function Editor({
               <NumberField step="1" min="0" max="100" value={p.entry.rsi_max ?? 0}
                 onChange={(n) => setEntry("rsi_max", n)} />
             </Param>
-            <Param label="Entry slippage (%)" tip="entry_slippage">
+            <Param label={marketMode ? "Entry slippage — n/a at market" : "Entry slippage (%)"} tip="entry_slippage">
               <NumberField step="0.1" min="0" max="5" value={p.entry.entry_slippage_pct ?? 0.5}
-                onChange={(n) => setEntry("entry_slippage_pct", n)} />
+                onChange={(n) => setEntry("entry_slippage_pct", n)} disabled={marketMode} />
             </Param>
           </div>
           <div className="check-row">
@@ -783,13 +786,13 @@ function Editor({
               <NumberField step="1" min="0" value={p.exit.max_holding_hours}
                 onChange={(n) => setExit("max_holding_hours", n)} />
             </Param>
-            <Param label="Exit slippage (%)" tip="exit_slippage">
+            <Param label={marketMode ? "Exit slippage — n/a at market" : "Exit slippage (%)"} tip="exit_slippage">
               <NumberField step="0.1" min="0" max="10" value={p.exit.exit_slippage_pct ?? 1}
-                onChange={(n) => setExit("exit_slippage_pct", n)} />
+                onChange={(n) => setExit("exit_slippage_pct", n)} disabled={marketMode} />
             </Param>
-            <Param label="Max exit slippage (%)" tip="exit_slippage">
+            <Param label={marketMode ? "Max exit slippage — n/a" : "Max exit slippage (%)"} tip="exit_slippage">
               <NumberField step="0.1" min="0" max="20" value={p.exit.exit_slippage_max_pct ?? 1}
-                onChange={(n) => setExit("exit_slippage_max_pct", n)} />
+                onChange={(n) => setExit("exit_slippage_max_pct", n)} disabled={marketMode} />
             </Param>
             <Param label="Sell if RSI above (0 = off)" tip="rsi_exit">
               <NumberField step="1" min="0" max="100" value={p.exit.exit_rsi_above ?? 0}
