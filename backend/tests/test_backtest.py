@@ -210,6 +210,24 @@ def test_no_trade_reasons_omit_days_that_traded():
     assert entry_day not in result["no_trade_reasons"]
 
 
+def test_no_trade_spans_collapse_consecutive_flat_days():
+    # Three days, none reaching the +3% gate → the two EVALUATED no-entry days
+    # (day 1 has no prior close to compare) collapse into ONE span.
+    series = (
+        bars_from([100, 100, 100], "2026-05-04T14:00:00Z")
+        + bars_from([101, 101, 101], "2026-05-05T14:00:00Z")  # +1% vs prior day
+        + bars_from([101.5, 101.5, 101.5], "2026-05-06T14:00:00Z")  # +0.5%
+    )
+    result = run_backtest(STRATEGY, {"TEST": series}, RISK, starting_cash=5000, spread_pct=0)
+    assert result["trades"] == 0
+    spans = result["no_trade_spans"]
+    assert len(spans) == 1
+    assert spans[0]["days"] == 2
+    assert spans[0]["from_day"] == "2026-05-05"
+    assert spans[0]["to_day"] == "2026-05-06"
+    assert "day gain below the minimum" in spans[0]["reason"]
+
+
 def test_rails_respected_in_backtest():
     # Two symbols both trigger; sleeve budget only fits one $1000 position + cash guard.
     strategy = dict(STRATEGY, sleeve_usd=1500.0)

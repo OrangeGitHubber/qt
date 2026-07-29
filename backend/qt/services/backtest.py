@@ -191,6 +191,47 @@ def _summarize_no_trade_days(
     return out
 
 
+def _no_trade_spans(
+    days_index: list[str],
+    day_reject: dict[str, "Counter[str]"],
+    entries_by_day: dict[str, int],
+    action_days: set[str],
+) -> list[dict]:
+    """Collapse consecutive no-ENTRY days into spans for the trade log — each with
+    its dominant blocker across the whole run. A run is broken by any day that
+    traded (bought OR sold), so a weeks-long flat stretch becomes ONE readable row
+    ('May 12–Jun 5 · 24 days · MACD not bullish') instead of dozens."""
+    spans: list[dict] = []
+    run: list[str] = []
+
+    def flush() -> None:
+        nonlocal run
+        if run:
+            total: Counter = Counter()
+            for d in run:
+                total.update(day_reject.get(d, Counter()))
+            parts = [f"{n}× {_REJECT_LABELS.get(cat, cat)}" for cat, n in total.most_common(2)]
+            spans.append(
+                {
+                    "from_day": run[0],
+                    "to_day": run[-1],
+                    "days": len(run),
+                    "reason": "; ".join(parts) if parts else "no candidates evaluated",
+                }
+            )
+        run = []
+
+    for day in days_index:
+        if day in action_days:
+            flush()
+        elif entries_by_day.get(day, 0) == 0 and day in day_reject:
+            run.append(day)
+        else:
+            flush()
+    flush()
+    return spans
+
+
 @dataclass
 class SimState:
     cash: float
@@ -552,6 +593,12 @@ def run_backtest(
     equity_values = [v for _, v in equity_curve]
     net_pnl = round(final_equity - starting_cash, 2)
     days_index = [d for d, _ in equity_curve]
+    # Days that saw a buy OR a sell — these break the "no action" runs below.
+    action_days: set[str] = set()
+    for t in closed:
+        action_days.add(day_of(t.entry_at))
+        if t.exit_at:
+            action_days.add(day_of(t.exit_at))
 
     # Capital deployment: a great return on 4% of the account is a small
     # return on the account. Surface both so they can't be confused.
@@ -579,6 +626,9 @@ def run_backtest(
         # {day -> plain-English reason} for every day that evaluated candidates but
         # opened nothing — the chart shows it when you land on a no-trade day.
         "no_trade_reasons": _summarize_no_trade_days(day_reject, state.entries_by_day),
+        # Consecutive no-entry days collapsed into spans, interleaved into the
+        # trade log so a flat stretch explains itself ({from_day,to_day,days,reason}).
+        "no_trade_spans": _no_trade_spans(days_index, day_reject, state.entries_by_day, action_days),
         "equity_days": days_index,
         "equity": [round((v / starting_cash - 1) * 100, 2) for _, v in equity_curve],
         "hold_benchmark": _hold_benchmark(prepared, days_index),

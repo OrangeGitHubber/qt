@@ -473,7 +473,9 @@ export interface BacktestResult {
     days_reaching_min_gain: number;
     summary: string | null;
   };
-  no_trade_reasons?: Record<string, string>; // {day -> why no entry that day}
+  no_trade_reasons?: Record<string, string>; // {day -> why no entry that day} (chart)
+  // Consecutive no-entry days collapsed into spans for the trade log.
+  no_trade_spans?: { from_day: string; to_day: string; days: number; reason: string }[];
   equity_days: string[];
   equity: number[];
   benchmark: (number | null)[] | null;

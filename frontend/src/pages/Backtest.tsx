@@ -179,6 +179,27 @@ export default function Backtest() {
     return out;
   }, [result]);
 
+  // Trade log rows: buy/sell actions PLUS "no entry" spans (collapsed runs of
+  // days that traded nothing), interleaved chronologically — so a flat stretch on
+  // the curve explains itself right in the log.
+  const logRows = useMemo<
+    (
+      | { kind: "trade"; sortAt: number; ev: TradeEvent }
+      | { kind: "gap"; sortAt: number; span: NonNullable<BacktestResult["no_trade_spans"]>[number] }
+    )[]
+  >(() => {
+    if (!result) return [];
+    const rows: (
+      | { kind: "trade"; sortAt: number; ev: TradeEvent }
+      | { kind: "gap"; sortAt: number; span: NonNullable<BacktestResult["no_trade_spans"]>[number] }
+    )[] = events.map((ev) => ({ kind: "trade", sortAt: new Date(ev.at).getTime(), ev }));
+    for (const span of result.no_trade_spans ?? []) {
+      rows.push({ kind: "gap", sortAt: new Date(`${span.from_day}T00:00:00`).getTime(), span });
+    }
+    rows.sort((a, b) => a.sortAt - b.sortAt);
+    return rows;
+  }, [result, events]);
+
   useEffect(() => {
     getStrategies().then((rows) => {
       setStrategies(rows);
@@ -886,7 +907,7 @@ export default function Backtest() {
           </div>
           <div className="card">
             <h3>
-              Trade log — every buy and sell in order{" "}
+              Trade log — every buy, sell, and idle stretch in order{" "}
               <span className="hint">
                 ({events.length} actions across {result.trade_list.length} trades)
               </span>
@@ -904,23 +925,39 @@ export default function Backtest() {
                 </tr>
               </thead>
               <tbody>
-                {events.map((ev, i) => (
-                  <tr key={i}>
-                    <td>{new Date(ev.at).toLocaleDateString()}</td>
-                    <td className={ev.action === "Bought" ? "up" : "down"}>
-                      {ev.action === "Bought" ? "▲ Bought" : "▼ Sold"}
-                    </td>
-                    <td className="sym">{ev.symbol}</td>
-                    <td>
-                      ${ev.price.toFixed(4)}
-                      {ev.qty != null && <span className="hint"> ×{ev.qty}</span>}
-                    </td>
-                    <td className={ev.pnl == null ? "" : ev.pnl >= 0 ? "up" : "down"}>
-                      {ev.pnl == null ? <span className="hint">—</span> : `$${ev.pnl.toFixed(2)}`}
-                    </td>
-                    <td className="hint">{ev.reason}</td>
-                  </tr>
-                ))}
+                {logRows.map((r, i) =>
+                  r.kind === "trade" ? (
+                    <tr key={i}>
+                      <td>{new Date(r.ev.at).toLocaleDateString()}</td>
+                      <td className={r.ev.action === "Bought" ? "up" : "down"}>
+                        {r.ev.action === "Bought" ? "▲ Bought" : "▼ Sold"}
+                      </td>
+                      <td className="sym">{r.ev.symbol}</td>
+                      <td>
+                        ${r.ev.price.toFixed(4)}
+                        {r.ev.qty != null && <span className="hint"> ×{r.ev.qty}</span>}
+                      </td>
+                      <td className={r.ev.pnl == null ? "" : r.ev.pnl >= 0 ? "up" : "down"}>
+                        {r.ev.pnl == null ? <span className="hint">—</span> : `$${r.ev.pnl.toFixed(2)}`}
+                      </td>
+                      <td className="hint">{r.ev.reason}</td>
+                    </tr>
+                  ) : (
+                    <tr key={i} className="log-gap">
+                      <td>
+                        {r.span.from_day === r.span.to_day
+                          ? new Date(`${r.span.from_day}T00:00:00`).toLocaleDateString()
+                          : `${new Date(`${r.span.from_day}T00:00:00`).toLocaleDateString()} – ${new Date(
+                              `${r.span.to_day}T00:00:00`,
+                            ).toLocaleDateString()}`}
+                      </td>
+                      <td colSpan={4} className="hint">
+                        no entries · {r.span.days} day{r.span.days === 1 ? "" : "s"}
+                      </td>
+                      <td className="hint">{r.span.reason}</td>
+                    </tr>
+                  ),
+                )}
               </tbody>
             </table>
             </div>
