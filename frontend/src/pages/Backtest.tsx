@@ -150,6 +150,35 @@ export default function Backtest() {
     return out;
   }, [result]);
 
+  // Comparison markers: BOTH strategies' trades, each riding its own equity line
+  // (A → series 0, B → series 1) and prefixed with the strategy name so the
+  // hover panel says who traded. Replaces the trade log in compare mode.
+  const compareMarkers = useMemo<ChartMarker[]>(() => {
+    if (!result || !compareResult) return [];
+    const dayIndex = new Map(result.equity_days.map((d, i) => [d, i]));
+    const aName = strategies.find((s) => s.id === strategyId)?.name ?? "A";
+    const bName = strategies.find((s) => s.id === compareId)?.name ?? "B";
+    const out: ChartMarker[] = [];
+    const add = (res: BacktestResult, si: number, name: string) => {
+      for (const t of res.trade_list) {
+        const e = dayIndex.get(t.entry_day);
+        if (e !== undefined)
+          out.push({ index: e, seriesIndex: si, kind: "buy", text: `${name}: bought ${t.qty} ${t.symbol} @ $${t.entry_price}` });
+        const x = t.exit_day ? dayIndex.get(t.exit_day) : undefined;
+        if (x !== undefined)
+          out.push({
+            index: x,
+            seriesIndex: si,
+            kind: "sell",
+            text: `${name}: sold ${t.symbol} @ $${t.exit_price} → ${(t.pnl ?? 0) >= 0 ? "+" : ""}$${t.pnl?.toFixed(2)} (${t.exit_reason})`,
+          });
+      }
+    };
+    add(result, 0, aName);
+    add(compareResult, 1, bName);
+    return out;
+  }, [result, compareResult, strategies, strategyId, compareId]);
+
   // Flatten round-trip trades into individual buy/sell actions in time order,
   // so the log reads like the chart markers: why it bought, then why it sold.
   const events = useMemo<TradeEvent[]>(() => {
@@ -776,6 +805,10 @@ export default function Backtest() {
                   { label: "Trades", a: String(A.trades), b: String(B.trades), aWins: null },
                   { label: "Profit factor", a: A.profit_factor != null ? String(A.profit_factor) : "—", b: B.profit_factor != null ? String(B.profit_factor) : "—", aWins: cmp(A.profit_factor, B.profit_factor, true) },
                   { label: "Return on money used", a: pct(A.return_on_deployed_pct), b: pct(B.return_on_deployed_pct), aWins: cmp(A.return_on_deployed_pct, B.return_on_deployed_pct, true) },
+                  // Capital-deployment context per strategy (neither "wins" — more
+                  // deployed isn't inherently better, it's just how each behaved).
+                  { label: "Most ever invested", a: `$${A.max_deployed_usd.toLocaleString()} (${A.pct_capital_deployed}%)`, b: `$${B.max_deployed_usd.toLocaleString()} (${B.pct_capital_deployed}%)`, aWins: null },
+                  { label: "Time in market", a: `${A.time_in_market_pct}%`, b: `${B.time_in_market_pct}%`, aWins: null },
                 ];
                 return (
                   <div className="compare-table">
@@ -807,7 +840,7 @@ export default function Backtest() {
                 );
               })()}
 
-            {result.trades > 0 && (
+            {result.trades > 0 && !compareResult && (
               <div className="deployment">
                 <h4>
                   How much of your money actually worked? <InfoTip k="capital_deployed" />
@@ -839,7 +872,7 @@ export default function Backtest() {
 
             <LineChart
               labels={result.equity_days}
-              markers={compareResult ? [] : markers}
+              markers={compareResult ? compareMarkers : markers}
               noTradeReasons={compareResult ? undefined : result.no_trade_reasons}
               series={[
                 {
@@ -905,6 +938,9 @@ export default function Backtest() {
               </div>
             )}
           </div>
+          {/* Two full trade logs side by side is noise — in compare mode the
+              chart's hover markers cover "who traded when". Single mode only. */}
+          {!compareResult && (
           <div className="card">
             <h3>
               Trade log — every buy, sell, and idle stretch in order{" "}
@@ -962,6 +998,7 @@ export default function Backtest() {
             </table>
             </div>
           </div>
+          )}
         </>
       )}
       </>

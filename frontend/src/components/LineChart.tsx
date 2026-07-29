@@ -10,6 +10,10 @@ export interface ChartMarker {
   index: number;
   kind: "buy" | "sell";
   text: string;
+  // Which series line the marker rides (default 0 — the first/strategy line).
+  // Comparison charts put strategy B's trades on series 1 so each strategy's
+  // markers sit on its own equity line.
+  seriesIndex?: number;
 }
 
 /** Multi-series % chart with a hover crosshair and optional trade markers.
@@ -115,9 +119,9 @@ export default function LineChart({
           <path key={s.label} d={path(s.values)} fill="none" stroke={s.color} strokeWidth="2" />
         ))}
 
-        {/* trade markers ride the first series (the strategy's own equity) */}
+        {/* trade markers ride their own series line (default the first) */}
         {markers.map((m, i) => {
-          const v = series[0]?.values[m.index];
+          const v = series[m.seriesIndex ?? 0]?.values[m.index];
           if (v == null) return null;
           const cx = model.x(m.index);
           const cy = model.y(v);

@@ -21,6 +21,22 @@ in-sample window — feeding the indicators. So both slices judge the strategy
 with live signals from their very first traded bar. If you optimized a MACD or
 RSI strategy before, re-run it: the out-of-sample numbers were understated.
 
+## Comparison backtest: less duplication, a real two-line read (2026-07-29)
+
+Running a backtest with a "Compare against" strategy used to repeat most of the
+single-strategy layout. Tightened it up so the comparison reads as a comparison:
+
+- **Both strategies' trades now show on the chart.** The equity graph already
+  drew two lines; now each strategy's buys/sells sit on *its own* line, and
+  hovering any day lists who traded and why (name-prefixed) — so you get the
+  trade detail without two separate logs.
+- **The trade log is hidden in compare mode.** Two full logs side by side was
+  noise; the chart's hover covers "who traded when".
+- **Capital deployment is per strategy.** "Most ever invested" and "Time in
+  market" are now rows in the head-to-head table (alongside return on money
+  used), so you can see how each strategy used its cash in one place instead of
+  a duplicated section.
+
 ## Sizing guardrails: catch the "all-in" trap before it bricks a strategy (2026-07-29)
 
 A subtle, costly config trap: if your **$ per trade** is as large as your whole
