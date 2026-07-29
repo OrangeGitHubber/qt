@@ -39,6 +39,28 @@ in-sample window — feeding the indicators. So both slices judge the strategy
 with live signals from their very first traded bar. If you optimized a MACD or
 RSI strategy before, re-run it: the out-of-sample numbers were understated.
 
+## Backtest: "Compare" is its own mode, and bar size / cash are automatic (2026-07-29)
+
+Tidied the backtest form so it stops asking for things it can figure out itself:
+
+- **Three modes now: Single strategy · Compare · Portfolio.** "Compare against"
+  used to sit on the single-strategy form always; now it only appears when you
+  pick the **Compare** tab. Single mode is just one strategy, clean.
+- **Bar size is no longer a dropdown — it's derived from the strategy.** MACD/RSI
+  → 1 Day; VWAP → 15 Min; a plain strategy follows its trading style (swing → 1
+  Day, intraday → 15 Min). **1-hour is gone**: 15-min is a strictly more faithful
+  intraday simulation, and the live engine ticks every ~60s, so an hourly bar
+  would miss intraday stops and VWAP crosses. In Compare mode both strategies
+  share the finer of the two bar sizes (they must, to sit on one chart); if one
+  is daily-only and the other intraday-only, that's flagged as untestable
+  together.
+- **Starting cash is no longer typed — it's the strategy's sleeve.** That's the
+  capital it actually gets live; an arbitrary number just made idle cash look
+  like a strategy flaw. In Compare mode each strategy runs on its own sleeve.
+
+This mirrors the Portfolio backtest, which already derived its account and bar
+size. History (days) and spread cost stay editable.
+
 ## Comparison backtest: less duplication, a real two-line read (2026-07-29)
 
 Running a backtest with a "Compare against" strategy used to repeat most of the

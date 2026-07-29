@@ -84,6 +84,19 @@ function stratWantsDaily(s: StrategyRow): boolean {
   );
 }
 
+// The bar size is DERIVED from the strategy, never chosen: MACD/RSI → 1 Day
+// (daily signals, matching live); VWAP → 15 Min (an intraday measure); a plain
+// strategy follows its own trading style (swing → daily, intraday → 15-min).
+// 1-hour is intentionally gone: 15-min is a strictly more faithful intraday
+// simulation and daily is right for daily signals — the live engine ticks every
+// ~60s, so a coarse hourly bar would miss intraday stops and VWAP crosses.
+function deriveTimeframe(s: StrategyRow | undefined): "1Day" | "15Min" {
+  if (!s) return "1Day";
+  if (stratWantsDaily(s)) return "1Day";
+  if (stratWantsIntraday(s)) return "15Min";
+  return s.swing_mode ? "1Day" : "15Min";
+}
+
 // Read-only display of a strategy's resolved universe, shown under its dropdown.
 function UniverseChips({ uni }: { uni: { symbols: string[]; label: string } }) {
   if (!uni.label) return null;
@@ -106,15 +119,13 @@ function UniverseChips({ uni }: { uni: { symbols: string[]; label: string } }) {
 }
 
 export default function Backtest() {
-  const [mode, setMode] = useState<"single" | "portfolio">("single");
+  const [mode, setMode] = useState<"single" | "compare" | "portfolio">("single");
   const [strategies, setStrategies] = useState<StrategyRow[]>([]);
   const [strategyId, setStrategyId] = useState<number | null>(null);
   const [baskets, setBaskets] = useState<Basket[]>([]);
   const [scannerReplay, setScannerReplay] = useState(false);
   const [replayTopN, setReplayTopN] = useState(10);
   const [days, setDays] = useState(90);
-  const [timeframe, setTimeframe] = useState("1Hour");
-  const [cash, setCash] = useState(5000);
   const [spread, setSpread] = useState(0.1);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -256,20 +267,33 @@ export default function Backtest() {
   const compareStrat = strategies.find((s) => s.id === compareId);
   const uniB = resolveUniverse(compareStrat, baskets);
 
-  // On strategy change: default cash to the strategy's own sleeve, mirror its
-  // scanner-replay universe, and snap the bar size to one it can be tested on
-  // (MACD/RSI → 1 Day; VWAP → intraday). No symbol picking — the universe is the
-  // strategy's own, resolved above.
+  // On strategy change: mirror its scanner-replay universe. Bar size and starting
+  // cash are no longer chosen — they're derived below (the strategy's signals set
+  // the bar size; its sleeve is the account).
   useEffect(() => {
     const strat = strategies.find((s) => s.id === strategyId);
     if (!strat) return;
-    setCash(Math.max(strat.sleeve_usd || 5000, 100));
     setScannerReplay(strat.universe === "scanner");
     if (strat.universe === "scanner") setReplayTopN(strat.top_n || 10);
-    if (stratWantsDaily(strat)) setTimeframe("1Day");
-    else if (stratWantsIntraday(strat)) setTimeframe("1Hour");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [strategyId, strategies, baskets]);
+
+  // Bar size + account are DERIVED, not chosen. Single mode: from the one
+  // strategy. Compare mode: both share ONE timeline (the chart needs it), so the
+  // bar size is the finer of the two; each strategy still runs on its own sleeve.
+  const singleTimeframe = deriveTimeframe(strategy);
+  const singleCash = Math.max(strategy?.sleeve_usd || 100, 100);
+  const compareTf = compareStrat ? deriveTimeframe(compareStrat) : singleTimeframe;
+  const compareTimeframe: "1Day" | "15Min" =
+    singleTimeframe === "15Min" || compareTf === "15Min" ? "15Min" : "1Day";
+  // A genuine conflict: the shared bar size violates a strategy's HARD lock
+  // (MACD/RSI must be daily; VWAP must be intraday) — can't test them together.
+  const barConflict = (s: StrategyRow | undefined) =>
+    !!s &&
+    ((compareTimeframe === "15Min" && stratWantsDaily(s)) ||
+      (compareTimeframe === "1Day" && stratWantsIntraday(s)));
+  const compareMixedBars = barConflict(strategy) || barConflict(compareStrat);
+  const effectiveTimeframe = mode === "compare" ? compareTimeframe : singleTimeframe;
 
   async function run(e: FormEvent) {
     e.preventDefault();
@@ -278,9 +302,11 @@ export default function Backtest() {
     setError(null);
     setResult(null);
     setCompareResult(null);
-    // Shared settings (period, bar size, spread); each strategy runs on its OWN
-    // universe and its own sleeve — a head-to-head of complete configs.
-    const shared = { days, timeframe, spread_pct: spread };
+    // Shared settings (period, derived bar size, spread); each strategy runs on
+    // its OWN universe and its own sleeve — a head-to-head of complete configs.
+    const shared = { days, timeframe: effectiveTimeframe, spread_pct: spread };
+    // Only compare mode runs a second strategy.
+    const doCompare = mode === "compare" && compareStrat && compareId !== strategyId;
     try {
       const [r, cr] = await Promise.all([
         runBacktest({
@@ -288,10 +314,10 @@ export default function Backtest() {
           symbols: uniA.symbols,
           scanner_replay: scannerReplay,
           replay_top_n: replayTopN,
-          starting_cash: cash,
+          starting_cash: singleCash,
           ...shared,
         }),
-        compareStrat && compareId !== strategyId
+        doCompare
           ? runBacktest({
               strategy_id: compareStrat.id,
               symbols: uniB.symbols,
@@ -370,8 +396,23 @@ export default function Backtest() {
       <div className="toolbar">
         <h2>Backtest</h2>
         <div className="seg">
-          <button type="button" className={mode === "single" ? "active" : ""} onClick={() => setMode("single")}>
+          <button
+            type="button"
+            className={mode === "single" ? "active" : ""}
+            onClick={() => {
+              setMode("single");
+              setCompareId(null);
+              setCompareResult(null);
+            }}
+          >
             Single strategy
+          </button>
+          <button
+            type="button"
+            className={mode === "compare" ? "active" : ""}
+            onClick={() => setMode("compare")}
+          >
+            Compare
           </button>
           <button type="button" className={mode === "portfolio" ? "active" : ""} onClick={() => setMode("portfolio")}>
             Portfolio
@@ -596,7 +637,7 @@ export default function Backtest() {
         </>
       )}
 
-      {mode === "single" && (
+      {mode !== "portfolio" && (
       <>
       <div className="card">
         <p className="hint">
@@ -624,26 +665,37 @@ export default function Backtest() {
               </label>
               <UniverseChips uni={uniA} />
             </div>
-            <div className="bt-strat-col">
-              <label>
-                <span className="field-cap">Compare against (optional)</span>
-                <select value={compareId ?? ""} onChange={(e) => setCompareId(e.target.value ? Number(e.target.value) : null)}>
-                  <option value="">— none —</option>
-                  {strategies
-                    .filter((s) => s.id !== strategyId)
-                    .map((s) => (
-                      <option key={s.id} value={s.id}>
-                        {s.name} ({s.asset_class})
-                      </option>
-                    ))}
-                </select>
-              </label>
-              {compareStrat && <UniverseChips uni={uniB} />}
-            </div>
+            {mode === "compare" && (
+              <div className="bt-strat-col">
+                <label>
+                  <span className="field-cap">Compare against</span>
+                  <select value={compareId ?? ""} onChange={(e) => setCompareId(e.target.value ? Number(e.target.value) : null)}>
+                    <option value="">— pick a strategy —</option>
+                    {strategies
+                      .filter((s) => s.id !== strategyId)
+                      .map((s) => (
+                        <option key={s.id} value={s.id}>
+                          {s.name} ({s.asset_class})
+                        </option>
+                      ))}
+                  </select>
+                </label>
+                {compareStrat && <UniverseChips uni={uniB} />}
+              </div>
+            )}
           </div>
           <p className="hint">
-            Each strategy is tested on <strong>its own universe</strong> (shown above) and its own sleeve — the backtest
-            honours whatever the strategy is set to; the symbols aren't editable here.
+            {mode === "compare" ? (
+              <>
+                Both strategies run on the <strong>same period and bar size</strong>, each on its <strong>own universe
+                and sleeve</strong> — a head-to-head where only the strategy rules differ. Symbols aren't editable here.
+              </>
+            ) : (
+              <>
+                Tested on <strong>its own universe</strong> (shown above) and its own sleeve — the backtest honours
+                whatever the strategy is set to; the symbols aren't editable here.
+              </>
+            )}
           </p>
           {/* Scanner replay is ONLY meaningful for a scanner-universe strategy —
               it reconstructs each day's top risers. A basket / custom / watchlist
@@ -682,7 +734,8 @@ export default function Backtest() {
               )}
             </>
           )}
-          {/* HOW to test: numeric/timeframe params, all uniform height. */}
+          {/* HOW to test: period + spread only. Bar size and starting cash are
+              DERIVED (shown below), never chosen. */}
           <div className="filter-grid">
             <label>
               <span className="field-cap">
@@ -692,46 +745,55 @@ export default function Backtest() {
             </label>
             <label>
               <span className="field-cap">
-                Bar size <InfoTip k="bar" />
-              </span>
-              <select value={timeframe} onChange={(e) => setTimeframe(e.target.value)}>
-                <option value="15Min" disabled={usesDailySignals}>15 minutes (slow, precise)</option>
-                <option value="1Hour" disabled={usesDailySignals}>1 hour (recommended)</option>
-                <option value="1Day" disabled={usesVwap}>1 day (fast, coarse)</option>
-              </select>
-              {usesDailySignals && (
-                <span className="field-help warn">
-                  <IconWarn className="icon-inline" /> This strategy uses MACD/RSI (daily signals), so the bar size
-                  can't be changed — it's fixed to 1 Day so the backtest matches the live engine.
-                </span>
-              )}
-              {usesVwap && (
-                <span className="field-help warn">
-                  <IconWarn className="icon-inline" /> This strategy uses VWAP (an intraday measure), so the bar size
-                  can't be set to 1 Day.
-                </span>
-              )}
-            </label>
-            <label>
-              <span className="field-cap">
-                Starting cash ($) <InfoTip k="starting_cash" />
-              </span>
-              <NumberField min={100} step="any" value={cash} onChange={setCash} />
-            </label>
-            <label>
-              <span className="field-cap">
                 Spread cost per side (%) <InfoTip k="spread_cost" />
               </span>
               <NumberField min={0} max={2} step={0.05} value={spread} onChange={setSpread} />
             </label>
           </div>
+          {/* Bar size + account are derived, not chosen: an arbitrary starting
+              cash makes idle money look like a strategy flaw, and a coarse bar
+              hides intraday stops. Both come straight from the strategy. */}
+          <p className="hint">
+            <strong>Bar size {effectiveTimeframe === "1Day" ? "1 Day" : "15 Min"}</strong>
+            {usesDailySignals
+              ? " (MACD/RSI are daily signals)"
+              : usesVwap
+                ? " (VWAP is an intraday measure)"
+                : mode === "compare"
+                  ? " (the finer of the two strategies)"
+                  : strategy?.swing_mode
+                    ? " (swing strategy)"
+                    : " (intraday strategy)"}{" "}
+            ·{" "}
+            {mode === "compare" ? (
+              <>
+                each strategy's account is <strong>its own sleeve</strong>
+              </>
+            ) : (
+              <>
+                account <strong>${singleCash.toLocaleString()}</strong> (this strategy's sleeve)
+              </>
+            )}{" "}
+            — both set automatically from the strategy.
+          </p>
+          {mode === "compare" && compareMixedBars && (
+            <p className="hint warn">
+              <IconWarn className="icon-inline" /> These two strategies need <strong>different bar sizes</strong> (one
+              is daily-only, the other intraday-only), so they can't share one timeline. Compare against a
+              same-granularity strategy, or test each on its own.
+            </p>
+          )}
           <p className="hint">
             A backtest tests the strategy's <strong>whole universe symbol set</strong> over history — it can't
             reconstruct the historical daily top-N ranking that the live engine does, so top-N is a live entry-selection
             feature only.
           </p>
           {error && <div className="error">{error}</div>}
-          <button disabled={busy || strategyId === null}>{busy ? "Replaying history…" : "Run backtest"}</button>
+          <button
+            disabled={busy || strategyId === null || (mode === "compare" && (!compareId || compareMixedBars))}
+          >
+            {busy ? "Replaying history…" : mode === "compare" ? "Run comparison" : "Run backtest"}
+          </button>
         </form>
       </div>
 
