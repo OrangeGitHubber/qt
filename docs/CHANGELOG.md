@@ -3,6 +3,24 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Optimizer fix: same MACD/RSI warm-up, and it mattered more here (2026-07-29)
+
+The optimizer splits history into an in-sample slice (it searches on) and an
+out-of-sample slice (it validates on — the number you're meant to trust). Both
+slices had the same dead zone as the plain backtest, and the out-of-sample one
+was hit hardest: it starts partway through the window with **no** earlier bars,
+so for a MACD/RSI strategy the signal was undefined for roughly its first 35
+bars — which for a typical run is nearly the whole slice. The "honest verdict"
+was effectively being measured with the indicator switched off.
+
+Now the optimizer fetches the same ~150 days of warm-up before the window (daily
+MACD/RSI/ATR strategies only) and gives **each** slice its own warm-up history:
+the in-sample slice trades from the window start, the out-of-sample slice trades
+from the split boundary with everything before it — including the whole
+in-sample window — feeding the indicators. So both slices judge the strategy
+with live signals from their very first traded bar. If you optimized a MACD or
+RSI strategy before, re-run it: the out-of-sample numbers were understated.
+
 ## Backtest fix: MACD/RSI now work from day one of the window (2026-07-29)
 
 Fixed a real bug that cost a lot of debugging time: a MACD or RSI strategy

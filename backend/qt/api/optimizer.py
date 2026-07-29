@@ -119,15 +119,26 @@ async def _run_search(
     day's top-N risers) so every backtest can only ENTER a symbol on the days it
     actually rose — the search then optimizes the strategy against its real
     universe, not a stand-in watchlist."""
+    # Warm-up: a daily MACD/RSI/ATR search needs history BEFORE the window so the
+    # indicators are defined from the first traded bar — in BOTH the in-sample and
+    # out-of-sample slices (the split gives each its own warm-up prefix). Without
+    # it the out-of-sample slice — the honest verdict number — begins mid-window
+    # with the signal dead for its first ~35 bars. Daily-only, same as the backtest.
+    from qt.api.backtest import WARMUP_DAYS, _needs_warmup
+
+    sim_start: datetime | None = None
     try:
         if prebuilt_bars is not None:
             bars = prebuilt_bars
         else:
             _progress.phase = "downloading bars"
-            start = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%SZ")
+            window_start = datetime.now(timezone.utc) - timedelta(days=days)
+            warmup = WARMUP_DAYS if timeframe == "1Day" and _needs_warmup(strategy_dict["params"]) else 0
+            start = (window_start - timedelta(days=warmup)).strftime("%Y-%m-%dT%H:%M:%SZ")
             bars = await client.historical_bars(symbols, asset_class, timeframe, start)
             if not any(bars.get(s) for s in symbols):
                 raise ValueError("No historical bars for those symbols/timeframe.")
+            sim_start = window_start if warmup else None
 
         _progress.phase = "searching"
 
@@ -147,6 +158,7 @@ async def _run_search(
             market=market,
             eligible_by_day=eligible_by_day,
             progress=on_progress,
+            sim_start=sim_start,
         )
         result["strategy_name"] = _progress.strategy_name
         result["timeframe"] = timeframe

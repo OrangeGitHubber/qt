@@ -107,27 +107,43 @@ def _window(start: datetime, end: datetime) -> dict:
 
 
 def split_in_out_of_sample(
-    bars_by_symbol: dict[str, list[dict]], in_sample_frac: float = 0.7
+    bars_by_symbol: dict[str, list[dict]],
+    in_sample_frac: float = 0.7,
+    window_start: datetime | None = None,
 ) -> tuple[dict[str, list[dict]], dict[str, list[dict]], datetime, datetime, datetime]:
     """Split every symbol's bars at a single global time boundary so all symbols
     share the SAME in/out split. In-sample = bars at/ before the boundary (the
     first `in_sample_frac` of the calendar window); out-of-sample = bars strictly
     after it. Splitting by time (not by count) keeps the two slices genuinely
     chronological and non-overlapping — the out-of-sample slice is always the
-    later, unseen market."""
+    later, unseen market.
+
+    `window_start` enables WARM-UP mode (for daily MACD/RSI/ATR strategies): the
+    leading bars before `window_start` are warm-up history, not part of the
+    optimization window, so (a) the in/out boundary is measured over the window
+    ONLY (warm-up doesn't shift it), and (b) BOTH slices carry a warm-up prefix so
+    their indicators are live from the first traded bar — the in-sample slice keeps
+    the bars up to the boundary (warm-up included), and the out-of-sample slice
+    gets the FULL series (everything before the boundary is its warm-up). The
+    caller gates trading with each slice's sim_start. Without `window_start` the
+    split is unchanged: the two slices are disjoint and neither has warm-up."""
     all_ts = sorted(
         _parse_ts(b["t"]) for series in bars_by_symbol.values() for b in series
     )
     if not all_ts:
         raise ValueError("No historical bars to optimize over.")
     t0, t1 = all_ts[0], all_ts[-1]
-    boundary = t0 + (t1 - t0) * in_sample_frac
+    origin = window_start if window_start is not None else t0
+    boundary = origin + (t1 - origin) * in_sample_frac
     in_sample: dict[str, list[dict]] = {}
     out_sample: dict[str, list[dict]] = {}
     for symbol, series in bars_by_symbol.items():
         in_sample[symbol] = [b for b in series if _parse_ts(b["t"]) <= boundary]
-        out_sample[symbol] = [b for b in series if _parse_ts(b["t"]) > boundary]
-    return in_sample, out_sample, t0, boundary, t1
+        if window_start is None:
+            out_sample[symbol] = [b for b in series if _parse_ts(b["t"]) > boundary]
+        else:
+            out_sample[symbol] = list(series)  # full series; sim_start=boundary gates trading
+    return in_sample, out_sample, origin, boundary, t1
 
 
 def _apply_combo(base_strategy: dict, combo: dict) -> dict:
@@ -210,6 +226,7 @@ def optimize(
     eligible_by_day: dict[str, set[str]] | None = None,
     backtest_fn: BacktestFn = run_backtest,
     progress: ProgressFn | None = None,
+    sim_start: datetime | None = None,
 ) -> dict:
     """Search the momentum param space and return the out-of-sample-validated
     findings.
@@ -230,8 +247,17 @@ def optimize(
     rng = random.Random(seed)
 
     in_sample, out_sample, t0, boundary, t1 = split_in_out_of_sample(
-        bars_by_symbol, in_sample_frac
+        bars_by_symbol, in_sample_frac, window_start=sim_start
     )
+
+    # Warm-up mode (daily MACD/RSI/ATR): each slice trades only its own window but
+    # keeps the earlier bars as indicator history, so neither slice has a dead zone
+    # where the signal isn't defined yet. The in-sample slice trades from the window
+    # start; the out-of-sample slice trades from the boundary (everything before it,
+    # including the whole in-sample window, is warm-up). Passed only when warm-up is
+    # active so injected test fakes with the plain signature stay callable.
+    in_kw = {} if sim_start is None else {"sim_start": sim_start}
+    out_kw = {} if sim_start is None else {"sim_start": boundary}
 
     # In scanner-replay mode a symbol may only ENTER on the days it was a top-N
     # riser. The same eligible-by-day map is passed to both slices: run_backtest
@@ -243,7 +269,7 @@ def optimize(
         return backtest_fn(
             strat, in_sample, risk,
             starting_cash=starting_cash, spread_pct=spread_pct, market=market,
-            eligible_by_day=eligible_by_day,
+            eligible_by_day=eligible_by_day, **in_kw,
         )
 
     def run_out_of_sample(combo: dict) -> dict:
@@ -251,7 +277,7 @@ def optimize(
         return backtest_fn(
             strat, out_sample, risk,
             starting_cash=starting_cash, spread_pct=spread_pct, market=market,
-            eligible_by_day=eligible_by_day,
+            eligible_by_day=eligible_by_day, **out_kw,
         )
 
     # ---- 1 & 2: random search over the coarse grid (in-sample only) ----

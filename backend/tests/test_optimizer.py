@@ -55,12 +55,15 @@ class RecordingFake:
         self.windows: set[tuple[str, str]] = set()
         self.combos_seen: list[tuple] = []
         self.eligible_seen: list = []
+        self.sim_starts: list = []
 
     def __call__(
         self, strategy, bars_by_symbol, risk, *,
         starting_cash=5000.0, spread_pct=0.1, market="stock", eligible_by_day=None,
+        sim_start=None,
     ):
         self.eligible_seen.append(eligible_by_day)
+        self.sim_starts.append(sim_start)
         ts = sorted(b["t"] for series in bars_by_symbol.values() for b in series)
         window = (ts[0], ts[-1])
         self.windows.add(window)
@@ -107,6 +110,39 @@ def test_out_of_sample_split_is_applied():
     # The result reports both windows separately.
     assert result["in_sample_window"]["start"] < result["out_of_sample_window"]["start"]
     assert result["in_sample_window"]["end"] <= result["out_of_sample_window"]["start"]
+
+
+def test_warmup_gives_each_slice_its_own_indicator_history():
+    # The same dead-zone bug as the backtest, but WORSE for the optimizer: without
+    # warm-up the out-of-sample slice starts mid-window with no prior bars, so a
+    # daily MACD/RSI signal is undefined for its first ~35 bars — and that slice IS
+    # the honest verdict. In warm-up mode every slice must carry a history prefix.
+    fake = RecordingFake()
+    bars = {"AAA": _bars(60)}  # first 20 bars are warm-up; the window is the last 40
+    window_start = datetime.fromisoformat(bars["AAA"][20]["t"].replace("Z", "+00:00"))
+    optimizer.optimize(
+        BASE_STRATEGY, bars, {}, iterations=8, seed=1,
+        backtest_fn=fake, sim_start=window_start,
+    )
+    first_bar = bars["AAA"][0]["t"]
+    # Every slice the search ran started its BARS at the very first (warm-up) bar,
+    # so both the in-sample and out-of-sample runs had indicator history before
+    # their first traded bar — no dead zone in either.
+    assert all(w[0] == first_bar for w in fake.windows)
+    # Two distinct trading starts: the window start (in-sample) and the split
+    # boundary (out-of-sample). Neither is None — warm-up gates trading on both.
+    assert None not in fake.sim_starts
+    assert window_start in fake.sim_starts
+    assert len(set(fake.sim_starts)) == 2
+
+
+def test_no_warmup_keeps_slices_disjoint_and_ungated():
+    # Backward-compat: with no sim_start the split is unchanged — disjoint slices,
+    # no warm-up, and the fake is never handed a sim_start (protects the plain
+    # injected-fake signature everywhere else).
+    _, fake = _run()
+    assert len(fake.windows) == 2
+    assert set(fake.sim_starts) == {None}
 
 
 def test_combination_count_is_reported_and_matches_distinct_combos():
