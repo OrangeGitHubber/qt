@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 interface Series {
   label: string;
@@ -24,6 +24,7 @@ export default function LineChart({
   series,
   markers = [],
   noTradeReasons,
+  onZoomChange,
 }: {
   labels: string[];
   series: Series[];
@@ -31,6 +32,9 @@ export default function LineChart({
   // {day label -> why no entry} — shown on the panel when you land on a day the
   // strategy traded nothing, so a flat stretch is explained, not a mystery.
   noTradeReasons?: Record<string, string>;
+  // Reports the visible index window [start, end] while zoomed (null = full
+  // range), so the parent can show a trade log scoped to what's on screen.
+  onZoomChange?: (range: [number, number] | null) => void;
 }) {
   // `hover` is sticky: once you've moved over a day it stays selected after the
   // cursor leaves, so a value can be read without it blanking the instant you
@@ -69,6 +73,19 @@ export default function LineChart({
     const y = (v: number) => H - padB - ((v - min) / span) * (H - padT - padB);
     return { min, max, x, y };
   }, [labels, series, viewStart, viewEnd]);
+
+  // Report the visible window up so the parent can scope a trade log to it.
+  useEffect(() => {
+    onZoomChange?.(zoom ? [viewStart, viewEnd] : null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [zoom, viewStart, viewEnd]);
+
+  // A new dataset (different day range) clears a stale zoom so it can't point at
+  // the previous run's window.
+  useEffect(() => {
+    setZoom(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [labels.length, labels[0], labels[labels.length - 1]]);
 
   if (!model) return <p className="hint">Not enough data yet — the chart grows one point per day.</p>;
 

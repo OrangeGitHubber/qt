@@ -132,6 +132,9 @@ export default function Backtest() {
   const [result, setResult] = useState<BacktestResult | null>(null);
   const [compareId, setCompareId] = useState<number | null>(null); // optional 2nd strategy
   const [compareResult, setCompareResult] = useState<BacktestResult | null>(null);
+  // Visible index window [start, end] reported by the chart while zoomed (null =
+  // full range) — drives the "trades in view" panel.
+  const [zoomRange, setZoomRange] = useState<[number, number] | null>(null);
 
   // Portfolio mode: N strategies sharing ONE account + the same global rails.
   const [portfolioIds, setPortfolioIds] = useState<number[]>([]);
@@ -189,6 +192,33 @@ export default function Backtest() {
     add(compareResult, 1, bName);
     return out;
   }, [result, compareResult, strategies, strategyId, compareId]);
+
+  // Trades whose entry/exit falls inside the zoomed day-window, tagged by
+  // strategy (compare mode) and time-ordered — the "what happened in this span"
+  // panel that appears under the chart while zoomed.
+  const zoomEvents = useMemo<(TradeEvent & { strategy?: string })[]>(() => {
+    if (!result || !zoomRange) return [];
+    const days = result.equity_days;
+    const lo = days[Math.max(0, zoomRange[0])];
+    const hi = days[Math.min(days.length - 1, zoomRange[1])];
+    if (!lo || !hi) return [];
+    const inWin = (d?: string | null) => !!d && d >= lo && d <= hi;
+    const aName = strategies.find((s) => s.id === strategyId)?.name ?? "A";
+    const bName = strategies.find((s) => s.id === compareId)?.name ?? "B";
+    const rows: (TradeEvent & { strategy?: string })[] = [];
+    const push = (res: BacktestResult, name?: string) => {
+      for (const t of res.trade_list) {
+        if (inWin(t.entry_day))
+          rows.push({ at: t.entry_at, action: "Bought", symbol: t.symbol, price: t.entry_price, qty: t.qty, reason: t.entry_reason, strategy: name });
+        if (t.exit_at && inWin(t.exit_day))
+          rows.push({ at: t.exit_at, action: "Sold", symbol: t.symbol, price: t.exit_price, pnl: t.pnl, reason: t.exit_reason, strategy: name });
+      }
+    };
+    push(result, compareResult ? aName : undefined);
+    if (compareResult) push(compareResult, bName);
+    rows.sort((a, b) => new Date(a.at).getTime() - new Date(b.at).getTime());
+    return rows;
+  }, [result, compareResult, zoomRange, strategies, strategyId, compareId]);
 
   // Flatten round-trip trades into individual buy/sell actions in time order,
   // so the log reads like the chart markers: why it bought, then why it sold.
@@ -302,6 +332,7 @@ export default function Backtest() {
     setError(null);
     setResult(null);
     setCompareResult(null);
+    setZoomRange(null);
     // Shared settings (period, derived bar size, spread); each strategy runs on
     // its OWN universe and its own sleeve — a head-to-head of complete configs.
     const shared = { days, timeframe: effectiveTimeframe, spread_pct: spread };
@@ -934,6 +965,7 @@ export default function Backtest() {
 
             <LineChart
               labels={result.equity_days}
+              onZoomChange={setZoomRange}
               markers={compareResult ? compareMarkers : markers}
               noTradeReasons={compareResult ? undefined : result.no_trade_reasons}
               series={[
@@ -996,6 +1028,59 @@ export default function Backtest() {
                         : `The broad market (${result.benchmark_symbol}) returned ${(bench - bot).toFixed(2)} points more.`;
                     })()}
                   </p>
+                )}
+              </div>
+            )}
+            {/* Zoom in on a busy stretch → the trades inside that window, tagged
+                by strategy in compare mode, so a divergence between two similar
+                strategies can be read trade-by-trade without the full log. */}
+            {zoomRange && (
+              <div className="deployment">
+                <h4>
+                  Trades in view{" "}
+                  <span className="hint">
+                    {result.equity_days[Math.max(0, zoomRange[0])]} –{" "}
+                    {result.equity_days[Math.min(result.equity_days.length - 1, zoomRange[1])]}
+                  </span>
+                </h4>
+                {zoomEvents.length === 0 ? (
+                  <p className="hint">No trades in this range.</p>
+                ) : (
+                  <div className="table-scroll">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>Date</th>
+                          {compareResult && <th>Strategy</th>}
+                          <th>Action</th>
+                          <th>Symbol</th>
+                          <th>Price</th>
+                          <th>P&amp;L</th>
+                          <th>Why</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {zoomEvents.map((ev, i) => (
+                          <tr key={i}>
+                            <td>{new Date(ev.at).toLocaleDateString()}</td>
+                            {compareResult && <td className="sym">{ev.strategy}</td>}
+                            <td className={ev.action === "Bought" ? "up" : "down"}>
+                              {ev.action === "Bought" ? "▲ Bought" : "▼ Sold"}
+                            </td>
+                            <td className="sym">{ev.symbol}</td>
+                            <td>
+                              ${ev.price.toFixed(4)}
+                              {ev.qty != null && <span className="hint"> ×{ev.qty}</span>}
+                            </td>
+                            <td className={ev.pnl == null ? "" : ev.pnl >= 0 ? "up" : "down"}>
+                              {ev.pnl == null ? <span className="hint">—</span> : `$${ev.pnl.toFixed(2)}`}
+                            </td>
+                            <td className="hint">{ev.reason}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
                 )}
               </div>
             )}

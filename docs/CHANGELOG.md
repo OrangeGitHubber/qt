@@ -39,6 +39,16 @@ in-sample window — feeding the indicators. So both slices judge the strategy
 with live signals from their very first traded bar. If you optimized a MACD or
 RSI strategy before, re-run it: the out-of-sample numbers were understated.
 
+## Zoom a chart → see the trades in that window (2026-07-29)
+
+Building on the drag-to-zoom charts: when you zoom the backtest chart into a
+stretch, a **"Trades in view"** panel now appears under it, listing every buy and
+sell inside the visible dates. In **Compare** mode it's tagged by strategy — so
+when two near-identical strategies diverge (one line dives, the other doesn't),
+you can zoom the divergence and read, trade by trade, exactly what each one did
+differently. The chart reports its visible window up to the page; the panel
+clears when you reset the zoom or run a new backtest.
+
 ## Backtest: "Compare" is its own mode, and bar size / cash are automatic (2026-07-29)
 
 Tidied the backtest form so it stops asking for things it can figure out itself:
