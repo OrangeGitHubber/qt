@@ -525,7 +525,9 @@ export default function Optimizer() {
             <div className="deployment">
               <h4>Winning settings (the draft)</h4>
               <div className="stats">
-                {KNOB_ORDER.map((k) => (
+                {KNOB_ORDER.filter(
+                  (k) => (result.best!.params as unknown as Record<string, number>)[k] !== undefined,
+                ).map((k) => (
                   <Stat
                     key={k}
                     label={KNOB_LABELS[k]}
