@@ -745,6 +745,7 @@ export interface WatchlistRow {
   change_30d_pct: number | null;
   atr_pct: number | null;
   vs_sma200_pct: number | null;
+  rsi: number | null;
   bars_available: number;
 }
 

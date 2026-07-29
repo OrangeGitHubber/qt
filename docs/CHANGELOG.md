@@ -3,6 +3,17 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Watchlist: RSI column + a column configurator (2026-07-29)
+
+The watchlist now computes **RSI (14)** per symbol — the 0–100 momentum
+oscillator (>70 overbought, <30 oversold) — shown as its own column, with
+overbought/oversold values subtly cued and the reading explained in its ? bubble.
+
+The old all-or-nothing "Show extra columns" toggle is replaced by a **Columns**
+menu: tick exactly which optional columns you want (30 day, Daily move, vs 200d
+avg, RSI, Trend), and your choice is remembered in the browser. Adding more
+columns later is now a one-line change.
+
 ## Optional market orders + fractional shares, per strategy (2026-07-29)
 
 QT's default is still **marketable limit orders and whole shares** — the

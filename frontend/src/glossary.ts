@@ -11,6 +11,8 @@ export interface GlossaryEntry {
   url: string;
 }
 
+export type InfoKey = keyof typeof GLOSSARY;
+
 export const GLOSSARY: Record<string, GlossaryEntry> = {
   trailing_stop: {
     term: "Trailing stop",

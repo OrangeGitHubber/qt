@@ -65,6 +65,33 @@ def vs_sma_pct(bars: list[dict], period: int = 200, current_price: float | None 
     return round((price / average - 1) * 100, 2)
 
 
+def rsi(bars: list[dict], period: int = 14, current_price: float | None = None) -> float | None:
+    """Wilder's Relative Strength Index over the daily closes (0–100). >70 is
+    conventionally "overbought", <30 "oversold". Needs at least `period`+1 bars.
+    `current_price` (the live quote) replaces the last close so the reading is
+    up to date intraday, matching the other stats here.
+
+    Uses Wilder's smoothing: a simple average of the first `period` gains/losses,
+    then an exponential-style running average for the rest."""
+    if len(bars) < period + 1:
+        return None
+    closes = [float(b["c"]) for b in bars]
+    if current_price is not None:
+        closes[-1] = current_price
+    deltas = [closes[i] - closes[i - 1] for i in range(1, len(closes))]
+    gains = [max(d, 0.0) for d in deltas]
+    losses = [max(-d, 0.0) for d in deltas]
+    avg_gain = sum(gains[:period]) / period
+    avg_loss = sum(losses[:period]) / period
+    for i in range(period, len(deltas)):
+        avg_gain = (avg_gain * (period - 1) + gains[i]) / period
+        avg_loss = (avg_loss * (period - 1) + losses[i]) / period
+    if avg_loss == 0:
+        return 100.0 if avg_gain > 0 else 50.0  # no losses = maxed; flat = neutral
+    rs = avg_gain / avg_loss
+    return round(100 - 100 / (1 + rs), 1)
+
+
 def _ema_series(values: list[float], period: int) -> list[float | None]:
     """EMA over `values` (oldest-first), seeded with the SMA of the first
     `period` points. Returns a list aligned to `values`; entries before the seed
@@ -121,6 +148,7 @@ def compute(bars: list[dict], current_price: float | None = None) -> dict:
         "change_30d_pct": pct_change_over(bars, 30, current_price),
         "atr_pct": atr_pct(bars, 14, current_price),
         "vs_sma200_pct": vs_sma_pct(bars, 200, current_price),
+        "rsi": rsi(bars, 14, current_price),
         "bars_available": len(bars),
     }
 

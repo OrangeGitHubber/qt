@@ -87,4 +87,39 @@ def test_compute_full_history():
     result = stats.compute(series, current_price=120.0)
     assert result["change_30d_pct"] == 20.0
     assert result["vs_sma200_pct"] == 20.0
+    assert result["rsi"] is not None
     assert result["bars_available"] == 250
+
+
+def test_rsi_all_gains_is_100():
+    series = bars([100.0 + i for i in range(20)])  # strictly rising: no losses
+    assert stats.rsi(series, 14) == 100.0
+
+
+def test_rsi_all_losses_is_0():
+    series = bars([100.0 - i for i in range(20)])  # strictly falling: no gains
+    assert stats.rsi(series, 14) == 0.0
+
+
+def test_rsi_flat_is_neutral_50():
+    assert stats.rsi(bars([100.0] * 20), 14) == 50.0
+
+
+def test_rsi_none_without_enough_bars():
+    assert stats.rsi(bars([100.0] * 10), 14) is None  # needs period + 1
+
+
+def test_rsi_stays_in_range_for_mixed_moves():
+    closes, p = [], 100.0
+    for i in range(30):
+        p += 1.0 if i % 2 == 0 else -0.9  # choppy but net-up
+        closes.append(round(p, 2))
+    val = stats.rsi(bars(closes), 14)
+    assert val is not None and 0.0 <= val <= 100.0
+    assert val > 50.0  # net upward drift → above the midline
+
+
+def test_rsi_uses_live_price_for_the_last_point():
+    # 19 flat closes (RSI 50) then a live quote well above → tilts bullish
+    flat = bars([100.0] * 19)
+    assert stats.rsi(flat, 14, current_price=130.0) > 50.0

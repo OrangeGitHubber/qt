@@ -1286,6 +1286,55 @@ details.adv[open] > summary::before {
   content: "▾ ";
 }
 
+/* Watchlist column configurator: a summary styled as a ghost chip, with a
+   floating popover of per-column checkboxes so it never shoves the table. */
+details.cols-menu {
+  position: relative;
+}
+details.cols-menu > summary {
+  list-style: none;
+  cursor: pointer;
+  user-select: none;
+  display: inline-flex;
+  align-items: center;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.35rem 0.7rem;
+  font-size: 0.85rem;
+  color: var(--text);
+}
+details.cols-menu > summary::-webkit-details-marker {
+  display: none;
+}
+details.cols-menu > summary::after {
+  content: " ▾";
+  opacity: 0.7;
+}
+details.cols-menu[open] > summary,
+details.cols-menu > summary:hover {
+  border-color: var(--accent);
+}
+.cols-popover {
+  position: absolute;
+  right: 0;
+  z-index: 30;
+  margin-top: 0.4rem;
+  min-width: 11rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  padding: 0.6rem 0.75rem;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+}
+.cols-popover label.check {
+  margin: 0;
+  font-weight: 500;
+}
+
 /* Per-strategy holdings + last-run trace: expandable diagnostics on a card. */
 details.holdings,
 details.lastrun {
