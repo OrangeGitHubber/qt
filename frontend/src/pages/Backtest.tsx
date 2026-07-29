@@ -537,22 +537,45 @@ export default function Backtest() {
                   can miss on a fast or thin move, gap overnight, or halt. Treat a good result as <em>not yet
                   disproven</em>, never proven.
                 </p>
-                <div className="stats">
-                  <Stat
-                    label="Net P&L"
-                    value={`$${portfolioResult.net_pnl.toLocaleString()} (${portfolioResult.net_pnl_pct >= 0 ? "+" : ""}${portfolioResult.net_pnl_pct}%)`}
-                    tone={portfolioResult.net_pnl >= 0 ? "up" : "down"}
-                  />
-                  <Stat label="Trades" value={String(portfolioResult.trades)} />
-                  <Stat label="Win rate" value={portfolioResult.win_rate != null ? `${portfolioResult.win_rate}%` : "—"} />
-                  <Stat label="Avg win / loss" value={`${portfolioResult.avg_win ?? "—"} / ${portfolioResult.avg_loss ?? "—"}`} />
-                  <Stat label="Profit factor" value={portfolioResult.profit_factor != null ? String(portfolioResult.profit_factor) : "—"} />
-                  <Stat
-                    label="Max drawdown"
-                    value={`${portfolioResult.max_drawdown_pct}%`}
-                    tone={portfolioResult.max_drawdown_pct > 10 ? "down" : undefined}
-                  />
-                </div>
+                {/* Metric | Value table (was stat tiles) — consistent with the
+                    single + compare backtest views. */}
+                {(() => {
+                  const rows: { label: string; value: string; tone?: "up" | "down" }[] = [
+                    {
+                      label: "Net P&L",
+                      value: `$${portfolioResult.net_pnl.toLocaleString()} (${portfolioResult.net_pnl_pct >= 0 ? "+" : ""}${portfolioResult.net_pnl_pct}%)`,
+                      tone: portfolioResult.net_pnl >= 0 ? "up" : "down",
+                    },
+                    { label: "Trades", value: String(portfolioResult.trades) },
+                    { label: "Win rate", value: portfolioResult.win_rate != null ? `${portfolioResult.win_rate}%` : "—" },
+                    { label: "Avg win / loss", value: `${portfolioResult.avg_win ?? "—"} / ${portfolioResult.avg_loss ?? "—"}` },
+                    { label: "Profit factor", value: portfolioResult.profit_factor != null ? String(portfolioResult.profit_factor) : "—" },
+                    { label: "Max drawdown", value: `${portfolioResult.max_drawdown_pct}%`, tone: portfolioResult.max_drawdown_pct > 10 ? "down" : undefined },
+                  ];
+                  return (
+                    <div className="compare-table">
+                      <h4>Results</h4>
+                      <div className="table-scroll">
+                        <table>
+                          <thead>
+                            <tr>
+                              <th>Metric</th>
+                              <th>Value</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {rows.map((r) => (
+                              <tr key={r.label}>
+                                <td>{r.label}</td>
+                                <td className={r.tone ?? ""}>{r.value}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  );
+                })()}
 
                 {portfolioResult.trades > 0 && (
                   <div className="deployment">
@@ -875,18 +898,47 @@ export default function Backtest() {
                 </p>
               </div>
             )}
-            <div className="stats">
-              <Stat
-                label="Net P&L"
-                value={`$${result.net_pnl.toLocaleString()} (${result.net_pnl_pct >= 0 ? "+" : ""}${result.net_pnl_pct}%)`}
-                tone={result.net_pnl >= 0 ? "up" : "down"}
-              />
-              <Stat label="Trades" value={String(result.trades)} />
-              <Stat label="Win rate" value={result.win_rate != null ? `${result.win_rate}%` : "—"} />
-              <Stat label="Avg win / loss" value={`${result.avg_win ?? "—"} / ${result.avg_loss ?? "—"}`} />
-              <Stat label="Profit factor" value={result.profit_factor != null ? String(result.profit_factor) : "—"} />
-              <Stat label="Max drawdown" value={`${result.max_drawdown_pct}%`} tone={result.max_drawdown_pct > 10 ? "down" : undefined} />
-            </div>
+            {/* Single mode: a Metric | Value table (was stat tiles). Compare mode
+                uses the head-to-head table below — same look, so the two modes
+                read consistently and nothing is duplicated. */}
+            {!compareResult &&
+              (() => {
+                const rows: { label: string; value: string; tone?: "up" | "down" }[] = [
+                  {
+                    label: "Net P&L",
+                    value: `$${result.net_pnl.toLocaleString()} (${result.net_pnl_pct >= 0 ? "+" : ""}${result.net_pnl_pct}%)`,
+                    tone: result.net_pnl >= 0 ? "up" : "down",
+                  },
+                  { label: "Trades", value: String(result.trades) },
+                  { label: "Win rate", value: result.win_rate != null ? `${result.win_rate}%` : "—" },
+                  { label: "Avg win / loss", value: `${result.avg_win ?? "—"} / ${result.avg_loss ?? "—"}` },
+                  { label: "Profit factor", value: result.profit_factor != null ? String(result.profit_factor) : "—" },
+                  { label: "Max drawdown", value: `${result.max_drawdown_pct}%`, tone: result.max_drawdown_pct > 10 ? "down" : undefined },
+                ];
+                return (
+                  <div className="compare-table">
+                    <h4>Results</h4>
+                    <div className="table-scroll">
+                      <table>
+                        <thead>
+                          <tr>
+                            <th>Metric</th>
+                            <th>Value</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {rows.map((r) => (
+                            <tr key={r.label}>
+                              <td>{r.label}</td>
+                              <td className={r.tone ?? ""}>{r.value}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                );
+              })()}
 
             {compareResult &&
               (() => {

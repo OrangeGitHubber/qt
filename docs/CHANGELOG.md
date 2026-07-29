@@ -39,6 +39,16 @@ in-sample window — feeding the indicators. So both slices judge the strategy
 with live signals from their very first traded bar. If you optimized a MACD or
 RSI strategy before, re-run it: the out-of-sample numbers were understated.
 
+## Backtest results: one metrics table, not stat boxes (2026-07-29)
+
+The row of big stat boxes (Net P&L, Trades, Win rate, …) at the top of a backtest
+result is now a compact **Metric | Value** table. In Compare mode those boxes
+were pure duplication — the head-to-head table right below already shows the same
+numbers for both strategies — so they're gone there, leaving just the
+head-to-head. Single and Portfolio results get the same table, so all three views
+read consistently. (The capital-deployment section and per-strategy contribution
+breakdown are unchanged.)
+
 ## Watchlist: add a symbol without picking stock vs crypto first (2026-07-29)
 
 Adding to the watchlist no longer needs the Stock/Crypto dropdown up front. Just
