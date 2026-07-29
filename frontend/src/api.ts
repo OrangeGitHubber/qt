@@ -220,6 +220,7 @@ export interface RankingRow {
   in_top_n: boolean;
   price: number | null;
   change_pct: number | null;
+  macd_bullish?: boolean | null; // daily MACD direction — informational, doesn't affect rank
 }
 
 export interface StrategyRanking {

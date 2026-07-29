@@ -320,6 +320,9 @@ function RankingView({ strategyId }: { strategyId: number }) {
                   <th>Symbol</th>
                   <th>{data.rank_label}</th>
                   <th>Day</th>
+                  <th>
+                    MACD <InfoTip k="macd" />
+                  </th>
                 </tr>
               </thead>
               <tbody>
@@ -332,6 +335,9 @@ function RankingView({ strategyId }: { strategyId: number }) {
                     <td>{r.value != null ? `${r.value}%` : "—"}</td>
                     <td className={(r.change_pct ?? 0) >= 0 ? "up" : "down"}>
                       {r.change_pct != null ? `${r.change_pct >= 0 ? "+" : ""}${r.change_pct}%` : "—"}
+                    </td>
+                    <td className={r.macd_bullish == null ? "" : r.macd_bullish ? "up" : "down"}>
+                      {r.macd_bullish == null ? "—" : r.macd_bullish ? "Bullish" : "Bearish"}
                     </td>
                   </tr>
                 ))}
@@ -405,6 +411,10 @@ function Editor({
   // Setting the sleeve below what the strategy already holds sells nothing — it
   // just freezes NEW buys until exits free up room. Reassure, don't alarm.
   const sleeveBelowHoldings = heldExposure != null && sleeve > 0 && sleeve < heldExposure;
+  // VWAP is an INTRADAY measure (it resets each session), so requiring it forces
+  // intraday-bar backtests and doesn't belong in a daily/swing rotation whose
+  // signals (RSI, MACD, relative strength) are all daily. Warn on swing + VWAP.
+  const vwapOnSwing = !!s.swing_mode && !!s.params?.entry.require_above_vwap;
 
   function applyPreset(key: string) {
     if (key === "custom") {
@@ -912,6 +922,14 @@ function Editor({
           This is below the <strong>{money(heldExposure!)}</strong> this strategy currently holds. Nothing will be sold —
           your open positions keep running under their exit rules — but the strategy won't open any new positions until
           exits bring it back under {money(sleeve)}.
+        </p>
+      )}
+      {vwapOnSwing && (
+        <p className="hint warn">
+          <IconWarn className="icon-inline" /> <strong>"Require price above VWAP" with swing mode on.</strong> VWAP is an{" "}
+          <em>intraday</em> measure — it resets every session — so this rule forces the backtest onto intraday (1-hour /
+          15-min) bars and doesn't fit a daily / rotation strategy whose signals (RSI, MACD, relative strength) are all
+          daily. For a swing or rank-and-rotate strategy, turn it off; keep it only for intraday fast-mover strategies.
         </p>
       )}
       {error && <div className="error">{error}</div>}

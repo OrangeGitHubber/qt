@@ -1317,6 +1317,23 @@ async def rank_pool(session: Session, client: AlpacaClient, strategy: Strategy) 
     if not pool:
         return []
     metrics, price_map, _vwap = await _pool_metrics(client, strategy.asset_class, pool, strategy.rank_by)
+
+    # Daily-MACD (bullish/bearish) per symbol for the ranking view — a separate,
+    # best-effort daily-bars fetch (the view is on-demand, so the extra call is
+    # fine). Uses the strategy's own MACD periods, or the 12/26/9 defaults. A blip
+    # leaves it None, shown as "—". Purely informational: it does NOT affect the
+    # ranking, only the extra column so you can see momentum direction at a glance.
+    macd_by_sym: dict[str, bool | None] = {}
+    try:
+        fast, slow, signal = _macd_periods(json.loads(strategy.params))
+        start = (datetime.now(timezone.utc) - timedelta(days=MACD_LOOKBACK_DAYS)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        macd_bars = await client.historical_bars(pool, strategy.asset_class, "1Day", start)
+        for sym in pool:
+            daily = _completed_daily_bars(macd_bars.get(sym) or [], strategy.asset_class)
+            macd_by_sym[sym] = stats.macd_bullish([float(b["c"]) for b in daily], fast, slow, signal)
+    except Exception:  # noqa: BLE001 — never fail the ranking view on the MACD add-on
+        macd_by_sym = {}
+
     rows: list[dict] = []
     ranked_syms: set[str] = set()
     for i, (sym, value) in enumerate(ranking.rank_symbols(metrics, strategy.rank_by, len(pool)), start=1):
@@ -1328,12 +1345,14 @@ async def rank_pool(session: Session, client: AlpacaClient, strategy: Strategy) 
             "in_top_n": i <= strategy.top_n,
             "price": price_map.get(sym),
             "change_pct": metrics[sym]["momentum_today"],
+            "macd_bullish": macd_by_sym.get(sym),
         })
     for sym in pool:  # couldn't rank (metric is None) — surface as unranked, last
         if sym not in ranked_syms:
             rows.append({
                 "symbol": sym, "rank": None, "value": None, "in_top_n": False,
                 "price": price_map.get(sym), "change_pct": metrics.get(sym, {}).get("momentum_today"),
+                "macd_bullish": macd_by_sym.get(sym),
             })
     return rows
 
