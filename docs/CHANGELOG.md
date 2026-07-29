@@ -3,6 +3,14 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## UI: consistent Lucide SVG icons (2026-07-29)
+
+Swapped the text-glyph action icons (Enable/Pause/Edit/Delete, the modal close
+button, the market-closed note, and the ⚠ warning markers) for a consistent
+Lucide SVG icon set, driven from one place so size, stroke and colour stay in
+step across the app. Sort arrows, disclosure carets and prose marks stay as
+text. Purely a look-and-feel change — nothing about behaviour moved.
+
 ## Watchlist: RSI column + a column configurator (2026-07-29)
 
 The watchlist now computes **RSI (14)** per symbol — the 0–100 momentum

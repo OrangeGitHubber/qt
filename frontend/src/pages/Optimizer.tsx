@@ -14,6 +14,7 @@ import {
 import InfoTip from "../components/InfoTip";
 import NumberField from "../components/NumberField";
 import SymbolPicker from "../components/SymbolPicker";
+import { IconWarn } from "../components/icons";
 
 // Human labels for the four searched knobs (keys match the backend PARAM_SPACE).
 const KNOB_LABELS: Record<string, string> = {
@@ -438,7 +439,7 @@ export default function Optimizer() {
             )}
             {result.no_trade_reason && (
               <p className="hint warn" style={{ marginTop: "0.5rem" }}>
-                ⚠ <strong>No configuration traded — so this isn't a verdict on the strategy, it's a setup issue.</strong>{" "}
+                <IconWarn className="icon-inline" /> <strong>No configuration traded — so this isn't a verdict on the strategy, it's a setup issue.</strong>{" "}
                 {result.no_trade_reason} Fix that and re-run; until something trades, there's nothing to optimize.
               </p>
             )}
@@ -474,7 +475,7 @@ export default function Optimizer() {
 
             {(result.best.in_sample?.net_pnl_pct ?? 0) > (result.best.out_of_sample?.net_pnl_pct ?? 0) + 2 && (
               <p className="hint warn">
-                ⚠ The in-sample return ({pct(result.best.in_sample?.net_pnl_pct)}) is noticeably higher than the
+                <IconWarn className="icon-inline" /> The in-sample return ({pct(result.best.in_sample?.net_pnl_pct)}) is noticeably higher than the
                 out-of-sample return ({pct(result.best.out_of_sample?.net_pnl_pct)}). That gap is the fingerprint of
                 overfitting — the settings fit the searched history better than reality. Trust the lower number.
               </p>
@@ -511,7 +512,7 @@ export default function Optimizer() {
 
             {result.warnings.map((w, i) => (
               <p key={i} className="hint warn">
-                ⚠ {w}
+                <IconWarn className="icon-inline" /> {w}
               </p>
             ))}
 

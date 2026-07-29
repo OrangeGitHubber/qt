@@ -3,6 +3,7 @@ import { getHistory, getJournal, HistoryResponse, JournalRow } from "../api";
 import { atrStopLevel, bollinger, ema, macd, relativeStrength, rsi, sma } from "../lib/indicators";
 import InfoTip from "./InfoTip";
 import PriceChart, { ChartMarker, ChartOverlays, OverlayLine, SERIES_COLORS } from "./PriceChart";
+import { IconClose } from "./icons";
 
 const RANGES: { label: string; days: number | null }[] = [
   { label: "1M", days: 30 },
@@ -188,8 +189,8 @@ export default function SymbolDetail({
           <h2>
             {symbol} <span className="subtitle">{assetClass}</span>
           </h2>
-          <button className="small btn-ghost" onClick={onClose}>
-            Close
+          <button className="small btn-icon btn-ghost" onClick={onClose} aria-label="Close">
+            <IconClose />
           </button>
         </div>
 

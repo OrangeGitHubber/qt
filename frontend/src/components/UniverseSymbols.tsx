@@ -10,6 +10,7 @@ import {
 } from "../api";
 import InfoTip from "./InfoTip";
 import SymbolPicker from "./SymbolPicker";
+import { IconWarn } from "./icons";
 
 // Diff two symbol lists into what was added and what was removed. SymbolPicker
 // always emits the FULL new list, so a single add/remove is one element here.
@@ -127,7 +128,7 @@ function BasketSymbols({
       </span>
       <SymbolPicker assetClass={assetClass} value={local} onChange={onChange} multi placeholder={placeholder} />
       <p className="hint warn">
-        ⚠ These are the basket's members — editing here changes the “{basket.name}” basket <strong>everywhere</strong> it's
+        <IconWarn className="icon-inline" /> These are the basket's members — editing here changes the “{basket.name}” basket <strong>everywhere</strong> it's
         used, not just this strategy. The strategy still trades only the top-ranked few (see “Rank by” / “Take top N”).
       </p>
       {err && <div className="error">{err}</div>}

@@ -31,6 +31,7 @@ import {
 } from "../api";
 import InfoTip from "../components/InfoTip";
 import NumberField from "../components/NumberField";
+import { IconWarn } from "../components/icons";
 
 // One asset class's cache totals, rendered identically for stocks and crypto so
 // the two columns line up row-for-row. `stats` is null until that class has been
@@ -345,7 +346,7 @@ export default function Settings() {
           <p className="hint warn">
             {liqOrphans ? (
               <>
-                ⚠ This will flatten <strong>every</strong> position on the account, including ones QT never opened. If
+                <IconWarn className="icon-inline" /> This will flatten <strong>every</strong> position on the account, including ones QT never opened. If
                 another bot or you trade this same Alpaca account, <strong>its positions will be closed too.</strong>
               </>
             ) : (
@@ -422,7 +423,7 @@ export default function Settings() {
 
         {engine.leverage.unlockable ? (
           <div className="danger-zone">
-            <h4>⚠ Leverage (unlocked at server level)</h4>
+            <h4><IconWarn className="icon-inline" /> Leverage (unlocked at server level)</h4>
             <p className="hint">
               The container has <code>QT_ALLOW_LEVERAGE=true</code>, so this option is visible. Borrowed money
               multiplies losses as fast as gains — a 4x leveraged position losing 25% wipes out the entire stake.{" "}

@@ -15,6 +15,7 @@ import AccountSelect from "../components/AccountSelect";
 import InfoTip from "../components/InfoTip";
 import LineChart from "../components/LineChart";
 import StackedPnlBars, { PnlSeries } from "../components/StackedPnlBars";
+import { IconWarn } from "../components/icons";
 
 // Categorical palette for per-strategy colors (chart + table swatch share it).
 const PALETTE = ["#4f8cff", "#2ecc71", "#f39c12", "#a78bfa", "#22d3ee", "#f472b6", "#e74c3c", "#94a3b8"];
@@ -301,7 +302,13 @@ function EngineCard() {
         <dt>Leverage</dt>
         <dd>
           <span className={`pill ${engine.leverage.enabled ? "warn" : "ok"}`}>
-            {engine.leverage.enabled ? "ENABLED ⚠" : "locked off"}
+            {engine.leverage.enabled ? (
+              <>
+                ENABLED <IconWarn className="icon-inline" />
+              </>
+            ) : (
+              "locked off"
+            )}
           </span>
         </dd>
       </dl>

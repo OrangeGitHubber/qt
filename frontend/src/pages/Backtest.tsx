@@ -13,6 +13,7 @@ import InfoTip from "../components/InfoTip";
 import LineChart, { ChartMarker } from "../components/LineChart";
 import NumberField from "../components/NumberField";
 import SymbolPicker from "../components/SymbolPicker";
+import { IconWarn } from "../components/icons";
 
 type TradeEvent = {
   at: string; // ISO timestamp — drives ordering
@@ -655,7 +656,7 @@ export default function Backtest() {
               strategy &&
               (!strategy.swing_mode || strategy.params.exit.flatten_before_close) && (
                 <p className="hint warn">
-                  ⚠ <strong>This ran on daily bars, not intraday.</strong> Your strategy trades intraday
+                  <IconWarn className="icon-inline" /> <strong>This ran on daily bars, not intraday.</strong> Your strategy trades intraday
                   (flatten-before-close / no overnight hold), which a daily-bar replay can't simulate — positions look
                   like they exit the next day and stops can gap overnight instead of firing intraday. Run a{" "}
                   <strong>{strategy.asset_class === "crypto" ? "crypto intraday sweep" : "intraday sweep"}</strong>{" "}

@@ -9,6 +9,8 @@
   --ok: #2ecc71;
   --warn: #f39c12;
   --err: #e74c3c;
+  --icon-sm: 16px;
+  --icon-md: 20px;
 }
 
 * {
@@ -315,6 +317,21 @@ button.small {
   margin: 0;
   padding: 0.35rem 0.8rem;
   font-size: 0.85rem;
+}
+
+/* Buttons that pair a Lucide icon with a text label (Enable/Pause/Edit/Delete,
+   the modal close). Keeps the icon and label centred with a small gap; the icon
+   inherits the button's text colour via currentColor. */
+button.btn-icon {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+/* Inline icons rendered in flowing text (the ⚠ warning marker, market-closed
+   note). Nudged to sit on the text's optical centre and inherit its colour. */
+.icon-inline {
+  vertical-align: -0.15em;
 }
 
 button.danger {

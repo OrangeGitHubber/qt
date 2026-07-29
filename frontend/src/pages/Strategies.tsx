@@ -22,6 +22,7 @@ import {
 import InfoTip from "../components/InfoTip";
 import NumberField from "../components/NumberField";
 import UniverseSymbols from "../components/UniverseSymbols";
+import { IconDelete, IconEdit, IconPause, IconPlay, IconWarn } from "../components/icons";
 
 const RANK_LABELS: Record<RankBy, string> = {
   momentum_today: "Today's % move (momentum)",
@@ -870,7 +871,7 @@ function Editor({
       </p>
       {oneShotSleeve && (
         <p className="hint warn">
-          ⚠ <strong>Only one position can be open at a time.</strong> Your sleeve budget ({money(sleeve)}) is less than
+          <IconWarn className="icon-inline" /> <strong>Only one position can be open at a time.</strong> Your sleeve budget ({money(sleeve)}) is less than
           twice your {money(sizing)} per trade, so a second buy would exceed the sleeve and be blocked — "Max positions"
           can't take effect. Backtests also stop trading once a losing streak leaves less cash than one full trade. Set
           the sleeve to a few times the per-trade size (e.g. {money(sizing * 5)} for ~5 concurrent positions).
@@ -884,7 +885,7 @@ function Editor({
       )}
       {tightSwingStop && (
         <p className="hint warn">
-          ⚠ <strong>Tight stop-loss ({stopPct}%) with swing mode on.</strong> Holding overnight but bailing on a{" "}
+          <IconWarn className="icon-inline" /> <strong>Tight stop-loss ({stopPct}%) with swing mode on.</strong> Holding overnight but bailing on a{" "}
           {stopPct}% move means normal daily noise (most stocks swing more than that intraday) will stop you out almost
           immediately — usually at a small loss. Swing stops should be wider than the symbol's typical daily move (ATR),
           often 5–8%. For a stop this tight, set <strong>Trading style</strong> to <em>Intraday</em> instead.
@@ -995,17 +996,20 @@ export default function Strategies() {
         <LastRunView strategyId={r.id} />
         <div className="card-actions">
           <button
-            className={`small ${r.enabled ? "btn-pause" : "btn-enable"}`}
+            className={`small btn-icon ${r.enabled ? "btn-pause" : "btn-enable"}`}
             onClick={() => toggle(r)}
             title={r.enabled ? "Stop this strategy from opening new trades" : "Arm this strategy (it trades once the engine is on)"}
           >
-            {r.enabled ? "❚❚ Pause" : "▶ Enable"}
+            {r.enabled ? <IconPause /> : <IconPlay />}
+            {r.enabled ? "Pause" : "Enable"}
           </button>
-          <button className="small btn-ghost" onClick={() => setEditing(r)} title="Edit this strategy's settings">
-            ✎ Edit
+          <button className="small btn-icon btn-ghost" onClick={() => setEditing(r)} title="Edit this strategy's settings">
+            <IconEdit />
+            Edit
           </button>
-          <button className="small danger" onClick={() => remove(r)} title="Delete this strategy permanently">
-            ✕ Delete
+          <button className="small btn-icon danger" onClick={() => remove(r)} title="Delete this strategy permanently">
+            <IconDelete />
+            Delete
           </button>
         </div>
       </div>

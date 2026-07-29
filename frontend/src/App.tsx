@@ -12,6 +12,7 @@ import Settings from "./pages/Settings";
 import Setup from "./pages/Setup";
 import Strategies from "./pages/Strategies";
 import Watchlist from "./pages/Watchlist";
+import { IconWarn } from "./components/icons";
 
 type Tab =
   | "dashboard"
@@ -111,7 +112,7 @@ export default function App() {
     <div className="shell">
       {status.data_persistent === false && (
         <div className="persist-banner" role="alert">
-          <strong>⚠ Your data directory is not persistent.</strong> Configuration, keys and
+          <IconWarn className="icon-inline" /> <strong>Your data directory is not persistent.</strong> Configuration, keys and
           trade history will be lost the next time this container updates. Fix the{" "}
           <code>/data</code> volume mapping —{" "}
           <a
@@ -126,7 +127,7 @@ export default function App() {
       )}
       {status.secrets_without_key && (
         <div className="persist-banner" role="alert">
-          <strong>⚠ Saved API keys can't be decrypted.</strong> The database has encrypted
+          <IconWarn className="icon-inline" /> <strong>Saved API keys can't be decrypted.</strong> The database has encrypted
           secrets but <code>instance.key</code> is missing. Restore the original key file, or
           re-enter your Alpaca keys in Setup.
         </div>

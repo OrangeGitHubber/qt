@@ -10,6 +10,7 @@ import {
 } from "../api";
 import InfoTip from "../components/InfoTip";
 import SymbolPicker from "../components/SymbolPicker";
+import { IconWarn } from "../components/icons";
 
 function BasketCard({ basket, onChange }: { basket: Basket; onChange: () => void }) {
   const [renaming, setRenaming] = useState(false);
@@ -43,7 +44,12 @@ function BasketCard({ basket, onChange }: { basket: Basket; onChange: () => void
         {basket.symbols.map((s) => (
           <span className={`chip ${s.in_directory ? "" : "chip-warn"}`} key={`${s.asset_class}:${s.symbol}`}>
             {s.symbol}
-            {!s.in_directory && <span title="Not in Alpaca's tradable list right now"> ⚠</span>}
+            {!s.in_directory && (
+              <span title="Not in Alpaca's tradable list right now">
+                {" "}
+                <IconWarn className="icon-inline" />
+              </span>
+            )}
             <button
               type="button"
               aria-label={`Remove ${s.symbol}`}

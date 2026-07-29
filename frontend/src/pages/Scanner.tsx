@@ -15,6 +15,7 @@ import {
 import InfoTip from "../components/InfoTip";
 import NumberField from "../components/NumberField";
 import SymbolPicker from "../components/SymbolPicker";
+import { IconMarketClosed } from "../components/icons";
 
 // A stock and a crypto pair could share a ticker, so key the watched-set by
 // both asset class and symbol. Watchlist rows are stored upper-cased.
@@ -75,7 +76,7 @@ function MoversTable({
       <h3>{title}</h3>
       {marketClosed && (
         <p className="stale-note">
-          ⏸ Market closed — these are the <strong>last trading session's</strong> movers, not live prices.
+          <IconMarketClosed className="icon-inline" /> Market closed — these are the <strong>last trading session's</strong> movers, not live prices.
         </p>
       )}
       {rows.length === 0 ? (
