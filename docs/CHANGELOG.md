@@ -3,6 +3,24 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Zoom into any chart to see the detail (2026-07-29)
+
+Testing a long backtest — say 500 days — meant squinting at a wall of points
+where a single interesting week was only a pixel or two wide. Now you can zoom.
+
+- **Drag across a chart to zoom in.** Press and drag a horizontal range on the
+  plot; a translucent band shows what you're selecting, and on release the chart
+  zooms to just those days, stretched to fill the width so you can read them.
+- **Everything zooms together.** On the backtest chart the equity lines, trade
+  markers, hover crosshair and date labels all follow the window. On the
+  watchlist price chart the price line, moving-average/Bollinger overlays,
+  buy/sell markers *and* every sub-panel (volume, MACD, RSI, relative strength)
+  share the same zoom, so they never drift out of line with each other.
+- **Get back out easily.** A small "Reset zoom" button appears while you're
+  zoomed in; click it (or just double-click the chart) to return to the full
+  range. A tiny accidental drag is treated as a normal click, so hovering for
+  values still works exactly as before.
+
 ## Optimizer fix: same MACD/RSI warm-up, and it mattered more here (2026-07-29)
 
 The optimizer splits history into an in-sample slice (it searches on) and an

@@ -1566,6 +1566,30 @@ button.linklike {
   touch-action: none;
 }
 
+/* "Reset zoom" control — shown only while a chart is zoomed in. Floats in the
+   top-right corner over the plot; small and unobtrusive with a panel backdrop
+   so it stays legible over whatever it covers. */
+.chart-zoom-reset {
+  position: absolute;
+  top: 0.4rem;
+  right: 0.5rem;
+  z-index: 2;
+  margin: 0;
+  padding: 0.2rem 0.6rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.chart-zoom-reset:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
 /* Fixed readout above the plot. It NEVER occludes the data and NEVER scrolls:
    every value sits in a permanent grid slot, so sweeping the cursor changes
    only the digits, not the layout. Height is fixed and depends solely on the

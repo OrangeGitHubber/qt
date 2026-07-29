@@ -36,6 +36,12 @@ export default function LineChart({
   // cursor leaves, so a value can be read without it blanking the instant you
   // reach for it. It only resets when new data arrives.
   const [hover, setHover] = useState<number | null>(null);
+  // `zoom` is the visible index window [start, end] (null = full range). Drag a
+  // horizontal range on the plot to set it; "Reset zoom" / double-click clears it.
+  // `drag` holds the in-progress selection in viewBox x-coords while the pointer
+  // is down, so we can draw the translucent selection rectangle.
+  const [zoom, setZoom] = useState<[number, number] | null>(null);
+  const [drag, setDrag] = useState<{ x0: number; x1: number } | null>(null);
   const svgRef = useRef<SVGSVGElement>(null);
 
   const W = 900;
@@ -45,33 +51,86 @@ export default function LineChart({
   const padT = 14;
   const padB = 30;
 
+  // Visible window, clamped so a stale zoom from a previous dataset can't point
+  // past the current data. Everything below maps against [viewStart, viewEnd].
+  const lastIdx = labels.length - 1;
+  const viewStart = zoom ? Math.max(0, Math.min(zoom[0], lastIdx)) : 0;
+  const viewEnd = zoom ? Math.min(lastIdx, Math.max(zoom[1], viewStart + 1)) : lastIdx;
+
   const model = useMemo(() => {
     const all = series.flatMap((s) => s.values.filter((v): v is number => v !== null));
     if (labels.length < 2 || all.length === 0) return null;
     const min = Math.min(...all, 0);
     const max = Math.max(...all, 0);
     const span = max - min || 1;
-    const x = (i: number) => padL + (i / (labels.length - 1)) * (W - padL - padR);
+    // Map the visible slice across the full plot width so a zoom fills the chart.
+    const denom = viewEnd - viewStart || 1;
+    const x = (i: number) => padL + ((i - viewStart) / denom) * (W - padL - padR);
     const y = (v: number) => H - padB - ((v - min) / span) * (H - padT - padB);
     return { min, max, x, y };
-  }, [labels, series]);
+  }, [labels, series, viewStart, viewEnd]);
 
   if (!model) return <p className="hint">Not enough data yet — the chart grows one point per day.</p>;
 
+  // Only the points inside the window are drawn; the rest are clipped so a zoomed
+  // line doesn't spill into the axis gutters.
   const path = (values: (number | null)[]) =>
-    values.reduce((d, v, i) => (v === null ? d : `${d}${d ? "L" : "M"}${model.x(i).toFixed(1)},${model.y(v).toFixed(1)} `), "");
+    values.reduce(
+      (d, v, i) =>
+        v === null || i < viewStart || i > viewEnd
+          ? d
+          : `${d}${d ? "L" : "M"}${model.x(i).toFixed(1)},${model.y(v).toFixed(1)} `,
+      "",
+    );
+
+  // pointer x (viewBox units) → nearest visible index
+  const idxAt = (vx: number) =>
+    Math.max(viewStart, Math.min(viewEnd, viewStart + Math.round(((vx - padL) / (W - padL - padR)) * (viewEnd - viewStart))));
 
   function onMove(e: React.PointerEvent<SVGSVGElement>) {
     const rect = svgRef.current!.getBoundingClientRect();
     const vx = ((e.clientX - rect.left) / rect.width) * W;
-    const idx = Math.round(((vx - padL) / (W - padL - padR)) * (labels.length - 1));
-    setHover(Math.max(0, Math.min(labels.length - 1, idx)));
+    setHover(idxAt(vx));
+    if (drag) setDrag({ ...drag, x1: Math.max(padL, Math.min(W - padR, vx)) });
+  }
+
+  function onDown(e: React.PointerEvent<SVGSVGElement>) {
+    const rect = svgRef.current!.getBoundingClientRect();
+    const vx = Math.max(padL, Math.min(W - padR, ((e.clientX - rect.left) / rect.width) * W));
+    svgRef.current!.setPointerCapture(e.pointerId);
+    setDrag({ x0: vx, x1: vx });
+  }
+
+  function onUp(e: React.PointerEvent<SVGSVGElement>) {
+    if (drag) {
+      const rect = svgRef.current!.getBoundingClientRect();
+      // A negligible drag is a click, not a zoom — leaves hover behaviour intact.
+      const screenDx = Math.abs(drag.x1 - drag.x0) * (rect.width / W);
+      if (screenDx >= 6) {
+        const a = idxAt(drag.x0);
+        const b = idxAt(drag.x1);
+        const lo = Math.min(a, b);
+        const hi = Math.max(a, b);
+        if (hi - lo >= 1) setZoom([lo, hi]);
+      }
+      try {
+        svgRef.current!.releasePointerCapture(e.pointerId);
+      } catch {
+        /* pointer already released */
+      }
+      setDrag(null);
+    }
   }
 
   const hoverMarkers = hover !== null ? markers.filter((m) => m.index === hover) : [];
 
   return (
     <div className="pricechart">
+      {zoom && (
+        <button type="button" className="chart-zoom-reset" onClick={() => setZoom(null)}>
+          Reset zoom
+        </button>
+      )}
       {/* Fixed strip above the plot: date + one slot per series. It is always
           exactly two rows (date line, series line) so its height is constant —
           the chart below never shifts — and only the digits inside the fixed
@@ -103,8 +162,11 @@ export default function LineChart({
         viewBox={`0 0 ${W} ${H}`}
         className="linechart"
         onPointerMove={onMove}
+        onPointerDown={onDown}
+        onPointerUp={onUp}
+        onDoubleClick={() => setZoom(null)}
         role="img"
-        aria-label="Performance comparison"
+        aria-label="Performance comparison — drag to zoom, double-click to reset"
       >
         <line x1={padL} x2={W - padR} y1={model.y(0)} y2={model.y(0)} stroke="var(--border)" strokeDasharray="4 4" />
         <text x={padL - 6} y={model.y(0) + 4} textAnchor="end" className="chart-label">0%</text>
@@ -121,6 +183,7 @@ export default function LineChart({
 
         {/* trade markers ride their own series line (default the first) */}
         {markers.map((m, i) => {
+          if (m.index < viewStart || m.index > viewEnd) return null;
           const v = series[m.seriesIndex ?? 0]?.values[m.index];
           if (v == null) return null;
           const cx = model.x(m.index);
@@ -132,7 +195,7 @@ export default function LineChart({
           return <path key={`${m.kind}-${m.index}-${i}`} d={d} fill={up ? "var(--ok)" : "var(--err)"} />;
         })}
 
-        {hover !== null && (
+        {hover !== null && hover >= viewStart && hover <= viewEnd && (
           <g>
             <line x1={model.x(hover)} x2={model.x(hover)} y1={padT} y2={H - padB} stroke="var(--accent)" strokeDasharray="3 3" />
             {series.map((s) =>
@@ -144,8 +207,14 @@ export default function LineChart({
           </g>
         )}
 
-        <text x={padL} y={H - 8} className="chart-label">{labels[0]}</text>
-        <text x={W - padR} y={H - 8} textAnchor="end" className="chart-label">{labels[labels.length - 1]}</text>
+        {/* translucent drag-to-zoom selection rectangle */}
+        {drag && Math.abs(drag.x1 - drag.x0) > 1 && (
+          <rect x={Math.min(drag.x0, drag.x1)} y={padT} width={Math.abs(drag.x1 - drag.x0)} height={H - padT - padB}
+            fill="var(--accent)" opacity="0.15" />
+        )}
+
+        <text x={padL} y={H - 8} className="chart-label">{labels[viewStart]}</text>
+        <text x={W - padR} y={H - 8} textAnchor="end" className="chart-label">{labels[viewEnd]}</text>
       </svg>
 
       {/* Trade detail for the hovered day. Below the chart, so it can wrap to as

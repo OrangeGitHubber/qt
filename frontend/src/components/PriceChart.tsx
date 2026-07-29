@@ -63,6 +63,11 @@ export default function PriceChart({
   height?: number;
 }) {
   const [hover, setHover] = useState<number | null>(null);
+  // `zoom` is the visible index window [start, end] (null = full range). Drag a
+  // horizontal range on the plot to set it; "Reset zoom" / double-click clears it.
+  // Every panel (price + volume/MACD/RSI/RS) shares this window via the x mapping.
+  const [zoom, setZoom] = useState<[number, number] | null>(null);
+  const [drag, setDrag] = useState<{ x0: number; x1: number } | null>(null);
   const svgRef = useRef<SVGSVGElement>(null);
 
   const W = 900;
@@ -83,7 +88,13 @@ export default function PriceChart({
   const totalH = padT + priceH + subPanels.reduce((s, p) => s + p.h + GAP, 0) + 30;
 
   const n = points.length;
-  const x = (i: number) => padL + (n <= 1 ? 0 : (i / (n - 1)) * (W - padL - padR));
+  // Visible window, clamped so a stale zoom from a previous symbol/range can't
+  // point past the current data. All panels map indices against this window.
+  const viewStart = zoom ? Math.max(0, Math.min(zoom[0], n - 1)) : 0;
+  const viewEnd = zoom ? Math.min(n - 1, Math.max(zoom[1], viewStart + 1)) : n - 1;
+  const visN = viewEnd - viewStart + 1; // number of visible bars — sets bar widths
+  // Map the visible slice across the full plot width so a zoom fills the chart.
+  const x = (i: number) => padL + (n <= 1 ? 0 : ((i - viewStart) / (viewEnd - viewStart || 1)) * (W - padL - padR));
 
   const price = useMemo(() => {
     if (n < 2) return null;
@@ -101,11 +112,15 @@ export default function PriceChart({
     const span = max - min || 1;
     const top = padT;
     const y = (v: number) => top + priceH - ((v - min) / span) * priceH;
-    const path = points.map((p, i) => `${i === 0 ? "M" : "L"}${x(i).toFixed(1)},${y(p.c).toFixed(1)}`).join(" ");
-    const area = `${path} L${x(n - 1).toFixed(1)},${top + priceH} L${padL},${top + priceH} Z`;
+    // Draw only the visible slice; the y-scale stays fixed to the full range so
+    // gridlines and overlays keep the same price levels as you zoom the x-axis.
+    let path = "";
+    for (let i = viewStart; i <= viewEnd; i++) path += `${i === viewStart ? "M" : "L"}${x(i).toFixed(1)},${y(points[i].c).toFixed(1)} `;
+    path = path.trim();
+    const area = `${path} L${x(viewEnd).toFixed(1)},${top + priceH} L${x(viewStart).toFixed(1)},${top + priceH} Z`;
     return { min, max, top, y, path, area, bottom: top + priceH };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [points, overlays, priceH]);
+  }, [points, overlays, priceH, viewStart, viewEnd]);
 
   if (!price) return <p className="hint">Not enough history to chart.</p>;
 
@@ -122,12 +137,43 @@ export default function PriceChart({
     cursor += p.h + GAP;
   }
 
+  // pointer x (viewBox units) → nearest visible index
+  const idxAt = (vx: number) =>
+    Math.max(viewStart, Math.min(viewEnd, viewStart + Math.round(((vx - padL) / (W - padL - padR)) * (viewEnd - viewStart))));
+
   function onMove(e: React.PointerEvent<SVGSVGElement>) {
     const rect = svgRef.current!.getBoundingClientRect();
     const vx = ((e.clientX - rect.left) / rect.width) * W;
-    const ratio = (vx - padL) / (W - padL - padR);
-    const idx = Math.round(ratio * (n - 1));
-    setHover(Math.max(0, Math.min(n - 1, idx)));
+    setHover(idxAt(vx));
+    if (drag) setDrag({ ...drag, x1: Math.max(padL, Math.min(W - padR, vx)) });
+  }
+
+  function onDown(e: React.PointerEvent<SVGSVGElement>) {
+    const rect = svgRef.current!.getBoundingClientRect();
+    const vx = Math.max(padL, Math.min(W - padR, ((e.clientX - rect.left) / rect.width) * W));
+    svgRef.current!.setPointerCapture(e.pointerId);
+    setDrag({ x0: vx, x1: vx });
+  }
+
+  function onUp(e: React.PointerEvent<SVGSVGElement>) {
+    if (drag) {
+      const rect = svgRef.current!.getBoundingClientRect();
+      // A negligible drag is a click, not a zoom — leaves hover behaviour intact.
+      const screenDx = Math.abs(drag.x1 - drag.x0) * (rect.width / W);
+      if (screenDx >= 6) {
+        const a = idxAt(drag.x0);
+        const b = idxAt(drag.x1);
+        const lo = Math.min(a, b);
+        const hi = Math.max(a, b);
+        if (hi - lo >= 1) setZoom([lo, hi]);
+      }
+      try {
+        svgRef.current!.releasePointerCapture(e.pointerId);
+      } catch {
+        /* pointer already released */
+      }
+      setDrag(null);
+    }
   }
 
   const hp = hover !== null ? points[hover] : null;
@@ -139,7 +185,7 @@ export default function PriceChart({
     let pen = false;
     for (let i = 0; i < values.length; i++) {
       const v = values[i];
-      if (v == null) {
+      if (v == null || i < viewStart || i > viewEnd) {
         pen = false;
         continue;
       }
@@ -165,6 +211,11 @@ export default function PriceChart({
 
   return (
     <div className="pricechart">
+      {zoom && (
+        <button type="button" className="chart-zoom-reset" onClick={() => setZoom(null)}>
+          Reset zoom
+        </button>
+      )}
       <div className="chart-readout pc-readout" aria-label="Price readout">
         <div className="cr-price">
           {!hp ? (
@@ -204,7 +255,16 @@ export default function PriceChart({
         </div>
       )}
 
-      <svg ref={svgRef} viewBox={`0 0 ${W} ${totalH}`} onPointerMove={onMove} role="img" aria-label="Price history with overlays">
+      <svg
+        ref={svgRef}
+        viewBox={`0 0 ${W} ${totalH}`}
+        onPointerMove={onMove}
+        onPointerDown={onDown}
+        onPointerUp={onUp}
+        onDoubleClick={() => setZoom(null)}
+        role="img"
+        aria-label="Price history with overlays — drag to zoom, double-click to reset"
+      >
         <defs>
           <linearGradient id="pcfill" x1="0" y1="0" x2="0" y2="1">
             <stop offset="0%" stopColor={stroke} stopOpacity="0.22" />
@@ -234,14 +294,14 @@ export default function PriceChart({
             let pen = false;
             for (let i = 0; i < upper.length; i++) {
               const v = upper[i];
-              if (v == null) { pen = false; continue; }
+              if (v == null || i < viewStart || i > viewEnd) { pen = false; continue; }
               top += `${pen ? "L" : "M"}${x(i).toFixed(1)},${price.y(v).toFixed(1)} `;
               pen = true;
             }
             let bot = "";
             for (let i = lower.length - 1; i >= 0; i--) {
               const v = lower[i];
-              if (v != null) bot += `L${x(i).toFixed(1)},${price.y(v).toFixed(1)} `;
+              if (v != null && i >= viewStart && i <= viewEnd) bot += `L${x(i).toFixed(1)},${price.y(v).toFixed(1)} `;
             }
             if (!top) return null;
             return (
@@ -271,6 +331,7 @@ export default function PriceChart({
 
         {/* ---- buy/sell markers ---- */}
         {(overlays.markers ?? []).map((m, i) => {
+          if (m.index < viewStart || m.index > viewEnd) return null;
           const cx = x(m.index);
           const cy = price.y(m.price);
           const c = m.kind === "buy" ? "var(--ok)" : "var(--err)";
@@ -298,9 +359,10 @@ export default function PriceChart({
                 <text x={padL - 8} y={box.top + 10} textAnchor="end" className="chart-label">Vol</text>
                 <line x1={padL} x2={W - padR} y1={box.bottom} y2={box.bottom} stroke="var(--border)" />
                 {points.map((p, i) => {
+                  if (i < viewStart || i > viewEnd) return null;
                   const h = ((p.v ?? 0) / max) * box.h;
                   const barUp = i === 0 ? true : p.c >= points[i - 1].c;
-                  const bw = Math.max(1, (W - padL - padR) / n - 0.5);
+                  const bw = Math.max(1, (W - padL - padR) / visN - 0.5);
                   return (
                     <rect
                       key={i}
@@ -326,13 +388,13 @@ export default function PriceChart({
             const { min, max } = rangeOf([...m.macd, ...m.signal, ...m.hist], [0]);
             const y = scaleY(box, min, max);
             const zero = y(0);
-            const bw = Math.max(1, (W - padL - padR) / n - 0.5);
+            const bw = Math.max(1, (W - padL - padR) / visN - 0.5);
             return (
               <g>
                 <text x={padL - 8} y={box.top + 10} textAnchor="end" className="chart-label">MACD</text>
                 <line x1={padL} x2={W - padR} y1={zero} y2={zero} stroke="var(--border)" />
                 {m.hist.map((v, i) =>
-                  v == null ? null : (
+                  v == null || i < viewStart || i > viewEnd ? null : (
                     <rect
                       key={i}
                       x={x(i) - bw / 2}
@@ -393,7 +455,7 @@ export default function PriceChart({
           })()}
 
         {/* ---- shared hover crosshair spanning every panel ---- */}
-        {hp && (
+        {hp && hover! >= viewStart && hover! <= viewEnd && (
           <g>
             <line
               x1={x(hover!)}
@@ -407,10 +469,22 @@ export default function PriceChart({
           </g>
         )}
 
-        {/* ---- x-axis date labels at the very bottom ---- */}
-        <text x={padL} y={totalH - 8} className="chart-label">{new Date(points[0].t).toLocaleDateString()}</text>
+        {/* ---- translucent drag-to-zoom selection rectangle (all panels) ---- */}
+        {drag && Math.abs(drag.x1 - drag.x0) > 1 && (
+          <rect
+            x={Math.min(drag.x0, drag.x1)}
+            y={price.top}
+            width={Math.abs(drag.x1 - drag.x0)}
+            height={(subPanels.length ? panelBox[subPanels[subPanels.length - 1].key].bottom : price.bottom) - price.top}
+            fill="var(--accent)"
+            opacity="0.15"
+          />
+        )}
+
+        {/* ---- x-axis date labels at the very bottom (reflect the visible window) ---- */}
+        <text x={padL} y={totalH - 8} className="chart-label">{new Date(points[viewStart].t).toLocaleDateString()}</text>
         <text x={W - padR} y={totalH - 8} textAnchor="end" className="chart-label">
-          {new Date(points[n - 1].t).toLocaleDateString()}
+          {new Date(points[viewEnd].t).toLocaleDateString()}
         </text>
       </svg>
     </div>
