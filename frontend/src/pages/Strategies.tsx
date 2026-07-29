@@ -66,6 +66,7 @@ const EMPTY: Partial<StrategyRow> = {
       exit_slippage_pct: 1,
       exit_slippage_max_pct: 1,
     },
+    execution: { market_orders: false },
   },
 };
 
@@ -786,6 +787,22 @@ function Editor({
             <NumberField step="1" min="1" max="25" value={s.max_positions!}
               onChange={(n) => setS({ ...s, max_positions: n })} />
           </Param>
+        </div>
+
+        <div className="check-row">
+          <label className="check">
+            <input
+              type="checkbox"
+              checked={!!p.execution?.market_orders}
+              onChange={(e) =>
+                setS((cur) => ({
+                  ...cur,
+                  params: { ...cur.params!, execution: { market_orders: e.target.checked } },
+                }))
+              }
+            />
+            Buy &amp; sell at market price (allow fractional shares) <InfoTip k="market_fractional" />
+          </label>
         </div>
 
         <details className="adv">

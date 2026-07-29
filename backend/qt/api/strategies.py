@@ -100,12 +100,25 @@ class MACDConfig(BaseModel):
         return self
 
 
+class ExecutionConfig(BaseModel):
+    """Order execution mode. Off by default = the safe, price-protected path:
+    marketable LIMIT orders and whole shares (stocks). When market_orders is on,
+    this strategy sends plain MARKET orders sized by dollar NOTIONAL, so a small
+    $-per-trade can buy a fractional slice of an expensive name (e.g. $200 of
+    BRK.B) and fills immediately — at the cost of no limit-price protection.
+    Declared explicitly (like DCAConfig/ATRConfig) so pydantic keeps the block on
+    save."""
+
+    market_orders: bool = False
+
+
 class StrategyParams(BaseModel):
     entry: EntryRules = EntryRules()
     exit: ExitRules = ExitRules()
     macd: MACDConfig | None = None  # present only when a MACD entry/exit toggle is on
     dca: DCAConfig | None = None  # present only for DCA sleeve strategies
     atr: ATRConfig | None = None  # present only when ATR stops/sizing are configured
+    execution: ExecutionConfig = ExecutionConfig()  # order type + fractional sizing
 
     @model_validator(mode="after")
     def _stop_required_unless_dca(self) -> "StrategyParams":

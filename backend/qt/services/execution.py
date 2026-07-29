@@ -40,13 +40,24 @@ def _entry_slip_pct(strategy: Strategy) -> float:
         return ENTRY_SLIP_PCT
 
 
+def market_mode(params: dict) -> bool:
+    """Whether this strategy opted into MARKET orders + fractional sizing (off by
+    default). When on, entries buy a dollar NOTIONAL at market — so a small
+    $-per-trade can take a fractional slice of an expensive name — and exits sell
+    at market. When off, the default price-protected marketable-limit path runs."""
+    try:
+        return bool(params.get("execution", {}).get("market_orders", False))
+    except Exception:  # noqa: BLE001 — bad/old params: default to the safe path
+        return False
+
+
 def _round_price(price: float) -> float:
     # US equities disallow sub-penny limits at >=$1; crypto is fine with more.
     return round(price, 2) if price >= 1 else round(price, 6)
 
 
-def _qty_for(asset_class: str, sizing_usd: float, price: float) -> float:
-    if asset_class == "stock":
+def _qty_for(asset_class: str, sizing_usd: float, price: float, fractional: bool = False) -> float:
+    if asset_class == "stock" and not fractional:
         return float(int(sizing_usd // price))  # whole shares
     return round(sizing_usd / price, 6)
 
@@ -79,8 +90,25 @@ async def open_trade(
 
     account_id = get_setting(session, "current_account_id")  # tag the trade's account
     effective_sizing = strategy.sizing_usd if sizing_usd is None else sizing_usd
-    qty = _qty_for(cand.asset_class, effective_sizing, cand.price)
-    if qty <= 0:
+    is_market = market_mode(json.loads(strategy.params))
+    qty = _qty_for(cand.asset_class, effective_sizing, cand.price, fractional=is_market)
+
+    # Whole-share limit mode can't buy an expensive name with a small budget and
+    # rejects here; market+fractional mode buys a dollar slice instead (bounded
+    # only by Alpaca's $1 notional minimum).
+    if is_market and effective_sizing < 1:
+        session.add(
+            Trade(
+                strategy_id=strategy.id, config_version_id=version_id, mode=mode,
+                account_id=account_id,
+                symbol=cand.symbol, asset_class=cand.asset_class, qty=0, notional=0,
+                status="rejected",
+                entry_reason=f"wanted to buy ({reason}) but ${effective_sizing:,.2f} is below "
+                "Alpaca's $1 minimum for a market order",
+            )
+        )
+        return None
+    if qty <= 0 and not is_market:
         session.add(
             Trade(
                 strategy_id=strategy.id, config_version_id=version_id, mode=mode,
@@ -88,7 +116,8 @@ async def open_trade(
                 symbol=cand.symbol, asset_class=cand.asset_class, qty=0, notional=0,
                 status="rejected",
                 entry_reason=f"wanted to buy ({reason}) but position too small: "
-                f"${effective_sizing:,.0f} buys 0 shares at ${cand.price:,.2f}",
+                f"${effective_sizing:,.0f} buys 0 whole shares at ${cand.price:,.2f} "
+                "— turn on market + fractional trading to buy a slice",
             )
         )
         return None
@@ -104,12 +133,20 @@ async def open_trade(
 
     if mode == "paper":
         client_order_id = f"qt-{uuid.uuid4().hex[:20]}"
-        limit = _round_price(cand.price * (1 + _entry_slip_pct(strategy) / 100))
+        tif = "gtc" if cand.asset_class == "crypto" else "day"
         try:
-            order = await client.submit_order(
-                cand.symbol, qty, "buy", limit, client_order_id,
-                time_in_force="gtc" if cand.asset_class == "crypto" else "day",
-            )
+            if is_market:
+                # Buy a dollar notional at market — fills fast (so it doesn't
+                # orphan) and lets a small budget take a fractional slice.
+                order = await client.submit_market_order(
+                    cand.symbol, "buy", client_order_id,
+                    notional=round(effective_sizing, 2), time_in_force=tif,
+                )
+            else:
+                limit = _round_price(cand.price * (1 + _entry_slip_pct(strategy) / 100))
+                order = await client.submit_order(
+                    cand.symbol, qty, "buy", limit, client_order_id, time_in_force=tif,
+                )
         except AlpacaError as exc:
             trade.status = "rejected"
             trade.entry_reason = f"wanted to buy ({reason}) but order rejected: {exc}"
@@ -121,10 +158,23 @@ async def open_trade(
                 await client.cancel_order(order["id"])
             except AlpacaError:
                 pass
-            trade.status = "rejected"
-            trade.entry_reason = f"wanted to buy ({reason}) but limit order did not fill"
-            session.add(trade)
-            return None
+            # A cancel can race a late fill (notably crypto GTC orders, which fill
+            # asynchronously): re-check once and adopt whatever actually filled, so
+            # QT's journal matches Alpaca instead of orphaning a real position that
+            # then never shows up in the strategy's holdings.
+            try:
+                final = await client.get_order(order["id"])
+            except AlpacaError:
+                final = None
+            if final and float(final.get("filled_qty") or 0) > 0:
+                filled = final
+            else:
+                trade.status = "rejected"
+                trade.entry_reason = (
+                    f"wanted to buy ({reason}) but {'market' if is_market else 'limit'} order did not fill"
+                )
+                session.add(trade)
+                return None
         trade.entry_order_id = order["id"]
         trade.entry_price = float(filled.get("filled_avg_price") or cand.price)
         trade.qty = float(filled.get("filled_qty") or qty)
@@ -157,22 +207,30 @@ async def close_trade(
     *,
     slip_pct: float = EXIT_SLIP_PCT,
     slip_max_pct: float | None = None,
+    market: bool = False,
 ) -> bool:
     exit_price = price
 
     if trade.mode == "paper":
         client_order_id = f"qt-x-{uuid.uuid4().hex[:18]}"
-        # Escalating marketable sell: widen the buffer with each prior miss (up to
-        # slip_max_pct) so a fast drop still gets out — still a limit, never a
-        # naked market order.
+        tif = "gtc" if trade.asset_class == "crypto" else "day"
         attempts = _exit_attempts.get(trade.id, 0)
+        # Market+fractional strategies sell the whole (possibly fractional)
+        # position at market — fills at once, no escalating chase. Otherwise the
+        # default escalating marketable-limit sell: widen the buffer with each
+        # prior miss (up to slip_max_pct) so a fast drop still gets out — still a
+        # limit, never a naked market order.
         pct = _escalated_exit_pct(slip_pct, slip_max_pct, attempts)
-        limit = _round_price(price * (1 - pct / 100))
         try:
-            order = await client.submit_order(
-                trade.symbol, trade.qty, "sell", limit, client_order_id,
-                time_in_force="gtc" if trade.asset_class == "crypto" else "day",
-            )
+            if market:
+                order = await client.submit_market_order(
+                    trade.symbol, "sell", client_order_id, qty=trade.qty, time_in_force=tif,
+                )
+            else:
+                limit = _round_price(price * (1 - pct / 100))
+                order = await client.submit_order(
+                    trade.symbol, trade.qty, "sell", limit, client_order_id, time_in_force=tif,
+                )
         except AlpacaError as exc:
             _exit_attempts[trade.id] = attempts + 1
             session.add(
@@ -190,10 +248,11 @@ async def close_trade(
             except AlpacaError:
                 pass
             _exit_attempts[trade.id] = attempts + 1
+            miss = "at market" if market else f"at {pct:.1f}%"
             session.add(
                 AuditLog(
                     category="trade",
-                    message=f"[paper] SELL {trade.symbol} did not fill at {pct:.1f}% "
+                    message=f"[paper] SELL {trade.symbol} did not fill {miss} "
                     f"(attempt {attempts + 1}) — will retry next cycle",
                 )
             )

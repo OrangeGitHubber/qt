@@ -62,6 +62,11 @@ export interface StrategyParams {
   // the hard stop at stop_mult × ATR% below entry; risk_usd > 0 (needs stop_mult)
   // sizes each position so a stop-out loses ~risk_usd. period is the ATR lookback.
   atr?: { period: number; stop_mult: number; risk_usd: number };
+  // Order execution mode. Off/absent = marketable LIMIT orders + whole shares
+  // (the price-protected default). market_orders = plain MARKET orders sized by
+  // dollar notional, so a small $-per-trade can buy a fractional slice of an
+  // expensive name — no limit protection.
+  execution?: { market_orders: boolean };
 }
 
 export type RankBy = "momentum_today" | "return_30d" | "relative_strength" | "rs_vs_spy";

@@ -230,8 +230,14 @@ export const GLOSSARY: Record<string, GlossaryEntry> = {
   sizing: {
     term: "$ per trade",
     explain:
-      "Dollars committed to each new position. For stocks it's rounded down to whole shares, so the real amount is a little less. Bigger = fewer positions fit the sleeve and each trade moves the account more; smaller = more diversification but small wins barely register. Must be ≤ the sleeve budget.",
+      "Dollars committed to each new position. For stocks it's rounded down to whole shares, so the real amount is a little less (unless market + fractional trading is on). Bigger = fewer positions fit the sleeve and each trade moves the account more; smaller = more diversification but small wins barely register. Must be ≤ the sleeve budget.",
     url: "https://www.investopedia.com/terms/p/positionsizing.asp",
+  },
+  market_fractional: {
+    term: "Market orders + fractional shares",
+    explain:
+      "Off by default, this strategy uses price-protected marketable limit orders and buys whole shares — so a small $ per trade can't buy an expensive name (e.g. $200 buys 0 whole shares of a $700 stock, and the buy is skipped). Turn it on and it instead sends plain market orders sized by dollar amount, so that $200 buys a fractional slice (~0.28 shares) and fills immediately. The trade-off: a market order takes whatever price is available, with no limit to protect you on a fast or thin move, so the fill can be worse than expected. Best for liquid, higher-priced names you'd otherwise miss; leave it off for thin small-caps where the spread can bite. It also makes crypto fills immediate, which avoids the orphan positions a slow limit fill can leave behind.",
+    url: "https://www.investopedia.com/terms/f/fractionalshare.asp",
   },
   max_positions: {
     term: "Max positions",

@@ -93,6 +93,106 @@ async def test_position_too_small_is_rejected_not_ordered(strategy_row):
         assert "too small" in rejected.entry_reason
 
 
+_MARKET_PARAMS = '{"entry":{},"exit":{"stop_loss_pct":4},"execution":{"market_orders":true}}'
+
+
+async def test_market_mode_buys_expensive_name_by_notional(strategy_row):
+    # A $200 budget can't buy a whole $700 share, so the default limit path would
+    # reject it. Market+fractional sends a NOTIONAL market order and takes a slice.
+    submitted = {}
+
+    async def fake_market(self, symbol, side, client_order_id, *, qty=None, notional=None, time_in_force="day"):
+        submitted.update(symbol=symbol, side=side, qty=qty, notional=notional, tif=time_in_force)
+        return {"id": "m-1", "status": "accepted"}
+
+    filled = {"id": "m-1", "status": "filled", "filled_avg_price": "700.00", "filled_qty": "0.285714"}
+    with (
+        patch.object(AlpacaClient, "submit_market_order", fake_market),
+        patch.object(AlpacaClient, "get_order", new=AsyncMock(return_value=filled)),
+        patch("qt.services.execution.FILL_POLL_SECONDS", (0,)),
+    ):
+        with session_scope() as s:
+            strat = s.get(Strategy, strategy_row)
+            strat.params = _MARKET_PARAMS
+            s.flush()
+            cand = Candidate(symbol="BRKB", asset_class="stock", price=700.0, change_pct=5.0, vwap=690.0)
+            trade = await execution.open_trade(s, _client(), strat, None, "paper", cand, "expensive name")
+            assert trade is not None  # NOT rejected as "too small"
+            assert trade.entry_price == 700.0
+            assert trade.qty == pytest.approx(0.285714)  # a fractional slice
+
+    assert submitted["side"] == "buy"
+    assert submitted["notional"] == 200.0  # the $ per trade, not whole shares
+    assert submitted["qty"] is None
+    assert submitted["tif"] == "day"
+
+
+async def test_market_mode_sell_uses_market_order(strategy_row):
+    from datetime import datetime, timezone
+
+    submitted = {}
+
+    async def fake_market(self, symbol, side, client_order_id, *, qty=None, notional=None, time_in_force="day"):
+        submitted.update(side=side, qty=qty, notional=notional)
+        return {"id": "sell-1", "status": "accepted"}
+
+    with session_scope() as s:
+        trade = Trade(
+            strategy_id=strategy_row, mode="paper", symbol="BRKB", asset_class="stock",
+            qty=0.285714, notional=200.0, status="open", entry_price=700.0,
+            entry_at=datetime.now(timezone.utc), high_water=710.0,
+        )
+        s.add(trade)
+        s.flush()
+        filled = {"id": "sell-1", "status": "filled", "filled_avg_price": "705.00"}
+        with (
+            patch.object(AlpacaClient, "submit_market_order", fake_market),
+            patch.object(AlpacaClient, "get_order", new=AsyncMock(return_value=filled)),
+            patch("qt.services.execution.FILL_POLL_SECONDS", (0,)),
+        ):
+            ok = await execution.close_trade(s, _client(), trade, 705.0, "take-profit", market=True)
+        assert ok
+        assert trade.status == "closed"
+        assert submitted["side"] == "sell"
+        assert submitted["qty"] == pytest.approx(0.285714)  # sells the fractional position
+        assert submitted["notional"] is None
+
+
+async def test_cancel_race_adopts_a_late_fill(strategy_row):
+    # The poll times out (order still "new"), QT cancels — but the cancel races a
+    # late fill (classic crypto GTC). Re-checking must adopt the real position
+    # instead of marking it rejected and orphaning it.
+    calls = {"n": 0}
+
+    async def fake_get(self, order_id):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return {"id": "o-9", "status": "new"}
+        return {"id": "o-9", "status": "filled", "filled_avg_price": "21.00", "filled_qty": "9"}
+
+    with (
+        patch.object(AlpacaClient, "submit_order", new=AsyncMock(return_value={"id": "o-9"})),
+        patch.object(AlpacaClient, "get_order", fake_get),
+        patch.object(AlpacaClient, "cancel_order", new=AsyncMock(return_value=None)),
+        patch("qt.services.execution.FILL_POLL_SECONDS", (0,)),
+    ):
+        with session_scope() as s:
+            strat = s.get(Strategy, strategy_row)
+            cand = Candidate(symbol="ROCKET", asset_class="stock", price=21.0, change_pct=6.0, vwap=20.8)
+            trade = await execution.open_trade(s, _client(), strat, None, "paper", cand, "race")
+            assert trade is not None
+            assert trade.status == "open"
+            assert trade.qty == 9
+            assert trade.entry_price == 21.0
+
+
+async def test_submit_market_order_requires_exactly_one_size():
+    with pytest.raises(ValueError):
+        await _client().submit_market_order("X", "buy", "cid", qty=1, notional=5)
+    with pytest.raises(ValueError):
+        await _client().submit_market_order("X", "buy", "cid")
+
+
 async def test_paper_sell_records_fill_and_pnl(strategy_row):
     with session_scope() as s:
         from datetime import datetime, timezone

@@ -97,6 +97,19 @@ class SimTrade:
     pnl: float | None = None
 
 
+def _fractional(params: dict) -> bool:
+    """Mirror the live engine: a market+fractional strategy sizes stocks by
+    dollar slice, not whole shares — so backtesting an expensive-name strategy
+    doesn't come back as 0 trades (int(sizing // price) == 0)."""
+    return bool(params.get("execution", {}).get("market_orders", False))
+
+
+def _entry_qty(asset_class: str, sizing: float, fill: float, fractional: bool) -> float:
+    if asset_class == "stock" and not fractional:
+        return float(int(sizing // fill))  # whole shares
+    return round(sizing / fill, 6)
+
+
 @dataclass
 class SimState:
     cash: float
@@ -373,7 +386,7 @@ def run_backtest(
                 diag["entry_ok_but_rail_blocked"] += 1
                 continue
             fill = bar["close"] * (1 + slip)
-            qty = float(int(entry_sizing // fill)) if strategy["asset_class"] == "stock" else round(entry_sizing / fill, 6)
+            qty = _entry_qty(strategy["asset_class"], entry_sizing, fill, _fractional(params))
             if qty <= 0 or fill * qty > state.cash:
                 diag["too_small_or_no_cash"] += 1
                 continue
@@ -670,7 +683,7 @@ def run_portfolio_backtest(
             if not rails_ok:
                 continue
             fill = bar["close"] * (1 + slip)
-            qty = float(int(sizing // fill)) if strat["asset_class"] == "stock" else round(sizing / fill, 6)
+            qty = _entry_qty(strat["asset_class"], sizing, fill, _fractional(params))
             if qty <= 0 or fill * qty > cash:
                 continue
             cash -= fill * qty

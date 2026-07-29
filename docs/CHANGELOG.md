@@ -3,6 +3,28 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Optional market orders + fractional shares, per strategy (2026-07-29)
+
+QT's default is still **marketable limit orders and whole shares** — the
+price-protected path. But that meant a small "$ per trade" could never buy an
+expensive name: a $200 budget buys 0 whole shares of a $700 stock, so the buy was
+skipped and the bot moved on to a lower-priced (often lower-quality) symbol
+instead. Each strategy now has a **"Buy & sell at market price (allow fractional
+shares)"** toggle (Sizing & risk section, off by default). Turn it on and that
+strategy sends plain **market orders sized by dollar amount** — so $200 buys a
+fractional slice (~0.28 shares of a $700 name) and fills immediately. The
+trade-off, spelled out in the ? bubble: a market order takes whatever price is
+available, with no limit to protect you on a fast or thin move. Backtests of a
+market+fractional strategy now size fractionally too, so an expensive-name
+strategy no longer shows a misleading 0 trades.
+
+As a side benefit this also makes **crypto** fills immediate, which removes a
+class of "orphan" positions: a slow-filling limit order that QT gave up on (and
+canceled) could still fill at Alpaca a moment later, leaving a real position with
+no open trade in QT's journal — invisible in the per-strategy holdings view. QT
+now re-checks a canceled order and **adopts a late fill** instead of orphaning it,
+on the default limit path too.
+
 ## Starter baskets replaced with 12 sector/theme lists (2026-07-28)
 
 The shipped starter baskets have been swapped out for a broader, more useful set:

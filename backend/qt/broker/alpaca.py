@@ -115,7 +115,7 @@ class AlpacaClient:
         client_order_id: str,
         time_in_force: str = "day",
     ) -> dict[str, Any]:
-        """Marketable LIMIT order — this app never sends plain market orders."""
+        """Marketable LIMIT order — the default, price-protected path."""
         return await self._post(
             "/v2/orders",
             {
@@ -128,6 +128,37 @@ class AlpacaClient:
                 "client_order_id": client_order_id,
             },
         )
+
+    async def submit_market_order(
+        self,
+        symbol: str,
+        side: str,
+        client_order_id: str,
+        *,
+        qty: float | None = None,
+        notional: float | None = None,
+        time_in_force: str = "day",
+    ) -> dict[str, Any]:
+        """Plain MARKET order — used only when a strategy opts into market +
+        fractional execution. Pass exactly one of `qty` (fractional allowed) or
+        `notional` (a dollar amount). Notional lets a small $-per-trade buy a
+        fractional slice of an expensive name (e.g. $200 of BRK.B). Fills at the
+        prevailing price with no limit protection — the trade-off the strategy
+        opted into. Alpaca requires market/day for fractional-equity orders."""
+        if (qty is None) == (notional is None):
+            raise ValueError("submit_market_order needs exactly one of qty or notional.")
+        body: dict[str, Any] = {
+            "symbol": symbol,
+            "side": side,
+            "type": "market",
+            "time_in_force": time_in_force,
+            "client_order_id": client_order_id,
+        }
+        if notional is not None:
+            body["notional"] = str(notional)
+        else:
+            body["qty"] = str(qty)
+        return await self._post("/v2/orders", body)
 
     async def get_order(self, order_id: str) -> dict[str, Any]:
         return await self._get(f"/v2/orders/{order_id}")

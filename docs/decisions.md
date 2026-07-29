@@ -2,6 +2,24 @@
 
 Why QT is the way it is. Newest first.
 
+## 2026-07-29 — "Marketable limit only" relaxed to an opt-in, per-strategy choice
+The original council rule (2026-07-13) was **marketable limit orders only, never
+plain market** — price protection against fast/thin fills. Werner hit its real
+cost: with whole-share sizing, a small "$ per trade" can't buy an expensive name
+at all (a $200 budget buys 0 whole shares of a $700 stock, so the bot skips a
+genuinely good riser like BRK.B and takes a lower-quality cheaper name instead).
+
+Decision: keep marketable-limit + whole-share as the **default**, but let a
+strategy **opt into market orders + fractional (dollar-notional) sizing**. Market
+orders trade price protection for certainty of fill and access to expensive names;
+fractional sizing (Alpaca requires market/day for fractional equity) lets a small
+budget take a slice. The trade-off is surfaced in the UI ? bubble, not hidden.
+This is consistent with QT's philosophy of *defaulting to the safe path and making
+the riskier one a deliberate, explained opt-in* (cf. the leverage double-lock).
+Bonus: market fills are immediate, which removes a crypto "orphan position" class
+(a slow limit fill QT had given up on filling after it canceled). QT also now
+adopts a late fill on a canceled order rather than orphaning it.
+
 ## 2026-07-28 — The three jobs QT exists to do (product objectives)
 Restated with Werner so every feature can be checked against them. QT must serve
 three distinct trading styles, each a strategy the engine runs concurrently:

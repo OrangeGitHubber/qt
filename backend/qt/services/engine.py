@@ -653,6 +653,7 @@ async def _manage_exits(
             session, client, trade, price, reason,
             slip_pct=exit_cfg.get("exit_slippage_pct", execution.EXIT_SLIP_PCT),
             slip_max_pct=exit_cfg.get("exit_slippage_max_pct"),
+            market=execution.market_mode(params),
         )
 
 
