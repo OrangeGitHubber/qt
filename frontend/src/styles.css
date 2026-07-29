@@ -537,6 +537,11 @@ tr:last-child td {
   font-size: 0.8rem;
   line-height: 1.35;
 }
+/* A field-level note that's a constraint/warning — orange, and its inline icon
+   inherits that colour via currentColor. */
+.field-help.warn {
+  color: var(--warn);
+}
 
 .nowrap {
   white-space: nowrap;

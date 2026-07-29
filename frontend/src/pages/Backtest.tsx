@@ -647,12 +647,16 @@ export default function Backtest() {
                 <option value="1Day" disabled={usesVwap}>1 day (fast, coarse)</option>
               </select>
               {usesDailySignals && (
-                <span className="hint">
-                  MACD/RSI are daily signals — locked to 1 Day so the backtest matches the live engine.
+                <span className="field-help warn">
+                  <IconWarn className="icon-inline" /> This strategy uses MACD/RSI (daily signals), so the bar size
+                  can't be changed — it's fixed to 1 Day so the backtest matches the live engine.
                 </span>
               )}
               {usesVwap && (
-                <span className="hint">VWAP is intraday — 1 Day is disabled for this strategy.</span>
+                <span className="field-help warn">
+                  <IconWarn className="icon-inline" /> This strategy uses VWAP (an intraday measure), so the bar size
+                  can't be set to 1 Day.
+                </span>
               )}
             </label>
             <label>
