@@ -12,7 +12,6 @@ import {
 import InfoTip from "../components/InfoTip";
 import LineChart, { ChartMarker } from "../components/LineChart";
 import NumberField from "../components/NumberField";
-import SymbolPicker from "../components/SymbolPicker";
 import { IconWarn } from "../components/icons";
 
 type TradeEvent = {
@@ -43,13 +42,74 @@ function pct(v: number | null | undefined): string {
   return v != null ? `${v}%` : "—";
 }
 
+// A strategy's backtest universe, resolved READ-ONLY from its own config — the
+// backtest tests the strategy's universe, it isn't picked here. Basket → its
+// members; custom → its symbol list; scanner → replayed risers (no fixed list);
+// watchlist/both → the asset-class watchlist.
+function resolveUniverse(
+  strat: StrategyRow | undefined,
+  baskets: Basket[],
+): { symbols: string[]; label: string; scannerReplay: boolean } {
+  if (!strat) return { symbols: [], label: "", scannerReplay: false };
+  if (strat.universe === "basket" && strat.basket_id != null) {
+    const b = baskets.find((x) => x.id === strat.basket_id);
+    const symbols = b
+      ? b.symbols.filter((m) => m.asset_class === strat.asset_class).map((m) => m.symbol).slice(0, 50)
+      : [];
+    return { symbols, label: b ? `basket “${b.name}”` : "basket", scannerReplay: false };
+  }
+  if (strat.universe === "custom") {
+    return { symbols: (strat.symbols ?? []).slice(0, 50), label: "specific symbols", scannerReplay: false };
+  }
+  if (strat.universe === "scanner") {
+    return { symbols: [], label: "scanner — today’s risers (replayed)", scannerReplay: true };
+  }
+  return { symbols: [], label: "your watchlist", scannerReplay: false }; // watchlist | both
+}
+
+// Which bar size a strategy's signals demand: VWAP → intraday; MACD/RSI → daily.
+function stratWantsIntraday(s: StrategyRow): boolean {
+  return !!s.params?.entry.require_above_vwap;
+}
+function stratWantsDaily(s: StrategyRow): boolean {
+  const e = s.params?.entry;
+  const x = s.params?.exit;
+  if (e?.require_above_vwap) return false;
+  return (
+    !!e?.require_macd_bullish ||
+    !!x?.exit_on_macd_bearish ||
+    (e?.rsi_min ?? 0) > 0 ||
+    (e?.rsi_max ?? 0) > 0 ||
+    (x?.exit_rsi_above ?? 0) > 0
+  );
+}
+
+// Read-only display of a strategy's resolved universe, shown under its dropdown.
+function UniverseChips({ uni }: { uni: { symbols: string[]; label: string } }) {
+  if (!uni.label) return null;
+  return (
+    <div className="universe-ro">
+      <span className="field-cap">Universe — {uni.label}</span>
+      {uni.symbols.length > 0 ? (
+        <div className="chips-ro">
+          {uni.symbols.map((s) => (
+            <span key={s} className="chip-ro">
+              {s}
+            </span>
+          ))}
+        </div>
+      ) : (
+        <span className="hint">Resolved live from the strategy — no fixed list to show.</span>
+      )}
+    </div>
+  );
+}
+
 export default function Backtest() {
   const [mode, setMode] = useState<"single" | "portfolio">("single");
   const [strategies, setStrategies] = useState<StrategyRow[]>([]);
   const [strategyId, setStrategyId] = useState<number | null>(null);
   const [baskets, setBaskets] = useState<Basket[]>([]);
-  const [basketNote, setBasketNote] = useState<string | null>(null);
-  const [symbols, setSymbols] = useState<string[]>([]);
   const [scannerReplay, setScannerReplay] = useState(false);
   const [replayTopN, setReplayTopN] = useState(10);
   const [days, setDays] = useState(90);
@@ -129,7 +189,6 @@ export default function Backtest() {
   }, []);
 
   const strategy = strategies.find((s) => s.id === strategyId);
-  const assetClass = strategy?.asset_class;
 
   // Which bar sizes are valid for this strategy. MACD/RSI are DAILY signals (the
   // live engine computes them from completed daily bars), so an intraday backtest
@@ -137,88 +196,30 @@ export default function Backtest() {
   // strategies are locked to 1 Day. VWAP is the opposite — an intraday-only
   // measure — so a VWAP strategy can't use 1 Day. (VWAP wins if somehow both are
   // set; that strategy is misconfigured and the builder already warns about it.)
-  const sp = strategy?.params;
-  const usesVwap = !!sp?.entry.require_above_vwap;
-  const usesDailySignals =
-    !usesVwap &&
-    (!!sp?.entry.require_macd_bullish ||
-      !!sp?.exit.exit_on_macd_bearish ||
-      (sp?.entry.rsi_min ?? 0) > 0 ||
-      (sp?.entry.rsi_max ?? 0) > 0 ||
-      (sp?.exit.exit_rsi_above ?? 0) > 0);
+  const usesVwap = !!strategy && stratWantsIntraday(strategy);
+  const usesDailySignals = !!strategy && stratWantsDaily(strategy);
 
-  // Default the backtest to the SELECTED strategy's own universe — scanner →
-  // replay, basket → its symbols, custom → its list, watchlist → the watchlist.
-  // The manual controls below still override. Re-runs only when you switch
-  // strategies (or once baskets finish loading, for a basket strategy).
+  // Each strategy's universe is READ-ONLY here — resolved from its own config and
+  // shown under its dropdown, never edited. The backtest tests the strategy's own
+  // universe: strategy A on A's, the compare strategy on its own.
+  const uniA = resolveUniverse(strategy, baskets);
+  const compareStrat = strategies.find((s) => s.id === compareId);
+  const uniB = resolveUniverse(compareStrat, baskets);
+
+  // On strategy change: default cash to the strategy's own sleeve, mirror its
+  // scanner-replay universe, and snap the bar size to one it can be tested on
+  // (MACD/RSI → 1 Day; VWAP → intraday). No symbol picking — the universe is the
+  // strategy's own, resolved above.
   useEffect(() => {
     const strat = strategies.find((s) => s.id === strategyId);
     if (!strat) return;
-    setBasketNote(null);
-    // Default the starting cash to the strategy's own sleeve: a single-strategy
-    // backtest can never deploy more than its sleeve, so a fixed $5000 against a
-    // $1000 sleeve would leave most of the account idle and dilute the account-%
-    // return. Clamp to the field's ≥$100 minimum. Still editable below.
     setCash(Math.max(strat.sleeve_usd || 5000, 100));
-    if (strat.universe === "scanner") {
-      // Scanner replay works for both stocks (ET days) and crypto (UTC days) —
-      // each reads its own cache, so a "today's risers" strategy replays either.
-      setScannerReplay(true);
-      setSymbols([]);
-      setReplayTopN(strat.top_n || 10);
-    } else if (strat.universe === "basket") {
-      setScannerReplay(false);
-      if (strat.basket_id != null && baskets.length) loadBasket(strat.basket_id);
-      else setSymbols([]);
-    } else if (strat.universe === "custom") {
-      setScannerReplay(false);
-      setSymbols((strat.symbols ?? []).slice(0, 50));
-    } else {
-      setScannerReplay(false); // watchlist | both — empty picker = the watchlist
-      setSymbols([]);
-    }
-    // Snap the bar size to one this strategy can actually be tested on, so an
-    // invalid combo can't be run: MACD/RSI → 1 Day; VWAP → intraday.
-    const svwap = !!strat.params?.entry.require_above_vwap;
-    const sdaily =
-      !svwap &&
-      (!!strat.params?.entry.require_macd_bullish ||
-        !!strat.params?.exit.exit_on_macd_bearish ||
-        (strat.params?.entry.rsi_min ?? 0) > 0 ||
-        (strat.params?.entry.rsi_max ?? 0) > 0 ||
-        (strat.params?.exit.exit_rsi_above ?? 0) > 0);
-    if (sdaily) setTimeframe("1Day");
-    else if (svwap) setTimeframe("1Hour");
+    setScannerReplay(strat.universe === "scanner");
+    if (strat.universe === "scanner") setReplayTopN(strat.top_n || 10);
+    if (stratWantsDaily(strat)) setTimeframe("1Day");
+    else if (stratWantsIntraday(strat)) setTimeframe("1Hour");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [strategyId, strategies, baskets]);
-
-  const universeLabel = strategy
-    ? {
-        scanner: "today's risers (scanner replay)",
-        basket: "its basket",
-        custom: "its own symbol list",
-        watchlist: "your watchlist",
-        both: "your watchlist",
-      }[strategy.universe]
-    : null;
-
-  function loadBasket(id: number) {
-    setBasketNote(null);
-    const basket = baskets.find((b) => b.id === id);
-    if (!basket) return;
-    const all = basket.symbols.filter((m) => !assetClass || m.asset_class === assetClass).map((m) => m.symbol);
-    const capped = all.slice(0, 50);
-    setSymbols(capped);
-    if (all.length === 0) {
-      setBasketNote(`"${basket.name}" has no ${assetClass ?? ""} symbols to test.`);
-    } else if (all.length > 50) {
-      setBasketNote(
-        `Loaded the first 50 of ${all.length} symbols from "${basket.name}" — a backtest is capped at 50 symbols (rate limits).`,
-      );
-    } else {
-      setBasketNote(`Loaded ${capped.length} symbols from "${basket.name}".`);
-    }
-  }
 
   async function run(e: FormEvent) {
     e.preventDefault();
@@ -227,23 +228,28 @@ export default function Backtest() {
     setError(null);
     setResult(null);
     setCompareResult(null);
-    // Both strategies run over the SAME settings (universe, period, cash,
-    // spread) so the only difference is the strategy's own rules — an
-    // apples-to-apples head-to-head.
-    const base = {
-      symbols,
-      scanner_replay: scannerReplay,
-      replay_top_n: replayTopN,
-      days,
-      timeframe,
-      starting_cash: cash,
-      spread_pct: spread,
-    };
+    // Shared settings (period, bar size, spread); each strategy runs on its OWN
+    // universe and its own sleeve — a head-to-head of complete configs.
+    const shared = { days, timeframe, spread_pct: spread };
     try {
       const [r, cr] = await Promise.all([
-        runBacktest({ strategy_id: strategyId, ...base }),
-        compareId !== null && compareId !== strategyId
-          ? runBacktest({ strategy_id: compareId, ...base })
+        runBacktest({
+          strategy_id: strategyId,
+          symbols: uniA.symbols,
+          scanner_replay: scannerReplay,
+          replay_top_n: replayTopN,
+          starting_cash: cash,
+          ...shared,
+        }),
+        compareStrat && compareId !== strategyId
+          ? runBacktest({
+              strategy_id: compareStrat.id,
+              symbols: uniB.symbols,
+              scanner_replay: uniB.scannerReplay,
+              replay_top_n: compareStrat.top_n || 10,
+              starting_cash: Math.max(compareStrat.sleeve_usd || 5000, 100),
+              ...shared,
+            })
           : Promise.resolve(null),
       ]);
       setResult(r);
@@ -273,6 +279,20 @@ export default function Backtest() {
     setPortfolioIds((ids) => (ids.includes(id) ? ids.filter((x) => x !== id) : [...ids, id]));
   }
 
+  // Portfolio: the account and the bar size are DERIVED, not chosen. The account
+  // is the sum of the picked strategies' sleeves (each keeps its own). The bar
+  // size is the finest any strategy needs — intraday if one uses VWAP, else daily
+  // (correct for MACD/RSI/rotation). A mix of intraday-only and daily-only
+  // strategies can't both be faithful on one timeline, so we flag it.
+  const portfolioStrats = portfolioIds
+    .map((id) => strategies.find((s) => s.id === id))
+    .filter((s): s is StrategyRow => !!s);
+  const portfolioCash = Math.max(portfolioStrats.reduce((sum, s) => sum + (s.sleeve_usd || 0), 0), 100);
+  const portfolioAnyIntraday = portfolioStrats.some(stratWantsIntraday);
+  const portfolioAnyDaily = portfolioStrats.some(stratWantsDaily);
+  const portfolioTimeframe = portfolioAnyIntraday ? "15Min" : "1Day";
+  const portfolioMixedBars = portfolioAnyIntraday && portfolioAnyDaily;
+
   async function runPortfolio(e: FormEvent) {
     e.preventDefault();
     if (portfolioIds.length === 0) return;
@@ -283,8 +303,8 @@ export default function Backtest() {
       const r = await runPortfolioBacktest({
         strategy_ids: portfolioIds,
         days,
-        timeframe,
-        starting_cash: cash,
+        timeframe: portfolioTimeframe,
+        starting_cash: portfolioCash,
         spread_pct: spread,
       });
       setPortfolioResult(r);
@@ -344,33 +364,34 @@ export default function Backtest() {
                 </label>
                 <label>
                   <span className="field-cap">
-                    Bar size <InfoTip k="bar" />
-                  </span>
-                  <select value={timeframe} onChange={(e) => setTimeframe(e.target.value)}>
-                    <option value="15Min">15 minutes (slow, precise)</option>
-                    <option value="1Hour">1 hour (recommended)</option>
-                    <option value="1Day">1 day (fast, coarse)</option>
-                  </select>
-                </label>
-                <label>
-                  <span className="field-cap">
-                    Starting cash ($) <InfoTip k="starting_cash" />
-                  </span>
-                  <NumberField min={100} step="any" value={cash} onChange={setCash} />
-                </label>
-                <label>
-                  <span className="field-cap">
                     Spread cost per side (%) <InfoTip k="spread_cost" />
                   </span>
                   <NumberField min={0} max={2} step={0.05} value={spread} onChange={setSpread} />
                 </label>
               </div>
-              <p className="hint">
-                One shared account across all picked strategies — set the starting cash to the whole account you'd give
-                the book, not a single sleeve.
-              </p>
+              {/* Account and bar size are DERIVED, not chosen — the account is the
+                  sum of the picked strategies' sleeves; the bar size is whatever
+                  their signals need. */}
+              {portfolioStrats.length > 0 && (
+                <p className="hint">
+                  <strong>Account ${portfolioCash.toLocaleString()}</strong> — the sum of the {portfolioStrats.length}{" "}
+                  selected {portfolioStrats.length === 1 ? "sleeve" : "sleeves"} (each strategy keeps its own).{" "}
+                  <strong>Bar size {portfolioTimeframe === "1Day" ? "1 Day" : "15 Min"}</strong>, chosen automatically
+                  ({portfolioAnyIntraday
+                    ? "a strategy uses VWAP, which needs intraday bars"
+                    : "daily signals / rotation run on daily bars"}
+                  ).
+                </p>
+              )}
+              {portfolioMixedBars && (
+                <p className="field-help warn">
+                  <IconWarn className="icon-inline" /> These strategies need <strong>different</strong> bar sizes — one
+                  uses VWAP (intraday), another uses MACD/RSI (daily). They can't be backtested together faithfully on a
+                  single timeline; run them separately.
+                </p>
+              )}
               {portfolioError && <div className="error">{portfolioError}</div>}
-              <button disabled={portfolioBusy || portfolioIds.length === 0}>
+              <button disabled={portfolioBusy || portfolioIds.length === 0 || portfolioMixedBars}>
                 {portfolioBusy ? "Replaying history…" : "Run portfolio"}
               </button>
             </form>
@@ -529,69 +550,51 @@ export default function Backtest() {
       <>
       <div className="card">
         <p className="hint">
-          Replays a strategy's exact rules over past prices — the same code the live engine runs. It defaults to the
-          strategy's <strong>own universe</strong> (a "today's risers" strategy replays the historical risers; a basket
-          tests its symbols) — override below to test something else. Honest limits: fills are modeled as price ± the
-          spread cost, and the free IEX feed sees a slice of the market. <strong>Past results predict nothing</strong> —
-          a backtest can only kill bad ideas cheaply, not promise good ones.
+          Replays a strategy's exact rules over past prices — the same code the live engine runs. Each strategy is
+          tested on its <strong>own universe</strong> (a "today's risers" strategy replays the historical risers; a
+          basket tests its symbols). Honest limits: fills are modeled as price ± the spread cost, and the free IEX feed
+          sees a slice of the market. <strong>Past results predict nothing</strong> — a backtest can only kill bad ideas
+          cheaply, not promise good ones.
         </p>
         <form className="backtest-form" onSubmit={run}>
-          {/* WHAT to test: strategy + symbols. Kept apart from the params row
-              because the symbol picker is a tall, composite control and would
-              otherwise leave the shorter fields ragged. */}
-          <div className="filter-grid">
-            <label>
-              <span className="field-cap">Strategy</span>
-              <select value={strategyId ?? ""} onChange={(e) => setStrategyId(Number(e.target.value))} required>
-                {strategies.length === 0 && <option value="">— create a strategy first —</option>}
-                {strategies.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.name} ({s.asset_class})
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label>
-              <span className="field-cap">Compare against (optional)</span>
-              <select value={compareId ?? ""} onChange={(e) => setCompareId(e.target.value ? Number(e.target.value) : null)}>
-                <option value="">— none —</option>
-                {strategies
-                  .filter((s) => s.id !== strategyId)
-                  .map((s) => (
+          {/* WHAT to test: each strategy, with its OWN universe shown read-only
+              below it. The universe is defined by the strategy — not chosen here. */}
+          <div className="filter-grid backtest-strats">
+            <div className="bt-strat-col">
+              <label>
+                <span className="field-cap">Strategy</span>
+                <select value={strategyId ?? ""} onChange={(e) => setStrategyId(Number(e.target.value))} required>
+                  {strategies.length === 0 && <option value="">— create a strategy first —</option>}
+                  {strategies.map((s) => (
                     <option key={s.id} value={s.id}>
                       {s.name} ({s.asset_class})
                     </option>
                   ))}
-              </select>
-            </label>
-            {/* a composite widget, not a single control — <label> would
-                re-dispatch clicks into it */}
-            <div className="field">
-              <span className="field-cap">Symbols — override (none picked = your watchlist)</span>
-              <SymbolPicker assetClass={assetClass} value={symbols} onChange={setSymbols} multi disabled={scannerReplay} />
-              {baskets.length > 0 && (
-                <select
-                  className="load-basket"
-                  value=""
-                  disabled={scannerReplay}
-                  onChange={(e) => e.target.value && loadBasket(Number(e.target.value))}
-                >
-                  <option value="">Load basket ▾</option>
-                  {baskets.map((b) => (
-                    <option key={b.id} value={b.id}>
-                      {b.name} ({b.count})
-                    </option>
-                  ))}
                 </select>
-              )}
+              </label>
+              <UniverseChips uni={uniA} />
+            </div>
+            <div className="bt-strat-col">
+              <label>
+                <span className="field-cap">Compare against (optional)</span>
+                <select value={compareId ?? ""} onChange={(e) => setCompareId(e.target.value ? Number(e.target.value) : null)}>
+                  <option value="">— none —</option>
+                  {strategies
+                    .filter((s) => s.id !== strategyId)
+                    .map((s) => (
+                      <option key={s.id} value={s.id}>
+                        {s.name} ({s.asset_class})
+                      </option>
+                    ))}
+                </select>
+              </label>
+              {compareStrat && <UniverseChips uni={uniB} />}
             </div>
           </div>
-          {universeLabel && (
-            <p className="hint">
-              Testing this strategy as configured — universe: <strong>{universeLabel}</strong>. Change the controls here
-              to override.
-            </p>
-          )}
+          <p className="hint">
+            Each strategy is tested on <strong>its own universe</strong> (shown above) and its own sleeve — the backtest
+            honours whatever the strategy is set to; the symbols aren't editable here.
+          </p>
           {/* Scanner replay is ONLY meaningful for a scanner-universe strategy —
               it reconstructs each day's top risers. A basket / custom / watchlist
               strategy has a FIXED universe, so replaying scanner risers would test
@@ -672,11 +675,10 @@ export default function Backtest() {
               <NumberField min={0} max={2} step={0.05} value={spread} onChange={setSpread} />
             </label>
           </div>
-          {basketNote && <p className="hint">{basketNote}</p>}
           <p className="hint">
-            Loading a basket fills the symbols above so you can see exactly what's tested. A backtest tests the{" "}
-            <strong>whole basket's symbol set</strong> over history — it can't reconstruct the historical daily top-N
-            ranking that the live engine does, so top-N is a live entry-selection feature only.
+            A backtest tests the strategy's <strong>whole universe symbol set</strong> over history — it can't
+            reconstruct the historical daily top-N ranking that the live engine does, so top-N is a live entry-selection
+            feature only.
           </p>
           {error && <div className="error">{error}</div>}
           <button disabled={busy || strategyId === null}>{busy ? "Replaying history…" : "Run backtest"}</button>
