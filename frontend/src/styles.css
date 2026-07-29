@@ -218,6 +218,16 @@ input:focus {
   border-color: transparent;
 }
 
+/* Keyboard focus indicator for EVERY interactive control (buttons, nav tabs,
+   the mode switch, sortable headers, links, summaries, InfoTip triggers). Uses
+   :focus-visible so it shows for keyboard/AT users but not on mouse click.
+   Without this the dark theme leaves keyboard users with no idea where they are. */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+
 button {
   margin-top: 1.2rem;
   padding: 0.65rem 1.4rem;
@@ -828,7 +838,6 @@ label.check input {
   background: transparent;
   border: 1px solid var(--border);
   color: var(--muted);
-  outline: none;
   font-weight: 500;
 }
 .mode-switch button:hover {
@@ -1113,7 +1122,6 @@ td.detail p {
   background: var(--accent);
   border-color: var(--accent);
   color: #fff;
-  outline: none;
 }
 
 .range-buttons .hint {
@@ -1333,6 +1341,17 @@ details.cols-menu > summary:hover {
 .cols-popover label.check {
   margin: 0;
   font-weight: 500;
+}
+
+/* Overbought/oversold tag next to an extreme RSI value — a non-colour cue so the
+   signal reads without relying on red/green alone. */
+.rsi-tag {
+  margin-left: 0.35rem;
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  opacity: 0.85;
+  vertical-align: 1px;
 }
 
 /* Per-strategy holdings + last-run trace: expandable diagnostics on a card. */

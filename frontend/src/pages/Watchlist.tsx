@@ -51,12 +51,19 @@ const OPTIONAL_COLUMNS: OptCol[] = [
     label: "RSI",
     tip: "rsi",
     sortKey: "rsi",
-    // Overbought (>70) / oversold (<30) get a subtle cue; otherwise neutral.
-    render: (r) => (
-      <td className={r.rsi == null ? "" : r.rsi >= 70 ? "down" : r.rsi <= 30 ? "up" : ""}>
-        {r.rsi != null ? r.rsi : "—"}
-      </td>
-    ),
+    // Overbought (>=70) / oversold (<=30) get BOTH a colour and a text tag, so the
+    // signal doesn't depend on colour alone (red/green is ambiguous to ~8% of men).
+    render: (r) => {
+      const v = r.rsi;
+      if (v == null) return <td>—</td>;
+      const zone = v >= 70 ? "ob" : v <= 30 ? "os" : "";
+      return (
+        <td className={zone === "ob" ? "down" : zone === "os" ? "up" : ""}>
+          {v}
+          {zone && <span className="rsi-tag">{zone === "ob" ? "OB" : "OS"}</span>}
+        </td>
+      );
+    },
   },
   {
     key: "trend",
@@ -142,10 +149,12 @@ export default function Watchlist() {
   }, [rows, filter, sortKey, sortDir]);
 
   function SortHead({ k, label, tip }: { k: SortKey; label: string; tip?: string }) {
-    const arrow = sortKey === k ? (sortDir === "asc" ? " ▲" : " ▼") : "";
+    const active = sortKey === k;
+    const arrow = active ? (sortDir === "asc" ? " ▲" : " ▼") : "";
+    // aria-sort lets a screen reader announce which column is sorted and which way.
     return (
-      <th>
-        <button type="button" className={`th-sort${sortKey === k ? " active" : ""}`} onClick={() => toggleSort(k)}>
+      <th aria-sort={active ? (sortDir === "asc" ? "ascending" : "descending") : "none"}>
+        <button type="button" className={`th-sort${active ? " active" : ""}`} onClick={() => toggleSort(k)}>
           {label}
           {arrow}
         </button>
