@@ -412,6 +412,30 @@ def _macd_strategy() -> dict:
     return strat
 
 
+def test_no_trade_log_reports_not_enough_funds_after_a_loss():
+    # All-in sizing: $ per trade == the sleeve == starting cash. The first trade
+    # loses a little, dropping equity below one full position; the no-leverage
+    # exposure cap then blocks every later entry. The trade log must name this
+    # "not enough funds", not a vague "blocked by a risk rail".
+    strat = copy.deepcopy(STRATEGY)
+    strat["sizing_usd"] = 1000.0
+    strat["sleeve_usd"] = 1000.0
+    strat["params"]["entry"]["min_day_gain_pct"] = 3.0
+    strat["params"]["exit"]["trailing_stop_pct"] = 0
+    strat["params"]["exit"]["stop_loss_pct"] = 3.0
+    # day1 +4% (entry: 9 whole shares ≈ $936 in), day2 −13% (stop-loss, equity now
+    # ~$874), then +5% days that qualify but a full $1k no longer fits → the
+    # no-leverage exposure cap blocks them as "not enough funds".
+    bars = _daily([100.0, 104.0, 90.0, 94.5, 99.3, 99.4])
+    res = run_backtest(strat, {"AAA": bars}, RISK, starting_cash=1000, spread_pct=0)
+
+    assert res["trades"] == 1  # only the first, losing trade ever opens
+    reasons = " ".join(res["no_trade_reasons"].values())
+    assert "not enough funds" in reasons
+    # And it's attributed to funds, not the generic rail bucket.
+    assert "risk rail" not in reasons
+
+
 def test_macd_strategy_trades_from_window_start_when_warmup_precedes_it():
     # THE dead-zone bug: a MACD strategy couldn't trade until ~35 bars into the
     # test window because the backtest never fetched warm-up history. With warm-up

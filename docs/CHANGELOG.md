@@ -21,6 +21,29 @@ in-sample window — feeding the indicators. So both slices judge the strategy
 with live signals from their very first traded bar. If you optimized a MACD or
 RSI strategy before, re-run it: the out-of-sample numbers were understated.
 
+## Sizing guardrails: catch the "all-in" trap before it bricks a strategy (2026-07-29)
+
+A subtle, costly config trap: if your **$ per trade** is as large as your whole
+sleeve/account, the strategy can hold only one position — and because the
+no-leverage rail caps spending at your real equity, a *single* losing trade
+drops you below one full position and silently blocks every trade after it. A
+backtest of exactly this looked like "the strategy does nothing for months" when
+really it went all-in once, took a small loss, and could never afford another
+position. Three additions make this impossible to miss:
+
+- **Strategy builder warning** — when $ per trade ≥ the sleeve, a red flag now
+  explains the all-in trap in plain English and suggests a fraction (e.g. a fifth
+  of the sleeve for ~5 positions).
+- **"How many positions fit" helper** — under the sizing fields, a live line
+  spells out the real cap: capital (sleeve ÷ per-trade) vs your **Max positions**
+  vs how many symbols your universe actually has, and names which one binds. It
+  also flags when Max positions is set higher than the real limit (a no-op) or
+  lower (parking cash on purpose).
+- **Backtest trade log** — a no-entry stretch caused by this now reads **"not
+  enough funds for a full position (no-leverage cap)"** instead of a vague
+  "blocked by a risk rail". The other rails (sleeve full, cooldown, wash-sale,
+  max positions, trade-rate, daily-loss) are likewise named specifically.
+
 ## Backtest fix: MACD/RSI now work from day one of the window (2026-07-29)
 
 Fixed a real bug that cost a lot of debugging time: a MACD or RSI strategy

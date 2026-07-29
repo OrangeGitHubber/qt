@@ -174,7 +174,15 @@ _REJECT_LABELS = {
     "window": "outside the entry-time window",
     "macd": "MACD not bullish",
     "rsi": "RSI outside the entry band",
-    "rail": "blocked by a risk rail (max positions / sleeve / cooldown …)",
+    "funds": "not enough funds for a full position (no-leverage cap)",
+    "sleeve_full": "sleeve budget already fully deployed",
+    "cooldown": "in cooldown after a loss",
+    "washsale": "wash-sale guard (recent loss on this symbol)",
+    "already_open": "already holding this symbol",
+    "maxpos": "max open positions reached",
+    "traderate": "daily trade-rate limit reached",
+    "dailyloss": "daily-loss kill switch tripped",
+    "rail": "blocked by a risk rail",
     "sizing": "position too small / not enough cash",
     "not_eligible": "not a top-N riser that day (scanner replay)",
 }
@@ -198,6 +206,31 @@ def _reject_category(reason: str) -> str:
     if "RSI" in reason:
         return "rsi"
     return "other"
+
+
+def _rail_category(reason: str) -> str:
+    """Bucket a check_rails rejection into a specific category so the 'why no
+    entry' log names the ACTUAL blocker instead of a generic 'a risk rail'. The
+    exposure-cap case is the common one novices hit: per-trade size ≥ equity, so
+    after any loss no full position fits and the no-leverage rail blocks every
+    trade — surfaced plainly as 'not enough funds'."""
+    if "exposure cap" in reason:
+        return "funds"
+    if "sleeve budget" in reason:
+        return "sleeve_full"
+    if "cooldown" in reason:
+        return "cooldown"
+    if "wash-sale" in reason:
+        return "washsale"
+    if "already open" in reason:
+        return "already_open"
+    if "max positions" in reason or "max open positions" in reason:
+        return "maxpos"
+    if "trade-rate" in reason:
+        return "traderate"
+    if "daily loss" in reason:
+        return "dailyloss"
+    return "rail"
 
 
 def _summarize_no_trade_days(
@@ -577,7 +610,7 @@ def run_backtest(
                     )
             if not rails_ok:
                 diag["entry_ok_but_rail_blocked"] += 1
-                day_reject.setdefault(day, Counter())["rail"] += 1
+                day_reject.setdefault(day, Counter())[_rail_category(rails_reason)] += 1
                 if debug:
                     _btlog(day, symbol, bar, params, f"reject-rail: {rails_reason}")
                 continue

@@ -402,9 +402,14 @@ function Editor({
   // Config traps that silently ruin a backtest / live run — warn, never block.
   const sizing = s.sizing_usd || 0;
   const sleeve = s.sleeve_usd || 0;
-  // A second position needs another full trade to fit under the sleeve; if the
-  // sleeve is under 2x the per-trade size, only ONE position can ever be open.
-  const oneShotSleeve = sizing > 0 && sleeve > 0 && sleeve < sizing * 2;
+  // When the per-trade size is AS LARGE AS the whole sleeve, the strategy is
+  // "all-in": at most one position, and — because the no-leverage rail caps total
+  // spend at real equity — a single losing trade drops equity below one full
+  // position and blocks EVERY entry after it (the strategy silently stalls, e.g.
+  // a $1k/trade, $1k account that loses $30 can never fund another $1k buy).
+  const allInSizing = sizing > 0 && sleeve > 0 && sizing >= sleeve;
+  // Milder: sizing under the sleeve but over half of it → only ONE position fits.
+  const oneShotSleeve = sizing > 0 && sleeve > 0 && !allInSizing && sleeve < sizing * 2;
   const maxConcurrent = sizing > 0 ? Math.floor(sleeve / sizing) : 0;
   const stopPct = s.params?.exit.stop_loss_pct ?? 0;
   // A tight stop held overnight is hit by normal daily noise — a swing killer.
@@ -416,6 +421,51 @@ function Editor({
   // intraday-bar backtests and doesn't belong in a daily/swing rotation whose
   // signals (RSI, MACD, relative strength) are all daily. Warn on swing + VWAP.
   const vwapOnSwing = !!s.swing_mode && !!s.params?.entry.require_above_vwap;
+
+  // --- How many positions can actually be open at once? Three separate caps the
+  // engine applies (capital, the Max-positions knob, the universe size), shown
+  // together so the sizing numbers don't read as independent when they're coupled.
+  const atrSizingOn =
+    Number(s.params?.atr?.risk_usd || 0) > 0 && Number(s.params?.atr?.stop_mult || 0) > 0;
+  const maxPos = s.max_positions || 0;
+  const customCount = s.symbols?.length || 0;
+  // Known universe size only for FIXED universes; scanner/watchlist/both are
+  // dynamic (top movers / live list), so there's no fixed count to show.
+  const universeCap =
+    s.universe === "custom" && customCount > 0
+      ? s.rank_enabled && s.top_n
+        ? Math.min(s.top_n, customCount)
+        : customCount
+      : s.universe === "basket" && s.top_n
+        ? s.top_n
+        : null;
+  // Capital-implied count is a clean integer only with FIXED sizing; ATR sizing
+  // makes $/trade vary, so it isn't a fixed cap then.
+  const capitalCap = !atrSizingOn && sizing > 0 ? maxConcurrent : null;
+  const posCaps: { n: number; why: string }[] = [];
+  if (capitalCap != null && capitalCap > 0)
+    posCaps.push({ n: capitalCap, why: `capital (${money(sleeve)} ÷ ${money(sizing)})` });
+  if (maxPos > 0) posCaps.push({ n: maxPos, why: `“Max positions” (${maxPos})` });
+  if (universeCap != null)
+    posCaps.push({
+      n: universeCap,
+      why:
+        s.universe === "custom"
+          ? `your universe (${universeCap} symbol${universeCap === 1 ? "" : "s"})`
+          : `the basket top-${universeCap}`,
+    });
+  const effectiveCap = posCaps.length ? Math.min(...posCaps.map((c) => c.n)) : 0;
+  const posBinders = posCaps.filter((c) => c.n === effectiveCap).map((c) => c.why);
+  const bindersText =
+    posBinders.length <= 1
+      ? posBinders[0] ?? ""
+      : `${posBinders.slice(0, -1).join(", ")} and ${posBinders[posBinders.length - 1]}`;
+  // "Max positions" set higher than the real limit → it isn't the active cap.
+  const maxPosNoOp = maxPos > 0 && effectiveCap > 0 && maxPos > effectiveCap;
+  // "Max positions" set below what capital allows → deliberately parks cash.
+  const maxPosHoldsBack =
+    maxPos > 0 && capitalCap != null && maxPos < capitalCap && (universeCap == null || maxPos < universeCap);
+  const parkedCash = maxPosHoldsBack ? Math.max(0, sleeve - maxPos * sizing) : 0;
 
   function applyPreset(key: string) {
     if (key === "custom") {
@@ -917,6 +967,15 @@ function Editor({
           <> across all strategies. Connect Alpaca to compare against your live balance.</>
         )}
       </p>
+      {allInSizing && (
+        <p className="hint warn">
+          <IconWarn className="icon-inline" /> <strong>All-in sizing — this strategy will stall after one loss.</strong> Your{" "}
+          {money(sizing)} per trade is as large as the whole {money(sleeve)} sleeve, so only one position can ever open.
+          And because the no-leverage rail caps spending at your real equity, a single losing trade drops you below one
+          full position — every entry after that is blocked ("not enough funds") and the strategy silently stops trading.
+          Set <strong>$ per trade</strong> to a fraction of the sleeve (e.g. {money(sleeve / 5)} for ~5 positions).
+        </p>
+      )}
       {oneShotSleeve && (
         <p className="hint warn">
           <IconWarn className="icon-inline" /> <strong>Only one position can be open at a time.</strong> Your sleeve budget ({money(sleeve)}) is less than
@@ -925,10 +984,23 @@ function Editor({
           the sleeve to a few times the per-trade size (e.g. {money(sizing * 5)} for ~5 concurrent positions).
         </p>
       )}
-      {!oneShotSleeve && maxConcurrent > 0 && sizing > 0 && (
+      {!allInSizing && !oneShotSleeve && effectiveCap > 0 && (
         <p className="hint">
-          Room for about <strong>{maxConcurrent}</strong> position{maxConcurrent === 1 ? "" : "s"} at once
-          ({money(sleeve)} sleeve ÷ {money(sizing)} per trade).
+          {atrSizingOn && <>ATR sizing varies $/trade with volatility, so this is approximate. </>}
+          You'll hold at most <strong>{effectiveCap}</strong> position{effectiveCap === 1 ? "" : "s"} at once
+          {bindersText ? <> — limited by {bindersText}.</> : "."}
+        </p>
+      )}
+      {!allInSizing && !oneShotSleeve && maxPosNoOp && (
+        <p className="hint">
+          Your "Max positions" ({maxPos}) is higher than that, so it isn't the active limit here.
+        </p>
+      )}
+      {!allInSizing && !oneShotSleeve && maxPosHoldsBack && (
+        <p className="hint">
+          "Max positions" ({maxPos}) holds you below what your capital allows ({capitalCap}), so about{" "}
+          <strong>{money(parkedCash)}</strong> of the sleeve stays in cash by design. Raise it to {capitalCap} to use the
+          full sleeve.
         </p>
       )}
       {tightSwingStop && (
