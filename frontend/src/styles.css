@@ -1023,11 +1023,21 @@ td.detail p {
 
 .picker-pop li {
   display: grid;
-  grid-template-columns: 5rem minmax(11rem, 1fr);
+  grid-template-columns: 1.25rem 5rem minmax(11rem, 1fr);
   gap: 0.1rem 0.7rem;
   padding: 0.45rem 0.7rem;
   cursor: pointer;
   border-bottom: 1px solid var(--border);
+}
+
+/* Leading stock/crypto marker — spans the symbol + exchange rows so the row
+   reads as one labelled item; colour cues the type (crypto in the accent). */
+.picker-class {
+  grid-column: 1;
+  grid-row: 1 / span 2;
+  display: inline-flex;
+  align-items: center;
+  color: var(--muted);
 }
 
 .picker-pop li:last-child {
@@ -1056,7 +1066,7 @@ td.detail p {
 }
 
 .picker-pop .hint {
-  grid-column: 2;
+  grid-column: 3;
   font-size: 0.75rem;
   margin: 0;
 }

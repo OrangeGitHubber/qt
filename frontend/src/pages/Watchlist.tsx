@@ -1,5 +1,5 @@
 import { Fragment, ReactNode, useCallback, useEffect, useMemo, useState } from "react";
-import { addWatchlist, getWatchlist, removeWatchlist, WatchlistRow } from "../api";
+import { addWatchlist, AssetRow, getWatchlist, removeWatchlist, WatchlistRow } from "../api";
 import type { InfoKey } from "../glossary";
 import InfoTip from "../components/InfoTip";
 import Sparkline from "../components/Sparkline";
@@ -96,7 +96,6 @@ function loadCols(): Set<ColKey> {
 export default function Watchlist() {
   const [rows, setRows] = useState<WatchlistRow[] | null>(null);
   const [errors, setErrors] = useState<string[]>([]);
-  const [assetClass, setAssetClass] = useState<"stock" | "crypto">("stock");
   const [note, setNote] = useState<string | null>(null);
   const [visibleCols, setVisibleCols] = useState<Set<ColKey>>(loadCols);
   const [detail, setDetail] = useState<WatchlistRow | null>(null);
@@ -178,12 +177,12 @@ export default function Watchlist() {
     return () => clearInterval(t);
   }, [refresh]);
 
-  async function addPicked(symbols: string[]) {
-    const chosen = symbols[0];
-    if (!chosen) return;
+  // The picked row carries its OWN asset class, so no class selector is needed —
+  // a stock and a crypto can be added from the same search.
+  async function addPicked(row: AssetRow) {
     setNote(null);
     try {
-      await addWatchlist(chosen, assetClass);
+      await addWatchlist(row.symbol, row.asset_class);
       refresh();
     } catch (err) {
       setNote((err as Error).message);
@@ -232,12 +231,11 @@ export default function Watchlist() {
         <SymbolDetail symbol={detail.symbol} assetClass={detail.asset_class} onClose={() => setDetail(null)} />
       )}
       <div className="card addform">
-        <select value={assetClass} onChange={(e) => setAssetClass(e.target.value as "stock" | "crypto")}>
-          <option value="stock">Stock</option>
-          <option value="crypto">Crypto</option>
-        </select>
-        <SymbolPicker assetClass={assetClass} value={[]} onChange={addPicked} />
-        <span className="hint">Search by ticker or company name — picking adds it straight to the list.</span>
+        <SymbolPicker value={[]} onChange={() => {}} onPick={addPicked} />
+        <span className="hint">
+          Search any ticker or company name — stocks and crypto together; the icon shows which. Picking adds it straight
+          to the list.
+        </span>
         {note && <span className="error">{note}</span>}
       </div>
       {errors.map((e) => (

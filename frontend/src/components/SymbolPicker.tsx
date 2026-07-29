@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { AssetRow, getAssetStatus, searchAssets, syncAssets } from "../api";
+import { IconCrypto, IconStock } from "./icons";
 
 /** Type-ahead over the local symbol directory — matches ticker OR company
  *  name. `multi` mode keeps a chip list; single mode returns one symbol. */
@@ -7,6 +8,7 @@ export default function SymbolPicker({
   assetClass,
   value,
   onChange,
+  onPick,
   multi = false,
   placeholder,
   disabled = false,
@@ -14,6 +16,9 @@ export default function SymbolPicker({
   assetClass?: "stock" | "crypto";
   value: string[];
   onChange: (symbols: string[]) => void;
+  // Fires with the FULL picked row (symbol + its own asset_class), so a caller
+  // that searches across classes can act without a separate class selector.
+  onPick?: (row: AssetRow) => void;
   multi?: boolean;
   placeholder?: string;
   disabled?: boolean;
@@ -68,6 +73,7 @@ export default function SymbolPicker({
 
   function pick(row: AssetRow) {
     onChange(multi ? Array.from(new Set([...value, row.symbol])) : [row.symbol]);
+    onPick?.(row);
     setQ("");
     setRows([]);
     setOpen(false);
@@ -119,7 +125,12 @@ export default function SymbolPicker({
         placeholder={
           disabled
             ? "— scanner replay uses the day's movers —"
-            : placeholder ?? (assetClass === "crypto" ? "Search: bitcoin or BTC/USD" : "Search: nvidia or NVDA")
+            : placeholder ??
+              (assetClass === "crypto"
+                ? "Search: bitcoin or BTC/USD"
+                : assetClass === "stock"
+                  ? "Search: nvidia or NVDA"
+                  : "Search: nvidia, NVDA, or BTC/USD")
         }
         autoComplete="off"
       />
@@ -161,6 +172,13 @@ export default function SymbolPicker({
                 pick(r);
               }}
             >
+              <span className="picker-class" title={r.asset_class === "crypto" ? "Crypto" : "Stock"}>
+                {r.asset_class === "crypto" ? (
+                  <IconCrypto className="icon-inline" />
+                ) : (
+                  <IconStock className="icon-inline" />
+                )}
+              </span>
               <span className="sym">{r.symbol}</span>
               <span className="asset-name">{r.name}</span>
               <span className="hint">

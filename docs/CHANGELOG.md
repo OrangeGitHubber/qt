@@ -39,6 +39,15 @@ in-sample window — feeding the indicators. So both slices judge the strategy
 with live signals from their very first traded bar. If you optimized a MACD or
 RSI strategy before, re-run it: the out-of-sample numbers were understated.
 
+## Watchlist: add a symbol without picking stock vs crypto first (2026-07-29)
+
+Adding to the watchlist no longer needs the Stock/Crypto dropdown up front. Just
+type — the search now spans **both** asset classes at once, and each result shows
+a small icon (a candlestick for stocks, a coin for crypto) so you can tell them
+apart as you pick. The picked symbol carries its own asset class, so it's added
+correctly either way. (The Stocks/Crypto filter over the existing list is
+unchanged — this was only about the add box.)
+
 ## Zoom a chart → see the trades in that window (2026-07-29)
 
 Building on the drag-to-zoom charts: when you zoom the backtest chart into a

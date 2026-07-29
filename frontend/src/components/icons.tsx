@@ -7,6 +7,8 @@ import {
   X,
   AlertTriangle,
   PauseCircle,
+  Bitcoin,
+  CandlestickChart,
   type LucideProps,
 } from "lucide-react";
 
@@ -26,3 +28,5 @@ export const IconDelete = base(Trash2); // Delete
 export const IconClose = base(X); // Modal / dialog close
 export const IconWarn = base(AlertTriangle); // Inline warning marker
 export const IconMarketClosed = base(PauseCircle); // Market-closed indicator
+export const IconStock = base(CandlestickChart); // Stock/equity marker
+export const IconCrypto = base(Bitcoin); // Crypto marker
