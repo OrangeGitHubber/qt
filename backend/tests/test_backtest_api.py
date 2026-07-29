@@ -343,6 +343,40 @@ def test_scanner_replay_crypto_prefers_intraday_bars(client, configured, monkeyp
     assert body["trades"] == 1
 
 
+def test_macd_strategy_rejects_intraday_bars(client, configured):
+    """MACD is a DAILY signal live — an intraday backtest would compute a twitchy
+    intraday MACD unlike live, so the endpoint rejects 15Min/1Hour and 1Day works."""
+    strat = _strategy("stock")
+    strat["params"]["entry"]["require_macd_bullish"] = True
+    sid = client.post("/api/strategies", json=strat).json()["id"]
+
+    r = client.post("/api/backtest", json={
+        "strategy_id": sid, "symbols": ["NVDA"], "days": 30,
+        "timeframe": "1Hour", "starting_cash": 5000, "spread_pct": 0})
+    assert r.status_code == 422
+    detail = r.json()["detail"]
+    assert "MACD" in detail and "daily" in detail
+
+    fetch = AsyncMock(side_effect=[{"NVDA": BARS}, {"SPY": BARS}])
+    with patch.object(AlpacaClient, "historical_bars", new=fetch):
+        ok = client.post("/api/backtest", json={
+            "strategy_id": sid, "symbols": ["NVDA"], "days": 30,
+            "timeframe": "1Day", "starting_cash": 5000, "spread_pct": 0})
+    assert ok.status_code == 200, ok.text
+
+
+def test_rsi_exit_strategy_rejects_intraday_bars(client, configured):
+    """The RSI overbought exit is likewise a daily signal — intraday is rejected."""
+    strat = _strategy("stock")
+    strat["params"]["exit"]["exit_rsi_above"] = 70
+    sid = client.post("/api/strategies", json=strat).json()["id"]
+    r = client.post("/api/backtest", json={
+        "strategy_id": sid, "symbols": ["NVDA"], "days": 30,
+        "timeframe": "15Min", "starting_cash": 5000, "spread_pct": 0})
+    assert r.status_code == 422
+    assert "daily" in r.json()["detail"]
+
+
 def test_market_benchmark_kept_for_a_basket_including_it(client, configured):
     """BTC + ETH basket: 'hold the basket' and 'hold BTC' are different facts."""
     sid = _make(client, "crypto")

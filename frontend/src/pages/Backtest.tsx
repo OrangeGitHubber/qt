@@ -131,6 +131,22 @@ export default function Backtest() {
   const strategy = strategies.find((s) => s.id === strategyId);
   const assetClass = strategy?.asset_class;
 
+  // Which bar sizes are valid for this strategy. MACD/RSI are DAILY signals (the
+  // live engine computes them from completed daily bars), so an intraday backtest
+  // computes them on intraday closes — twitchy and nothing like live; those
+  // strategies are locked to 1 Day. VWAP is the opposite — an intraday-only
+  // measure — so a VWAP strategy can't use 1 Day. (VWAP wins if somehow both are
+  // set; that strategy is misconfigured and the builder already warns about it.)
+  const sp = strategy?.params;
+  const usesVwap = !!sp?.entry.require_above_vwap;
+  const usesDailySignals =
+    !usesVwap &&
+    (!!sp?.entry.require_macd_bullish ||
+      !!sp?.exit.exit_on_macd_bearish ||
+      (sp?.entry.rsi_min ?? 0) > 0 ||
+      (sp?.entry.rsi_max ?? 0) > 0 ||
+      (sp?.exit.exit_rsi_above ?? 0) > 0);
+
   // Default the backtest to the SELECTED strategy's own universe — scanner →
   // replay, basket → its symbols, custom → its list, watchlist → the watchlist.
   // The manual controls below still override. Re-runs only when you switch
@@ -161,6 +177,18 @@ export default function Backtest() {
       setScannerReplay(false); // watchlist | both — empty picker = the watchlist
       setSymbols([]);
     }
+    // Snap the bar size to one this strategy can actually be tested on, so an
+    // invalid combo can't be run: MACD/RSI → 1 Day; VWAP → intraday.
+    const svwap = !!strat.params?.entry.require_above_vwap;
+    const sdaily =
+      !svwap &&
+      (!!strat.params?.entry.require_macd_bullish ||
+        !!strat.params?.exit.exit_on_macd_bearish ||
+        (strat.params?.entry.rsi_min ?? 0) > 0 ||
+        (strat.params?.entry.rsi_max ?? 0) > 0 ||
+        (strat.params?.exit.exit_rsi_above ?? 0) > 0);
+    if (sdaily) setTimeframe("1Day");
+    else if (svwap) setTimeframe("1Hour");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [strategyId, strategies, baskets]);
 
@@ -614,10 +642,18 @@ export default function Backtest() {
                 Bar size <InfoTip k="bar" />
               </span>
               <select value={timeframe} onChange={(e) => setTimeframe(e.target.value)}>
-                <option value="15Min">15 minutes (slow, precise)</option>
-                <option value="1Hour">1 hour (recommended)</option>
-                <option value="1Day">1 day (fast, coarse)</option>
+                <option value="15Min" disabled={usesDailySignals}>15 minutes (slow, precise)</option>
+                <option value="1Hour" disabled={usesDailySignals}>1 hour (recommended)</option>
+                <option value="1Day" disabled={usesVwap}>1 day (fast, coarse)</option>
               </select>
+              {usesDailySignals && (
+                <span className="hint">
+                  MACD/RSI are daily signals — locked to 1 Day so the backtest matches the live engine.
+                </span>
+              )}
+              {usesVwap && (
+                <span className="hint">VWAP is intraday — 1 Day is disabled for this strategy.</span>
+              )}
             </label>
             <label>
               <span className="field-cap">

@@ -138,6 +138,26 @@ def _strategy_symbols(session: Session, strategy: Strategy) -> list[str]:
     )
 
 
+def _uses_daily_only_signals(params: dict) -> bool:
+    """MACD or RSI gate on, and NOT the (intraday-only) VWAP rule. The live engine
+    computes MACD/RSI from COMPLETED DAILY bars, so an intraday backtest computes
+    them on intraday closes — twitchy and unlike live. Such a strategy must be
+    backtested on 1Day. (If VWAP is also on, the strategy is misconfigured; the
+    VWAP guard — which needs intraday — takes precedence and this one stands down
+    so the two don't deadlock.)"""
+    entry = params.get("entry", {})
+    exit_rules = params.get("exit", {})
+    if entry.get("require_above_vwap"):
+        return False
+    macd = bool(entry.get("require_macd_bullish") or exit_rules.get("exit_on_macd_bearish"))
+    rsi = (
+        float(entry.get("rsi_min", 0) or 0) > 0
+        or float(entry.get("rsi_max", 0) or 0) > 0
+        or float(exit_rules.get("exit_rsi_above", 0) or 0) > 0
+    )
+    return macd or rsi
+
+
 @router.post("/portfolio")
 async def run_portfolio(
     body: PortfolioBacktestBody,
@@ -161,6 +181,14 @@ async def run_portfolio(
         raise HTTPException(
             status_code=422,
             detail="A selected strategy uses the VWAP rule, which needs intraday bars — pick 1Hour or 15Min.",
+        )
+    if body.timeframe in ("15Min", "1Hour") and any(
+        _uses_daily_only_signals(json.loads(s.params)) for s in strategies
+    ):
+        raise HTTPException(
+            status_code=422,
+            detail="A selected strategy uses MACD/RSI, which are daily signals — on intraday bars "
+            "they whipsaw and won't match the live engine. Use 1 Day.",
         )
 
     # Resolve each strategy's own universe, then fetch bars ONCE per asset class.
@@ -265,6 +293,12 @@ async def run(
         raise HTTPException(
             status_code=422,
             detail="This strategy uses the VWAP rule, which needs intraday bars — pick 1Hour or 15Min.",
+        )
+    if body.timeframe in ("15Min", "1Hour") and _uses_daily_only_signals(json.loads(strategy.params)):
+        raise HTTPException(
+            status_code=422,
+            detail="This strategy uses MACD/RSI, which are daily signals — on intraday bars they "
+            "whipsaw and won't match the live engine. Use 1 Day.",
         )
 
     start = (datetime.now(timezone.utc) - timedelta(days=body.days)).strftime("%Y-%m-%dT%H:%M:%SZ")
