@@ -801,3 +801,79 @@ def test_warmup_bars_never_touch_equity_or_the_trade_log():
     assert entry_days and all(d >= window_day for d in entry_days)
     # No warm-up bar leaked into the equity curve.
     assert all(day >= window_day for day in result["equity_days"])
+
+
+def _ohlc(rows: list[tuple[float, float, float]], start_day: str = "2026-05-04") -> list[dict]:
+    """One DAILY bar per day as (close, high, low) — so a bar can dip through a
+    stop and still close higher, which close-only replay can't see."""
+    from datetime import date
+
+    d0 = date.fromisoformat(start_day)
+    return [
+        {"t": f"{(d0 + timedelta(days=i)).isoformat()}T14:00:00Z",
+         "c": c, "h": h, "l": lo, "v": 1000, "vw": c}
+        for i, (c, h, lo) in enumerate(rows)
+    ]
+
+
+def test_stop_fires_on_the_bar_low_not_just_the_close():
+    """THE fidelity fix: entry at 104, then a bar that dips to 96 (through the 4%
+    stop at 99.84) but CLOSES back at 105. Judging on the close alone scores this
+    a winner still riding; judging on the low — what the price actually did —
+    stops you out, which is what live would have done."""
+    series = _ohlc([
+        (100.0, 100.0, 100.0),   # baseline day
+        (104.0, 104.0, 104.0),   # +4% → entry at 104
+        (105.0, 106.0, 96.0),    # dips to 96, recovers to close 105
+    ])
+    res = run_backtest(STRATEGY, {"TEST": series}, RISK, starting_cash=5000, spread_pct=0)
+    assert res["trades"] == 1
+    t = res["trade_list"][0]
+    assert "stop-loss" in t["exit_reason"]
+    # Filled at the STOP LEVEL (104 × 0.96 = 99.84), not the 105 close — booking
+    # the recovery would be the flattering error.
+    assert t["exit_price"] == pytest.approx(99.84, abs=0.01)
+    assert res["net_pnl"] < 0
+
+
+def test_take_profit_fires_on_the_bar_high_and_fills_at_the_target():
+    strat = copy.deepcopy(STRATEGY)
+    strat["params"]["exit"]["take_profit_pct"] = 10.0
+    strat["params"]["exit"]["trailing_stop_pct"] = 0
+    series = _ohlc([
+        (100.0, 100.0, 100.0),
+        (104.0, 104.0, 104.0),          # entry at 104
+        (105.0, 116.0, 104.0),          # spikes to 116 (>= +10% = 114.4), closes 105
+    ])
+    res = run_backtest(strat, {"TEST": series}, RISK, starting_cash=5000, spread_pct=0)
+    t = res["trade_list"][0]
+    assert "take-profit" in t["exit_reason"]
+    assert t["exit_price"] == pytest.approx(114.4, abs=0.01)  # the target, not the close
+
+
+def test_a_bar_touching_both_stop_and_target_assumes_the_stop_first():
+    """Within one bar the order is unknowable, so the conservative reading wins —
+    never the flattering one."""
+    strat = copy.deepcopy(STRATEGY)
+    strat["params"]["exit"]["take_profit_pct"] = 10.0
+    strat["params"]["exit"]["trailing_stop_pct"] = 0
+    series = _ohlc([
+        (100.0, 100.0, 100.0),
+        (104.0, 104.0, 104.0),
+        (105.0, 120.0, 95.0),   # touches BOTH the +10% target and the -4% stop
+    ])
+    res = run_backtest(strat, {"TEST": series}, RISK, starting_cash=5000, spread_pct=0)
+    assert "stop-loss" in res["trade_list"][0]["exit_reason"]
+
+
+def test_fill_is_clamped_into_the_bar_when_price_gaps_through_the_stop():
+    """A bar entirely below the stop never traded at the stop price — filling
+    there would be better than anything available. Clamp to the bar's high."""
+    series = _ohlc([
+        (100.0, 100.0, 100.0),
+        (104.0, 104.0, 104.0),          # entry 104, stop at 99.84
+        (90.0, 92.0, 88.0),             # gapped: whole bar below the stop
+    ])
+    res = run_backtest(STRATEGY, {"TEST": series}, RISK, starting_cash=5000, spread_pct=0)
+    t = res["trade_list"][0]
+    assert t["exit_price"] == pytest.approx(92.0, abs=0.01)  # the high, not 99.84

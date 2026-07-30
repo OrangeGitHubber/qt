@@ -75,6 +75,22 @@ def _btlog(day: str, symbol: str, bar: dict, params: dict, decision: str) -> Non
     )
 
 
+def _fill_price(trigger: dict, bar: dict) -> float:
+    """Where a price-triggered exit actually filled.
+
+    A stop breached mid-bar fills at the STOP LEVEL, not the bar's close —
+    filling at the close after the price dipped through and recovered books a
+    recovery you never got, which is the flattering direction. Clamped into the
+    bar's own range so a gap straight through the level can't fill better than
+    anything that traded: if the whole bar is below the stop, you get the high,
+    not the untouched stop price. Non-price exits (MACD, RSI, time, flatten)
+    supply no level and fill at the close as before."""
+    level = trigger.get("exit_price")
+    if level is None:
+        return bar["close"]
+    return min(max(level, bar["low"]), bar["high"])
+
+
 def _macd_on(params: dict) -> bool:
     """Whether either MACD toggle (entry filter or exit signal) is set."""
     return bool(
@@ -480,6 +496,12 @@ def _prepare(bars: list[dict], day_of=_et_day, rolling_24h: bool = False) -> lis
                 "ts": ts,
                 "day": day,
                 "close": float(bar["c"]),
+                # Intra-bar extremes so stops can be judged on what the price
+                # actually DID inside the bar, not just where it closed. Falls
+                # back to the close when a feed (or a synthetic series) omits
+                # them — then behaviour is exactly the old close-only one.
+                "high": float(bar.get("h") or bar["c"]),
+                "low": float(bar.get("l") or bar["c"]),
                 "change_pct": change_pct,
                 "vwap": (cum_pv / cum_v) if cum_v else None,
                 "last_of_day": next_day != day,
@@ -680,7 +702,10 @@ def run_backtest(
             if not bar:
                 continue
             price = bar["close"]
-            trade.high_water = max(trade.high_water, price)
+            # The peak is the bar's HIGH, not its close — a trailing stop trails
+            # the actual high-water mark, not the close-to-close one.
+            trade.high_water = max(trade.high_water, bar["high"])
+            trigger: dict = {}
             should_exit, reason = evaluate_exit(
                 params, swing, trade.entry_price, trade.entry_at,
                 trade.high_water, price, bar["vwap"], ts, bar.get("last_of_day", False),
@@ -688,10 +713,11 @@ def run_backtest(
                 atr_pct=bar.get("atr_pct"),
                 rsi=bar.get("rsi"),
                 is_crypto=strategy["asset_class"] == "crypto",
+                bar_high=bar["high"], bar_low=bar["low"], out=trigger,
             )
             if not should_exit:
                 continue
-            fill = price * (1 - slip)
+            fill = _fill_price(trigger, bar) * (1 - slip)
             trade.exit_price = fill
             trade.exit_at = ts
             trade.exit_reason = reason
@@ -1073,7 +1099,8 @@ def run_portfolio_backtest(
                 continue
             strat = strat_by_id[trade.strategy_id]
             price = bar["close"]
-            trade.high_water = max(trade.high_water, price)
+            trade.high_water = max(trade.high_water, bar["high"])
+            trigger = {}
             should_exit, reason = evaluate_exit(
                 strat["params"], strat["swing_mode"], trade.entry_price, trade.entry_at,
                 trade.high_water, price, bar["vwap"], ts, bar.get("last_of_day", False),
@@ -1081,10 +1108,11 @@ def run_portfolio_backtest(
                 atr_pct=bar.get("atr_pct"),
                 rsi=bar.get("rsi"),
                 is_crypto=strat["asset_class"] == "crypto",
+                bar_high=bar["high"], bar_low=bar["low"], out=trigger,
             )
             if not should_exit:
                 continue
-            fill = price * (1 - slip)
+            fill = _fill_price(trigger, bar) * (1 - slip)
             trade.exit_price = fill
             trade.exit_at = ts
             trade.exit_reason = reason

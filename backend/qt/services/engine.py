@@ -200,6 +200,9 @@ def evaluate_exit(
     rsi: float | None = None,
     regime_bearish: bool = False,
     is_crypto: bool = False,
+    bar_high: float | None = None,
+    bar_low: float | None = None,
+    out: dict | None = None,
 ) -> tuple[bool, str]:
     """Return (should_exit, reason). Stops and the max-hold ceiling ALWAYS apply;
     in swing mode the softer exits (take-profit, VWAP, MACD, RSI, regime) wait
@@ -225,8 +228,23 @@ def evaluate_exit(
     fixed stop_loss_pct — a position is never left stopless. Default None so
     existing callers are unaffected."""
     exit_rules = params.get("exit", {})
+    # LIVE passes a tick price only, so low/high default to it and everything
+    # below behaves exactly as before. A BACKTEST passes the bar's extremes: a
+    # stop breached at 10:07 and recovered by 10:15 really did take you out, and
+    # judging it on the close alone quietly turns a loss into a winner.
+    low = bar_low if bar_low is not None else price
+    high = bar_high if bar_high is not None else price
     change_from_entry = (price / entry_price - 1) * 100
-    drop_from_high = (1 - price / high_water) * 100 if high_water else 0.0
+    worst_from_entry = (low / entry_price - 1) * 100
+    drop_from_high = (1 - low / high_water) * 100 if high_water else 0.0
+
+    def _trigger(level: float, reason: str) -> tuple[bool, str]:
+        """Exit AT the trigger level, not the bar's close. Filling at the close
+        after an intra-bar breach is the flattering error: price dipped through
+        your stop and recovered, and you'd book the recovery you never got."""
+        if out is not None:
+            out["exit_price"] = level
+        return True, reason
 
     stop_loss = exit_rules.get("stop_loss_pct", 0)
     # ATR stop (opt-in): the effective hard stop = stop_mult × current ATR%. Falls
@@ -235,17 +253,24 @@ def evaluate_exit(
     effective_stop = stop_loss
     if atr_stop_mult > 0 and atr_pct is not None and atr_pct > 0:
         effective_stop = atr_stop_mult * atr_pct
-    if effective_stop and change_from_entry <= -effective_stop:
+    # Checked FIRST, which also settles the within-bar ambiguity: if a bar touched
+    # both the stop and the take-profit we can't know the order, so we assume the
+    # stop came first — the conservative reading, never the flattering one.
+    if effective_stop and worst_from_entry <= -effective_stop:
+        level = entry_price * (1 - effective_stop / 100)
         if effective_stop != stop_loss:
-            return True, (
-                f"ATR stop-loss: {change_from_entry:.2f}% ≤ -{effective_stop:.2f}% "
+            return _trigger(level, (
+                f"ATR stop-loss: {worst_from_entry:.2f}% ≤ -{effective_stop:.2f}% "
                 f"({atr_stop_mult:g}× ATR {atr_pct:.2f}%)"
-            )
-        return True, f"stop-loss: {change_from_entry:.2f}% ≤ -{stop_loss}%"
+            ))
+        return _trigger(level, f"stop-loss: {worst_from_entry:.2f}% ≤ -{stop_loss}%")
 
     trailing = exit_rules.get("trailing_stop_pct", 0)
-    if trailing and drop_from_high >= trailing and price > entry_price * (1 - effective_stop / 100):
-        return True, f"trailing stop: {drop_from_high:.2f}% off high {high_water:.4f}"
+    if trailing and drop_from_high >= trailing and low > entry_price * (1 - effective_stop / 100):
+        return _trigger(
+            high_water * (1 - trailing / 100),
+            f"trailing stop: {drop_from_high:.2f}% off high {high_water:.4f}",
+        )
 
     # Max holding time is a HARD ceiling, so it sits with the stops ABOVE the
     # swing deferral. It used to be below it, which meant a hold cap shorter than
@@ -265,8 +290,12 @@ def evaluate_exit(
         return False, ""  # stops above already had their chance; be patient today
 
     take_profit = exit_rules.get("take_profit_pct", 0)
-    if take_profit and change_from_entry >= take_profit:
-        return True, f"take-profit: +{change_from_entry:.2f}% ≥ {take_profit}%"
+    best_from_entry = (high / entry_price - 1) * 100
+    if take_profit and best_from_entry >= take_profit:
+        return _trigger(
+            entry_price * (1 + take_profit / 100),
+            f"take-profit: +{best_from_entry:.2f}% ≥ {take_profit}%",
+        )
 
     if exit_rules.get("exit_below_vwap") and vwap is not None and price < vwap:
         return True, f"price {price:.4f} fell below VWAP {vwap:.4f}"
