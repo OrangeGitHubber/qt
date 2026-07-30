@@ -36,6 +36,13 @@ class ScannerReplayDataset:
     benchmark_symbol: str
     start_day: str
     days_replayed: int
+    # Symbols actually replayed vs. those that made a mover list but had no bars
+    # at the chosen resolution. `universe_size` must report what was TESTED, not
+    # what was hoped for — a silently shrunken universe is a wrong result that
+    # looks right.
+    replayed: list[str]
+    dropped: list[str]
+    intraday_covered: int
 
 
 def load_scanner_replay_dataset(asset_class: str, days: int, replay_top_n: int) -> ScannerReplayDataset:
@@ -72,14 +79,29 @@ def load_scanner_replay_dataset(asset_class: str, days: int, replay_top_n: int) 
             )
         eligible_by_day = {day: set(syms) for day, syms in movers.items()}
         union = sorted({s for syms in movers.values() for s in syms})
+        # Intraday needs to cover the WHOLE mover set, not just some of it. This
+        # used to test `any(...)`, which was safe only by accident: the intraday
+        # table was filled exclusively by the "Sweep intraday" job, which fetches
+        # every mover — all-or-nothing. Once ordinary backtests began caching
+        # their bars too, a single incidental symbol (a name you happened to
+        # backtest that later showed up as a mover) could flip the whole replay
+        # to intraday, and every uncovered symbol — silently dropped downstream,
+        # because run_backtest skips empty series — would vanish while the header
+        # still claimed the full universe. Demand full coverage or use daily,
+        # which the daily sweep fills completely.
         intraday_bars = barcache.cached_intraday_bars(cache, union, start_day, model=intraday_model)
-        used_intraday = any(intraday_bars.values())
+        intraday_covered = sorted(s for s in union if intraday_bars.get(s))
+        used_intraday = len(intraday_covered) == len(union) and bool(union)
         if used_intraday:
             bars = intraday_bars
             timeframe = "15Min"
         else:
             bars = barcache.cached_daily_bars(cache, union, start_day, model=daily_model, stamp=daily_stamp)
             timeframe = "1Day"
+        # Whatever the resolution, a symbol with no bars can't be replayed. Name
+        # them rather than quietly shrinking the universe under the user.
+        replayed = sorted(s for s in union if bars.get(s))
+        dropped = sorted(set(union) - set(replayed))
     finally:
         cache.close()
 
@@ -88,6 +110,7 @@ def load_scanner_replay_dataset(asset_class: str, days: int, replay_top_n: int) 
         used_intraday=used_intraday, union=union, market=market,
         benchmark_class=market, benchmark_symbol=benchmark_symbol,
         start_day=start_day, days_replayed=len(movers),
+        replayed=replayed, dropped=dropped, intraday_covered=len(intraday_covered),
     )
 
 
@@ -494,7 +517,9 @@ async def _scanner_replay(
     result["scanner_replay"] = True
     result["replay_intraday"] = ds.used_intraday
     result["replay_top_n"] = body.replay_top_n
-    result["universe_size"] = len(ds.union)
+    result["universe_size"] = len(ds.replayed)  # what was TESTED
+    result["universe_dropped"] = ds.dropped
+    result["intraday_covered"] = ds.intraday_covered
     result["days_replayed"] = ds.days_replayed
     timeframe = ds.timeframe
     result["symbols"] = []  # too many to list; summarized by universe_size

@@ -472,7 +472,9 @@ export interface BacktestResult {
   scanner_replay?: boolean;
   replay_intraday?: boolean;
   replay_top_n?: number;
-  universe_size?: number;
+  universe_size?: number; // symbols actually REPLAYED (not merely movers)
+  universe_dropped?: string[]; // movers with no bars at the chosen resolution
+  intraday_covered?: number; // how many movers the intraday cache covers
   days_replayed?: number;
   // The bar size actually REPLAYED — what the entries and exits were checked on.
   timeframe: string;

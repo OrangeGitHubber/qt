@@ -440,3 +440,53 @@ def test_market_benchmark_kept_for_a_basket_including_it(client, configured):
         ).json()
     assert body["benchmark_symbol"] == "BTC/USD"
     assert body["hold_benchmark_label"] == "2 symbols (equal weight)"
+
+
+def test_partial_intraday_coverage_falls_back_instead_of_dropping_movers(
+    client, configured, monkeypatch
+):
+    """Regression: the resolution choice used to be `any(intraday_bars)`, so ONE
+    symbol with cached 15-min bars flipped the whole replay to intraday — and
+    every uncovered mover was silently dropped (run_backtest skips empty series)
+    while the header still claimed the full universe. That was safe only while
+    the intraday table was filled exclusively by the all-or-nothing sweep; once
+    ordinary backtests began caching their own bars, an incidental symbol could
+    quietly shrink a 2-symbol replay to 1.
+
+    Full coverage is now required: partial coverage uses DAILY bars, which the
+    daily sweep fills for every mover, so nothing disappears."""
+    eng = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    barcache.CacheBase.metadata.create_all(eng)
+    Sess = sessionmaker(bind=eng, expire_on_commit=False)
+    monkeypatch.setattr(barcache, "_engine", eng)
+    monkeypatch.setattr(barcache, "_Session", Sess)
+    d0 = (datetime.now(timezone.utc) - timedelta(days=6)).strftime("%Y-%m-%d")
+    d1 = (datetime.now(timezone.utc) - timedelta(days=5)).strftime("%Y-%m-%d")
+
+    with Sess() as s:
+        # BOTH names were movers and BOTH have daily bars…
+        for sym in ("MOVER", "OTHER"):
+            barcache.save_daily_bars(s, sym, [
+                {"t": f"{d0}T14:00:00Z", "o": 100, "h": 100, "l": 100, "c": 100, "v": 1e6, "vw": 100},
+                {"t": f"{d1}T14:00:00Z", "o": 106, "h": 106, "l": 106, "c": 106, "v": 1e6, "vw": 106},
+            ])
+        # …but only ONE has intraday bars (e.g. cached by an ordinary backtest).
+        barcache.save_intraday_bars(s, "MOVER", [
+            {"t": f"{d1}T14:00:00Z", "o": 104, "h": 104, "l": 104, "c": 104, "v": 1e5, "vw": 104},
+        ])
+        barcache.store_movers(s, d1, [("MOVER", 6.0, 106.0, 1e8), ("OTHER", 6.0, 106.0, 1e8)])
+        s.commit()
+
+    sid = _make(client, "stock")
+    fetch = AsyncMock(side_effect=Exception("no benchmark"))
+    with patch.object(AlpacaClient, "historical_bars", new=fetch):
+        body = client.post("/api/backtest", json={
+            "strategy_id": sid, "scanner_replay": True, "days": 30,
+            "starting_cash": 5000, "spread_pct": 0}).json()
+
+    # Partial coverage (1 of 2) → daily bars, and BOTH movers survive.
+    assert body["replay_intraday"] is False
+    assert body["timeframe"] == "1Day"
+    assert body["intraday_covered"] == 1
+    assert body["universe_size"] == 2          # what was actually TESTED
+    assert body["universe_dropped"] == []

@@ -1008,7 +1008,7 @@ export default function Backtest() {
             <h3>
               {result.strategy_name} ·{" "}
               {result.scanner_replay
-                ? `scanner replay (top ${result.replay_top_n ?? replayTopN}, ${result.replay_intraday ? "intraday 15-min" : "daily bars"}) — ${result.days_replayed ?? 0} days, ${result.universe_size ?? 0} unique movers`
+                ? `scanner replay (top ${result.replay_top_n ?? replayTopN}, ${result.replay_intraday ? "intraday 15-min" : "daily bars"}) — ${result.days_replayed ?? 0} days, ${result.universe_size ?? 0} movers replayed`
                 : result.symbols.join(", ")}{" "}
               · last {result.days} days ({result.timeframe})
             </h3>
@@ -1079,6 +1079,21 @@ export default function Backtest() {
                   )}
                 </p>
               )}
+            {/* A mover with no cached bars can't be replayed. Never let a
+                shrunken universe pass as a full test. */}
+            {result.scanner_replay && (result.universe_dropped?.length ?? 0) > 0 && (
+              <p className="hint warn">
+                <IconWarn className="icon-inline" />{" "}
+                <strong>
+                  {result.universe_dropped!.length} mover
+                  {result.universe_dropped!.length === 1 ? "" : "s"} couldn't be replayed
+                </strong>{" "}
+                — no cached bars for {result.universe_dropped!.slice(0, 8).join(", ")}
+                {result.universe_dropped!.length > 8 ? ", …" : ""}. They made a top-N list but weren't tested, so this
+                run covers a smaller universe than the scanner actually saw. Re-run the sweep (Settings → Historical bar
+                cache) to fill them in.
+              </p>
+            )}
             {result.trades === 0 && result.diagnosis?.summary && (
               <div className="card note" style={{ cursor: "default" }}>
                 <strong>Why zero trades?</strong> {result.diagnosis.summary}
