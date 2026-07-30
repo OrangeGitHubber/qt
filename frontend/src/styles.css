@@ -373,6 +373,14 @@ button.btn-ghost {
   color: var(--text);
   font-weight: 500;
 }
+
+/* A FULL-SIZE ghost sits beside a primary button (e.g. Save/Cancel): absorb
+   its 1px border into the padding so the two are exactly the same height.
+   Scoped :not(.small) — this rule is later in the file than button.small, so
+   without the guard it would blow small ghost buttons up to full size. */
+button.btn-ghost:not(.small) {
+  padding: calc(0.65rem - 1px) calc(1.4rem - 1px);
+}
 button.btn-ghost:hover {
   border-color: var(--accent);
 }

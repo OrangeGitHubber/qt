@@ -1030,7 +1030,9 @@ function Editor({
       {error && <div className="error">{error}</div>}
       <div className="toolbar">
         <button>{s.id ? "Save (creates new config version)" : "Create strategy"}</button>
-        <button type="button" className="small btn-ghost" onClick={onCancel}>
+        {/* Full-size like Save (same height/baseline), ghost so Save stays the
+            one primary action in the row. */}
+        <button type="button" className="btn-ghost" onClick={onCancel}>
           Cancel
         </button>
       </div>
