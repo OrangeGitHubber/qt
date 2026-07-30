@@ -87,14 +87,26 @@ function stratWantsDaily(s: StrategyRow): boolean {
 
 // The bar size is DERIVED from the strategy, never chosen: MACD/RSI → 1 Day
 // (daily signals, matching live); VWAP → 15 Min (an intraday measure); a plain
-// strategy follows its own trading style (swing → daily, intraday → 15-min).
+// STOCK strategy follows its trading style (swing → daily, intraday → 15-min).
 // 1-hour is intentionally gone: 15-min is a strictly more faithful intraday
 // simulation and daily is right for daily signals — the live engine ticks every
 // ~60s, so a coarse hourly bar would miss intraday stops and VWAP crosses.
+//
+// CRYPTO has no session, so swing/intraday doesn't apply to it (see the strategy
+// editor) and can't pick the resolution. Its HOLD TIME does: a cap of a couple of
+// days or less is a short-horizon trade that needs intraday bars to simulate its
+// stops honestly; no cap (or a long one) is a multi-day hold, where daily bars
+// are right and far cheaper.
+const CRYPTO_INTRADAY_MAX_HOLD_HRS = 48;
+
 function deriveTimeframe(s: StrategyRow | undefined): "1Day" | "15Min" {
   if (!s) return "1Day";
   if (stratWantsDaily(s)) return "1Day";
   if (stratWantsIntraday(s)) return "15Min";
+  if (s.asset_class === "crypto") {
+    const hold = s.params?.exit?.max_holding_hours ?? 0;
+    return hold > 0 && hold <= CRYPTO_INTRADAY_MAX_HOLD_HRS ? "15Min" : "1Day";
+  }
   return s.swing_mode ? "1Day" : "15Min";
 }
 
@@ -922,9 +934,13 @@ export default function Backtest() {
                 ? " (VWAP is an intraday measure)"
                 : mode === "compare"
                   ? " (the finer of the two strategies)"
-                  : strategy?.swing_mode
-                    ? " (swing strategy)"
-                    : " (intraday strategy)"}{" "}
+                  : strategy?.asset_class === "crypto"
+                    ? effectiveTimeframe === "15Min"
+                      ? " (short crypto hold limit)"
+                      : " (crypto, no short hold limit)"
+                    : strategy?.swing_mode
+                      ? " (swing strategy)"
+                      : " (intraday strategy)"}{" "}
             ·{" "}
             {mode === "compare" ? (
               <>

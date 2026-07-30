@@ -199,9 +199,17 @@ def evaluate_exit(
     atr_pct: float | None = None,
     rsi: float | None = None,
     regime_bearish: bool = False,
+    is_crypto: bool = False,
 ) -> tuple[bool, str]:
-    """Return (should_exit, reason). Stops always apply; in swing mode the
-    softer exits (take-profit, VWAP, time, MACD) wait until the day after entry.
+    """Return (should_exit, reason). Stops and the max-hold ceiling ALWAYS apply;
+    in swing mode the softer exits (take-profit, VWAP, MACD, RSI, regime) wait
+    until the day after entry.
+
+    `is_crypto` disables the swing deferral entirely: it defers until the entry's
+    ET calendar date rolls over, which is meaningless for a 24/7 asset (New York
+    midnight is nothing to Bitcoin). Crypto exits are live from the fill; use
+    max_holding_hours for a time limit. Mirrors the flatten-before-close guard,
+    which is already stock-only for the same reason.
 
     `macd_bullish` is the daily-MACD momentum for this symbol (True/False/None),
     supplied by the caller only when the strategy opts into the MACD exit signal;
@@ -239,8 +247,21 @@ def evaluate_exit(
     if trailing and drop_from_high >= trailing and price > entry_price * (1 - effective_stop / 100):
         return True, f"trailing stop: {drop_from_high:.2f}% off high {high_water:.4f}"
 
+    # Max holding time is a HARD ceiling, so it sits with the stops ABOVE the
+    # swing deferral. It used to be below it, which meant a hold cap shorter than
+    # the rest of the entry day silently could not fire in swing mode ("max hold
+    # 2h" quietly became "some time tomorrow"). A time limit the user set must
+    # always be honoured.
+    max_hold = exit_rules.get("max_holding_hours", 0)
+    if max_hold:
+        held_hours = (now_utc - entry_at).total_seconds() / 3600
+        if held_hours >= max_hold:
+            return True, f"max holding period: {held_hours:.1f}h ≥ {max_hold}h"
+
+    # Swing = don't take the soft exits on the entry day. Stocks only: crypto has
+    # no session, so there is no "entry day" to be patient through.
     same_day = entry_at.astimezone(ET).date() == now_utc.astimezone(ET).date()
-    if swing_mode and same_day:
+    if swing_mode and same_day and not is_crypto:
         return False, ""  # stops above already had their chance; be patient today
 
     take_profit = exit_rules.get("take_profit_pct", 0)
@@ -268,12 +289,6 @@ def evaluate_exit(
     # blip never triggers a sell.
     if exit_rules.get("exit_on_regime_bear") and regime_bearish:
         return True, "market regime bearish — SPY below its 200-day average"
-
-    max_hold = exit_rules.get("max_holding_hours", 0)
-    if max_hold:
-        held_hours = (now_utc - entry_at).total_seconds() / 3600
-        if held_hours >= max_hold:
-            return True, f"max holding period: {held_hours:.1f}h ≥ {max_hold}h"
 
     if exit_rules.get("flatten_before_close") and market_closes_soon:
         return True, "flatten before market close"
@@ -722,6 +737,8 @@ async def _manage_exits(
                 atr_pct=atr_exit_pcts.get(trade.id),
                 rsi=rsi_exit_flags.get(trade.id),
                 regime_bearish=regime_bearish and trade.asset_class == "stock",
+                # No swing deferral for a 24/7 asset — see evaluate_exit.
+                is_crypto=trade.asset_class == "crypto",
             )
         if not should_exit:
             continue

@@ -130,7 +130,7 @@ export const GLOSSARY: Record<string, GlossaryEntry> = {
   swing_mode: {
     term: "Trading style: Swing vs Intraday",
     explain:
-      "Two opposite styles, so it's one choice. Swing holds positions overnight and judges exits over days (soft exits like take-profit wait until the day after entry; stops still act same-day). Intraday flattens before the close and never holds overnight (for stocks; crypto has no close). Stocks default to Swing — spreads and free-data limits punish rapid stock trading, though the trade-off is overnight-gap risk. Crypto is the intraday lab (24/7, cleaner data).",
+      "A STOCKS-ONLY choice, because it's built on the trading session. Swing holds overnight and judges exits over days: the soft exits (take-profit, VWAP, MACD, RSI, regime) wait until the day after you buy, so intraday noise can't shake you out — stop-loss, trailing stop and your max-holding-time limit still act the same day. Intraday lets those soft exits fire immediately and can flatten before the close, never holding overnight. Stocks default to Swing: spreads and free-data limits punish rapid stock trading, the trade-off being overnight-gap risk. Crypto trades 24/7 with no close, so there's no session to be inside of — this choice doesn't exist for crypto, which uses its exit rules directly plus an optional max holding time.",
     url: "https://www.investopedia.com/terms/s/swingtrading.asp",
   },
   sleeve: {
@@ -250,7 +250,7 @@ export const GLOSSARY: Record<string, GlossaryEntry> = {
   max_holding: {
     term: "Max holding time (hours)",
     explain:
-      "Force an exit once a position has been held this many hours, whatever the price — a time stop. Caps how long capital sits in one trade and bounds overnight/weekend exposure. 0 = off (hold until another exit rule fires).",
+      "Force an exit once a position has been held this many hours, whatever the price — a time stop. Caps how long capital sits in one trade and bounds overnight/weekend exposure. 0 = off (hold until another exit rule fires). It's a HARD limit: like the stops, it fires even on the day you bought, and even in swing mode. For crypto this is the main way to keep trades short, since there's no market close to flatten against. One honest caveat: it can only fire while QT is actually running — if the container is down overnight, nothing sells.",
     url: "https://www.investopedia.com/terms/h/holdingperiod.asp",
   },
   sizing: {

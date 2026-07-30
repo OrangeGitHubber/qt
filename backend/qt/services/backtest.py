@@ -546,6 +546,7 @@ def run_backtest(
                 macd_bullish=bar.get("macd_bullish"),
                 atr_pct=bar.get("atr_pct"),
                 rsi=bar.get("rsi"),
+                is_crypto=strategy["asset_class"] == "crypto",
             )
             if not should_exit:
                 continue
@@ -933,6 +934,7 @@ def run_portfolio_backtest(
                 macd_bullish=bar.get("macd_bullish"),
                 atr_pct=bar.get("atr_pct"),
                 rsi=bar.get("rsi"),
+                is_crypto=strat["asset_class"] == "crypto",
             )
             if not should_exit:
                 continue

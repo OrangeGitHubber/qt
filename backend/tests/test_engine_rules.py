@@ -548,3 +548,51 @@ def test_atr_sizing_falls_back_when_atr_none():
     p = params()
     p["atr"] = {"period": 14, "stop_mult": 2.0, "risk_usd": 50.0}
     assert atr_position_size(p, 200.0, 1000.0, atr_pct=None) == 200.0
+
+
+# ---- max-hold ceiling vs the swing deferral, and crypto's missing session ----
+
+
+def test_max_hold_fires_on_entry_day_even_in_swing_mode():
+    """Regression: max_holding_hours used to be evaluated BELOW the swing
+    early-return, so a hold cap shorter than the rest of the entry day silently
+    could not fire — "max hold 2h" quietly became "some time tomorrow". A time
+    limit the user set is a hard ceiling and must always be honoured."""
+    p = params(exit={"max_holding_hours": 2, "take_profit_pct": 0, "trailing_stop_pct": 0})
+    entry = NOW - timedelta(hours=3)  # same ET day as NOW, 3h ago
+    assert entry.astimezone(ET).date() == NOW.astimezone(ET).date()
+    should, reason = evaluate_exit(p, True, 100.0, entry, 100.0, 100.0, None, NOW, False)
+    assert should and "max holding period" in reason
+
+
+def test_max_hold_still_waits_until_the_cap_is_reached():
+    p = params(exit={"max_holding_hours": 8, "take_profit_pct": 0, "trailing_stop_pct": 0})
+    entry = NOW - timedelta(hours=3)
+    should, _ = evaluate_exit(p, True, 100.0, entry, 100.0, 100.0, None, NOW, False)
+    assert not should
+
+
+def test_crypto_ignores_the_swing_deferral():
+    """Crypto has no session, so there is no "entry day" to be patient through:
+    the ET-midnight boundary the deferral uses is meaningless for a 24/7 asset.
+    A take-profit that is due must fire on the entry day."""
+    p = params(exit={"take_profit_pct": 10.0, "trailing_stop_pct": 0})
+    entry = NOW - timedelta(hours=2)  # same ET day
+    # Stock + swing: deferred (the historical behaviour, unchanged).
+    should, _ = evaluate_exit(p, True, 100.0, entry, 111.0, 111.0, None, NOW, False)
+    assert not should
+    # Same inputs, crypto: the take-profit fires.
+    should, reason = evaluate_exit(
+        p, True, 100.0, entry, 111.0, 111.0, None, NOW, False, is_crypto=True
+    )
+    assert should and "take-profit" in reason
+
+
+def test_crypto_hard_stops_unchanged():
+    # Stops never depended on the deferral; confirm crypto keeps them.
+    p = params(exit={"stop_loss_pct": 4.0})
+    entry = NOW - timedelta(hours=1)
+    should, reason = evaluate_exit(
+        p, True, 100.0, entry, 100.0, 95.0, None, NOW, False, is_crypto=True
+    )
+    assert should and "stop-loss" in reason

@@ -3,6 +3,34 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Fixed: "max holding time" could be silently ignored; crypto loses a fake toggle (2026-07-30)
+
+Two related fixes, one of them a genuine bug, both found by putting the question
+*"what does 'intraday' even mean for crypto?"* through the advisory council.
+
+**The bug: a max-holding-time limit could silently not fire.** It was evaluated
+*after* swing mode's "be patient on the entry day" rule, so setting "max hold 2
+hours" on a swing strategy quietly meant "some time tomorrow" instead. A time
+limit you set is a hard ceiling — it now sits with the stop-loss and trailing
+stop, above the patience rule, and always fires. Affects stocks and crypto.
+
+**Crypto no longer shows a "swing vs intraday" choice**, because it never
+actually did anything for crypto. That toggle's whole job is to defer the softer
+exits until the day *after* you buy — measured against New York's midnight,
+which is meaningless for an asset that trades 24/7. So a crypto strategy set to
+"intraday" got no timed sell at all; the label promised something the engine
+never delivered. Now crypto strategies show, in that exact spot, the control you
+actually wanted: **Max holding time**, with the plain-English note that crypto
+has no market close, exit rules are live from the moment you're filled, and
+stop-loss/trailing stop always apply. Crypto intraday momentum still works —
+it's what the app is best at — it's just honest about how you bound a trade now.
+
+Knock-on: the backtester used to infer crypto's bar size from that toggle, so it
+now follows the hold limit instead (a cap of ≤48h means short-horizon trades that
+need 15-minute bars to simulate stops honestly; no cap means daily bars are right
+and much cheaper). The "Trading style" and "Max holding time" ? bubbles now spell
+all of this out, including that a hold limit can only fire while QT is running.
+
 ## Dashboard: all open positions, per strategy — plus quicker jumps (2026-07-30)
 
 - **New "Open positions — all strategies" card on the Dashboard.** Every open

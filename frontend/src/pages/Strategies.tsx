@@ -606,20 +606,42 @@ function Editor({
               ]}
             />
           </div>
-          <div className="field">
-            <span className="field-cap">
-              Trading style <InfoTip k="swing_mode" />
-            </span>
-            <Segmented
-              value={tradingStyle}
-              ariaLabel="Trading style"
-              onChange={setStyle}
-              options={[
-                { value: "swing", label: "Swing" },
-                { value: "intraday", label: "Intraday" },
-              ]}
-            />
-          </div>
+          {/* "Swing vs intraday" is a SESSION concept. Crypto trades 24/7, so
+              there is no day to be inside of and the toggle would be a label for
+              nothing (the engine ignores the deferral for crypto). Show the real
+              control instead: the hold-time ceiling. */}
+          {s.asset_class === "crypto" ? (
+            <div className="field">
+              <span className="field-cap">
+                Max holding time <InfoTip k="max_holding" />
+              </span>
+              <div className="affix">
+                <NumberField step="1" min="0" value={p.exit.max_holding_hours}
+                  onChange={(n) => setExit("max_holding_hours", n)} />
+                <span className="affix-unit">hrs</span>
+              </div>
+              <span className="field-help">
+                Crypto trades 24/7 — there's no market close, so "swing" and "intraday" don't apply. Your exit rules are
+                live from the moment you're filled. Set a limit here to keep trades short (0 = no limit); stop-loss and
+                trailing stop always apply.
+              </span>
+            </div>
+          ) : (
+            <div className="field">
+              <span className="field-cap">
+                Trading style <InfoTip k="swing_mode" />
+              </span>
+              <Segmented
+                value={tradingStyle}
+                ariaLabel="Trading style"
+                onChange={setStyle}
+                options={[
+                  { value: "swing", label: "Swing" },
+                  { value: "intraday", label: "Intraday" },
+                ]}
+              />
+            </div>
+          )}
         </div>
         {s.preset !== "custom" && presets[s.preset!] && <p className="sec-sub">{presets[s.preset!].description}</p>}
       </section>
@@ -829,10 +851,14 @@ function Editor({
         <details className="adv">
           <summary>Advanced exit options</summary>
           <div className="param-grid">
-            <Param label="Max holding time (hrs, 0 = off)" tip="max_holding">
-              <NumberField step="1" min="0" value={p.exit.max_holding_hours}
-                onChange={(n) => setExit("max_holding_hours", n)} />
-            </Param>
+            {/* Crypto promotes this to the main section (it replaces the
+                inapplicable swing/intraday toggle) — don't show it twice. */}
+            {s.asset_class !== "crypto" && (
+              <Param label="Max holding time (hrs, 0 = off)" tip="max_holding">
+                <NumberField step="1" min="0" value={p.exit.max_holding_hours}
+                  onChange={(n) => setExit("max_holding_hours", n)} />
+              </Param>
+            )}
             <Param label={marketMode ? "Exit slippage — n/a at market" : "Exit slippage (%)"} tip="exit_slippage">
               <NumberField step="0.1" min="0" max="10" value={p.exit.exit_slippage_pct ?? 1}
                 onChange={(n) => setExit("exit_slippage_pct", n)} disabled={marketMode} />
