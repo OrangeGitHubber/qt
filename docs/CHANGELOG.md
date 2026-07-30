@@ -3,6 +3,16 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Backtest form polish: edit shortcut + right-sized inputs (2026-07-30)
+
+- Each strategy column on the Backtest page gains an **"Edit this strategy"**
+  shortcut that jumps straight into the editor on the Strategies tab (which
+  opens and scrolls to it automatically).
+- **History** and **Spread cost** are now compact fields with their unit
+  ("days", "%") shown inside the box — no more card-wide inputs for a
+  three-digit number. (The strategy dropdown itself already gets the new
+  select styling from the entry below — it's global.)
+
 ## Polish: modern dropdowns, right-sized symbol search (2026-07-30)
 
 Every dropdown in the app sheds the dated stock-browser look: flat panel

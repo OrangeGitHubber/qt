@@ -12,7 +12,8 @@ import {
 import InfoTip from "../components/InfoTip";
 import LineChart, { ChartMarker, DayHolding } from "../components/LineChart";
 import NumberField from "../components/NumberField";
-import { IconWarn } from "../components/icons";
+import { IconEdit, IconWarn } from "../components/icons";
+import { requestNav } from "../lib/nav";
 
 type TradeEvent = {
   at: string; // ISO timestamp — drives ordering
@@ -527,15 +528,21 @@ export default function Backtest() {
               <div className="filter-grid">
                 <label>
                   <span className="field-cap">
-                    History (days) <InfoTip k="history_days" />
+                    History <InfoTip k="history_days" />
                   </span>
-                  <NumberField min={7} max={730} step={1} value={days} onChange={setDays} />
+                  <div className="affix">
+                    <NumberField min={7} max={730} step={1} value={days} onChange={setDays} />
+                    <span className="affix-unit">days</span>
+                  </div>
                 </label>
                 <label>
                   <span className="field-cap">
-                    Spread cost per side (%) <InfoTip k="spread_cost" />
+                    Spread cost per side <InfoTip k="spread_cost" />
                   </span>
-                  <NumberField min={0} max={2} step={0.05} value={spread} onChange={setSpread} />
+                  <div className="affix">
+                    <NumberField min={0} max={2} step={0.05} value={spread} onChange={setSpread} />
+                    <span className="affix-unit">%</span>
+                  </div>
                 </label>
               </div>
               {/* Account and bar size are DERIVED, not chosen — the account is the
@@ -809,6 +816,17 @@ export default function Backtest() {
                 </select>
               </label>
               <UniverseChips uni={uniA} />
+              {strategy && (
+                <button
+                  type="button"
+                  className="small btn-icon btn-ghost"
+                  onClick={() => requestNav({ tab: "strategies", strategyId: strategy.id })}
+                  title="Open this strategy in the editor"
+                >
+                  <IconEdit />
+                  Edit this strategy
+                </button>
+              )}
             </div>
             {mode === "compare" && (
               <div className="bt-strat-col">
@@ -826,6 +844,17 @@ export default function Backtest() {
                   </select>
                 </label>
                 {compareStrat && <UniverseChips uni={uniB} />}
+                {compareStrat && (
+                  <button
+                    type="button"
+                    className="small btn-icon btn-ghost"
+                    onClick={() => requestNav({ tab: "strategies", strategyId: compareStrat.id })}
+                    title="Open this strategy in the editor"
+                  >
+                    <IconEdit />
+                    Edit this strategy
+                  </button>
+                )}
               </div>
             )}
           </div>
@@ -859,15 +888,21 @@ export default function Backtest() {
           <div className="filter-grid">
             <label>
               <span className="field-cap">
-                History (days) <InfoTip k="history_days" />
+                History <InfoTip k="history_days" />
               </span>
-              <NumberField min={7} max={730} step={1} value={days} onChange={setDays} />
+              <div className="affix">
+                <NumberField min={7} max={730} step={1} value={days} onChange={setDays} />
+                <span className="affix-unit">days</span>
+              </div>
             </label>
             <label>
               <span className="field-cap">
-                Spread cost per side (%) <InfoTip k="spread_cost" />
+                Spread cost per side <InfoTip k="spread_cost" />
               </span>
-              <NumberField min={0} max={2} step={0.05} value={spread} onChange={setSpread} />
+              <div className="affix">
+                <NumberField min={0} max={2} step={0.05} value={spread} onChange={setSpread} />
+                <span className="affix-unit">%</span>
+              </div>
             </label>
           </div>
           {/* Bar size + account are derived, not chosen: an arbitrary starting

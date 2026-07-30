@@ -1747,6 +1747,29 @@ details.fold > summary > .cache-head {
   margin: 0;
 }
 
+/* Number input with a unit suffix ("days", "%") baked into the box — the unit
+   reads as part of the value, and the field stops sprawling across the card
+   (a 2-4 digit number doesn't need 500px). */
+.affix {
+  position: relative;
+  max-width: 180px;
+  margin-top: 0.3rem; /* the wrapper takes the input's usual label gap… */
+}
+.affix input {
+  margin-top: 0; /* …so the unit's 50% centering isn't skewed by it */
+  padding-right: 3.4rem;
+  box-sizing: border-box;
+}
+.affix .affix-unit {
+  position: absolute;
+  right: 0.8rem;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--muted);
+  font-size: 0.85rem;
+  pointer-events: none;
+}
+
 /* Compact strategy rows: folded shows the name + a one-line summary. */
 details.strat-fold > summary .strat-head {
   flex: 1;

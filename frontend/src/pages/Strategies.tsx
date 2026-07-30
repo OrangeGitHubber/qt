@@ -23,7 +23,7 @@ import InfoTip from "../components/InfoTip";
 import NumberField from "../components/NumberField";
 import UniverseSymbols from "../components/UniverseSymbols";
 import { IconDelete, IconEdit, IconOptimize, IconPause, IconPlay, IconWarn } from "../components/icons";
-import { requestNav } from "../lib/nav";
+import { consumeNav, requestNav } from "../lib/nav";
 
 const RANK_LABELS: Record<RankBy, string> = {
   momentum_today: "Today's % move (momentum)",
@@ -1078,6 +1078,17 @@ export default function Strategies() {
     getStatus()
       .then((st) => setEquity(st.broker ? Number(st.broker.equity) : null))
       .catch(() => setEquity(null));
+    // Another page (e.g. the backtest's "Edit this strategy") jumped here with a
+    // target in tow — open it in the editor straight away (auto-scrolls).
+    const pre = consumeNav()?.strategyId;
+    if (pre != null) {
+      getStrategies()
+        .then((all) => {
+          const target = all.find((r) => r.id === pre);
+          if (target) setEditing(target);
+        })
+        .catch(() => {});
+    }
   }, [refresh]);
 
   const basketName = (id: number | null) => baskets.find((b) => b.id === id)?.name ?? `#${id}`;
