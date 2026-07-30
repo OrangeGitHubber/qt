@@ -510,7 +510,15 @@ export interface BacktestResult {
   };
   no_trade_reasons?: Record<string, string>; // {day -> why no entry that day} (chart)
   // Consecutive no-entry days collapsed into spans for the trade log.
-  no_trade_spans?: { from_day: string; to_day: string; days: number; reason: string }[];
+  // `reason` counts every bar-check; `reason_symbol_days` re-counts the same
+  // rejections as distinct symbol-days (both are shown — see _no_trade_spans).
+  no_trade_spans?: {
+    from_day: string;
+    to_day: string;
+    days: number;
+    reason: string;
+    reason_symbol_days?: string;
+  }[];
   equity_days: string[];
   equity: number[];
   benchmark: (number | null)[] | null;

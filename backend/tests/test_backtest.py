@@ -237,6 +237,28 @@ def test_no_trade_spans_collapse_consecutive_flat_days():
     assert "day gain below the minimum" in spans[0]["reason"]
 
 
+def test_no_trade_spans_also_count_distinct_symbol_days():
+    """The bar-check tally counts every evaluation, so on intraday bars one
+    symbol below the gain bar all session scores once per bar — accurate but it
+    reads like that many missed chances. The span carries a second reading in
+    symbol-days alongside it (both, not instead)."""
+    # 2 symbols × 2 evaluated days × 3 bars/day = 12 bar-checks, but only 4
+    # symbol-days (2 symbols on each of 2 days).
+    flat = (
+        bars_from([100, 100, 100], "2026-05-04T14:00:00Z")
+        + bars_from([101, 101, 101], "2026-05-05T14:00:00Z")
+        + bars_from([101.5, 101.5, 101.5], "2026-05-06T14:00:00Z")
+    )
+    result = run_backtest(
+        STRATEGY, {"AAA": flat, "BBB": list(flat)}, RISK, starting_cash=5000, spread_pct=0
+    )
+    span = result["no_trade_spans"][0]
+    assert "12× day gain below the minimum" in span["reason"]  # unchanged bar-checks
+    sd = span["reason_symbol_days"]
+    assert "4 symbol-days (2 symbols) — day gain below the minimum" in sd
+    assert sd.startswith("Counting each symbol once per day:")
+
+
 def test_rails_respected_in_backtest():
     # Two symbols both trigger; sleeve budget only fits one $1000 position + cash guard.
     strategy = dict(STRATEGY, sleeve_usd=1500.0)

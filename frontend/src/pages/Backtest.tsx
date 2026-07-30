@@ -1445,7 +1445,15 @@ export default function Backtest() {
                       <td colSpan={4} className="hint">
                         no entries · {r.span.days} day{r.span.days === 1 ? "" : "s"}
                       </td>
-                      <td className="hint">{r.span.reason}</td>
+                      <td className="hint">
+                        {r.span.reason}
+                        {r.span.reason_symbol_days && (
+                          <>
+                            <br />
+                            {r.span.reason_symbol_days}
+                          </>
+                        )}
+                      </td>
                     </tr>
                   ),
                 )}

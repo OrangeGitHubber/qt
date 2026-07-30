@@ -362,11 +362,18 @@ def _no_trade_spans(
     day_reject: dict[str, "Counter[str]"],
     entries_by_day: dict[str, int],
     action_days: set[str],
+    day_reject_syms: dict[str, dict[str, set[str]]] | None = None,
 ) -> list[dict]:
     """Collapse consecutive no-ENTRY days into spans for the trade log — each with
     its dominant blocker across the whole run. A run is broken by any day that
     traded (bought OR sold), so a weeks-long flat stretch becomes ONE readable row
-    ('May 12–Jun 5 · 24 days · MACD not bullish') instead of dozens."""
+    ('May 12–Jun 5 · 24 days · MACD not bullish') instead of dozens.
+
+    Each span carries TWO readings of the same rejections. `reason` counts every
+    bar-check, which on 15-minute bars means one symbol below the gain bar all
+    session scores 26 — accurate, but it reads like 26 missed chances.
+    `reason_symbol_days` re-counts them as distinct symbol-days ("3 symbols on 2
+    days"), which is what a person actually wants to know. Both are shown."""
     spans: list[dict] = []
     run: list[str] = []
 
@@ -377,12 +384,31 @@ def _no_trade_spans(
             for d in run:
                 total.update(day_reject.get(d, Counter()))
             parts = [f"{n}× {_REJECT_LABELS.get(cat, cat)}" for cat, n in total.most_common(2)]
+            # Same categories, re-counted as distinct (symbol, day) pairs.
+            sym_days: Counter = Counter()
+            syms_seen: dict[str, set[str]] = {}
+            for d in run:
+                for cat, syms in (day_reject_syms or {}).get(d, {}).items():
+                    sym_days[cat] += len(syms)
+                    syms_seen.setdefault(cat, set()).update(syms)
+            sd_parts = [
+                f"{sym_days[cat]} symbol-day{'s' if sym_days[cat] != 1 else ''} "
+                f"({len(syms_seen.get(cat, ()))} symbol{'s' if len(syms_seen.get(cat, ())) != 1 else ''}) "
+                f"— {_REJECT_LABELS.get(cat, cat)}"
+                for cat, _ in total.most_common(2)
+                if sym_days.get(cat)
+            ]
             spans.append(
                 {
                     "from_day": run[0],
                     "to_day": run[-1],
                     "days": len(run),
                     "reason": "; ".join(parts) if parts else "no candidates evaluated",
+                    "reason_symbol_days": (
+                        f"Counting each symbol once per day: {'; '.join(sd_parts)}."
+                        if sd_parts
+                        else ""
+                    ),
                 }
             )
         run = []
@@ -593,6 +619,15 @@ def run_backtest(
     # Per-day tally of WHY each candidate was rejected — turned into a plain-English
     # "why no entry" reason for every day that traded nothing (see the chart panel).
     day_reject: dict[str, Counter] = {}
+    # The same rejections counted as distinct SYMBOL-DAYS. The tally above counts
+    # every bar-check, so on 15-minute bars one symbol sitting below the gain bar
+    # all session scores 26 — true, but it reads like 26 missed chances. This
+    # answers "how many symbols, on how many days" instead.
+    day_reject_syms: dict[str, dict[str, set[str]]] = {}
+
+    def reject(day: str, symbol: str, category: str) -> None:
+        day_reject.setdefault(day, Counter())[category] += 1
+        day_reject_syms.setdefault(day, {}).setdefault(category, set()).add(symbol)
 
     debug = bool(os.getenv("QT_BACKTEST_DEBUG"))
     if debug:
@@ -675,7 +710,7 @@ def run_backtest(
         eligible = eligible_by_day.get(day) if eligible_by_day is not None else None
         for symbol, bar in bars.items():
             if eligible is not None and symbol not in eligible:
-                day_reject.setdefault(day, Counter())["not_eligible"] += 1
+                reject(day, symbol, "not_eligible")
                 continue  # scanner replay: not a top-N riser on this day
             if bar["change_pct"] is None:
                 continue
@@ -712,7 +747,7 @@ def run_backtest(
                     diag["rejected_vwap"] += 1
                 elif "entry window" in entry_reason:
                     diag["rejected_entry_window"] += 1
-                day_reject.setdefault(day, Counter())[_reject_category(entry_reason)] += 1
+                reject(day, symbol, _reject_category(entry_reason))
                 if debug:
                     _btlog(day, symbol, bar, params, f"reject-entry: {entry_reason}")
                 continue
@@ -756,7 +791,7 @@ def run_backtest(
                     )
             if not rails_ok:
                 diag["entry_ok_but_rail_blocked"] += 1
-                day_reject.setdefault(day, Counter())[_rail_category(rails_reason)] += 1
+                reject(day, symbol, _rail_category(rails_reason))
                 if debug:
                     _btlog(day, symbol, bar, params, f"reject-rail: {rails_reason}")
                 continue
@@ -764,7 +799,7 @@ def run_backtest(
             qty = _entry_qty(strategy["asset_class"], entry_sizing, fill, _fractional(params))
             if qty <= 0 or fill * qty > state.cash:
                 diag["too_small_or_no_cash"] += 1
-                day_reject.setdefault(day, Counter())["sizing"] += 1
+                reject(day, symbol, "sizing")
                 if debug:
                     _btlog(day, symbol, bar, params, f"reject-sizing: qty={qty} cost={fill * qty:.2f} cash={state.cash:.2f}")
                 continue
@@ -903,7 +938,9 @@ def run_backtest(
         "no_trade_reasons": _summarize_no_trade_days(day_reject, state.entries_by_day),
         # Consecutive no-entry days collapsed into spans, interleaved into the
         # trade log so a flat stretch explains itself ({from_day,to_day,days,reason}).
-        "no_trade_spans": _no_trade_spans(days_index, day_reject, state.entries_by_day, action_days),
+        "no_trade_spans": _no_trade_spans(
+            days_index, day_reject, state.entries_by_day, action_days, day_reject_syms
+        ),
         "equity_days": days_index,
         "equity": [round((v / starting_cash - 1) * 100, 2) for _, v in equity_curve],
         "hold_benchmark": _hold_benchmark(prepared, days_index),
