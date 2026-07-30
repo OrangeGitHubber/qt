@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { getJournal, JournalRow } from "../api";
 import AccountSelect from "../components/AccountSelect";
 
@@ -107,8 +107,10 @@ export default function Journal() {
               {events.map((e) => {
                 const r = e.trade;
                 return (
-                  <>
-                    <tr key={e.key} className="clickable" onClick={() => setExpanded(expanded === e.key ? null : e.key)}>
+                  // The fragment IS the array element, so the key belongs here —
+                  // a bare <> can't carry one, which is why it needs Fragment.
+                  <Fragment key={e.key}>
+                    <tr className="clickable" onClick={() => setExpanded(expanded === e.key ? null : e.key)}>
                       <td className="hint nowrap">{when(e.at)}</td>
                       <td>{expanded === e.key ? "▾" : "▸"}</td>
                       <td>
@@ -130,7 +132,7 @@ export default function Journal() {
                       </td>
                     </tr>
                     {expanded === e.key && (
-                      <tr key={`${e.key}-detail`}>
+                      <tr>
                         <td colSpan={9} className="detail">
                           {e.action === "Sold" ? (
                             <>
@@ -159,7 +161,7 @@ export default function Journal() {
                         </td>
                       </tr>
                     )}
-                  </>
+                  </Fragment>
                 );
               })}
             </tbody>
