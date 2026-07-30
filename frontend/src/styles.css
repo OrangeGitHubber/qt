@@ -831,10 +831,11 @@ code {
 }
 
 .infotip-pop {
-  position: absolute;
-  z-index: 20;
-  left: 0;
-  top: 1.5rem;
+  /* FIXED + inline top/left from the trigger's rect: escapes overflow
+     containers (a table's scroll box would clip an absolute popover and grow
+     scrollbars around it). Above the sticky nav ribbon (z 40). */
+  position: fixed;
+  z-index: 60;
   width: 280px;
   padding: 0.75rem;
   background: var(--bg);
@@ -845,6 +846,13 @@ code {
   color: var(--text);
   box-shadow: 0 6px 24px rgba(0, 0, 0, 0.5);
   cursor: pointer;
+  /* Hard-reset typography a host can leak in — a "?" inside an UPPERCASE
+     table header must not shout its whole explanation. */
+  text-transform: none;
+  letter-spacing: normal;
+  white-space: normal;
+  text-align: left;
+  line-height: 1.5;
 }
 
 /* Strategy editor */

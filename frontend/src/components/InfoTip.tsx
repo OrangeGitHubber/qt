@@ -1,10 +1,28 @@
 import { useEffect, useRef, useState } from "react";
 import { GLOSSARY } from "../glossary";
 
+const POP_WIDTH = 280; // keep in sync with .infotip-pop width
+
 export default function InfoTip({ k }: { k: keyof typeof GLOSSARY }) {
   const [open, setOpen] = useState(false);
+  // Viewport coordinates for the FIXED-position popover. Fixed (not absolute)
+  // so it escapes overflow containers — inside a scrolling table an absolute
+  // popover gets clipped and grows ugly scrollbars around the table instead.
+  const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
   const ref = useRef<HTMLSpanElement>(null);
   const entry = GLOSSARY[k];
+
+  function toggle() {
+    if (!open) {
+      const r = ref.current?.getBoundingClientRect();
+      if (r) {
+        // Clamp horizontally so a "?" near the right edge doesn't overflow.
+        const left = Math.min(Math.max(8, r.left), window.innerWidth - POP_WIDTH - 8);
+        setPos({ top: r.bottom + 6, left });
+      }
+    }
+    setOpen((o) => !o);
+  }
 
   useEffect(() => {
     if (!open) return;
@@ -16,12 +34,17 @@ export default function InfoTip({ k }: { k: keyof typeof GLOSSARY }) {
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") setOpen(false);
     };
+    // A fixed popover doesn't follow its anchor — close on any scroll (capture
+    // catches inner scroll containers like the tables) instead of drifting.
+    const onScroll = () => setOpen(false);
     document.addEventListener("pointerdown", onPointerDown);
     document.addEventListener("keydown", onKeyDown);
+    document.addEventListener("scroll", onScroll, { capture: true, passive: true });
     window.addEventListener("blur", () => setOpen(false), { once: true });
     return () => {
       document.removeEventListener("pointerdown", onPointerDown);
       document.removeEventListener("keydown", onKeyDown);
+      document.removeEventListener("scroll", onScroll, { capture: true });
     };
   }, [open]);
 
@@ -35,13 +58,18 @@ export default function InfoTip({ k }: { k: keyof typeof GLOSSARY }) {
         aria-expanded={open}
         onClick={(e) => {
           e.preventDefault();
-          setOpen((o) => !o);
+          toggle();
         }}
       >
         ?
       </button>
-      {open && (
-        <span className="infotip-pop" role="tooltip" onClick={() => setOpen(false)}>
+      {open && pos && (
+        <span
+          className="infotip-pop"
+          role="tooltip"
+          style={{ top: pos.top, left: pos.left }}
+          onClick={() => setOpen(false)}
+        >
           <strong>{entry.term}</strong>
           <br />
           {entry.explain}{" "}
