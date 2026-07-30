@@ -6,6 +6,8 @@ from datetime import datetime, timedelta
 
 import pytest
 
+from qt.services import backtest as bt
+from qt.services import stats
 from qt.services.backtest import run_backtest
 from qt.services.engine import RISK_DEFAULTS
 
@@ -581,6 +583,179 @@ def test_macd_strategy_trades_from_window_start_when_warmup_precedes_it():
         strat, {"TEST": bars[_MACD_WINDOW_START_IDX:]}, RISK, starting_cash=5000, spread_pct=0,
     )
     assert _entries(cold) == 0
+
+
+# ---- mixed-resolution replay: signals from daily closes, exits on intraday bars ----
+#
+# The tension this resolves: MACD/RSI must come from COMPLETED DAILY closes (that
+# is how the live engine reads them), but a daily replay checks the exit rules
+# once a day at the close, so a stop-loss can't be simulated. Mixed resolution
+# feeds the indicators from a daily series while replaying intraday bars.
+
+# A fading name — MACD is bearish on every completed daily close — followed by one
+# moonshot day. That day's OWN close would flip MACD bullish, which is exactly the
+# knowledge a live engine does not have while the day is still in progress.
+_FADE = [float(100 - i) for i in range(11)]
+_MOONSHOT = 130.0
+_SHORT_MACD = {"fast": 2, "slow": 3, "signal": 2}  # short periods: 11 closes suffice
+
+
+def _mixed_strategy(**exit_overrides) -> dict:
+    """A MACD-gated strategy — the shape that needs both resolutions at once."""
+    strat = copy.deepcopy(STRATEGY)
+    strat["params"]["entry"]["require_macd_bullish"] = True
+    strat["params"]["macd"] = _SHORT_MACD
+    strat["params"]["exit"].update(exit_overrides)
+    return strat
+
+
+def test_mixed_resolution_never_peeks_at_the_current_days_daily_close():
+    # THE look-ahead test. Day D is a +44% moonshot whose close flips MACD from
+    # bearish to bullish. Mid-day, live, that close hasn't happened — only closes
+    # through D−1 exist, and there MACD is bearish. So every intraday bar on day D
+    # must carry the D−1 verdict, never the one day D's own close would give.
+    daily_closes = _FADE + [_MOONSHOT]
+    daily = _daily(daily_closes, "2026-05-04")
+    day_before, day_d = "2026-05-14", "2026-05-15"
+    intraday = bars_from([_FADE[-1]] * 3, f"{day_before}T14:00:00Z") + bars_from(
+        [120.0, 125.0, _MOONSHOT], f"{day_d}T14:00:00Z"
+    )
+
+    through_yesterday = stats.macd_bullish(_FADE, 2, 3, 2)
+    including_today = stats.macd_bullish(daily_closes, 2, 3, 2)
+    assert through_yesterday is False and including_today is True  # the close really does flip it
+
+    prepared = {"TEST": bt._prepare(intraday, bt._et_day)}
+    bt._annotate_macd(prepared, _mixed_strategy()["params"], {"TEST": daily}, bt._et_day)
+    on_day_d = [b["macd_bullish"] for b in prepared["TEST"] if b["day"] == day_d]
+    assert len(on_day_d) == 3
+    assert all(v is through_yesterday for v in on_day_d)   # D−1's verdict…
+    assert not any(v is including_today for v in on_day_d)  # …never D's own
+
+    # And the consequence that matters: day D is a +33% riser that sails through the
+    # day-gain gate, but MACD (completed closes only) is bearish, so nothing trades.
+    blocked = run_backtest(
+        _mixed_strategy(), {"TEST": intraday}, RISK, starting_cash=5000, spread_pct=0,
+        daily_bars_by_symbol={"TEST": daily},
+    )
+    assert _entries(blocked) == 0
+    # Control: with the MACD gate off the same bars DO trade — it was the signal
+    # that blocked the entry, not missing data or a broken timeline.
+    ungated = _mixed_strategy()
+    ungated["params"]["entry"]["require_macd_bullish"] = False
+    assert _entries(run_backtest(
+        ungated, {"TEST": intraday}, RISK, starting_cash=5000, spread_pct=0,
+        daily_bars_by_symbol={"TEST": daily},
+    )) == 1
+
+
+# A 20-day slide (RSI pinned at 0) then a moonshot day that would lift RSI to ~79.
+_RSI_FADE = [float(100 - i) for i in range(20)]
+
+
+def test_mixed_resolution_rsi_also_stops_at_yesterdays_close():
+    # Same rule, the RSI annotator: on day D the RSI must be the one computed from
+    # closes through D−1 (0.0 — a relentless slide), not the ~79 that day D's own
+    # moonshot close would produce.
+    daily_closes = _RSI_FADE + [_MOONSHOT]
+    daily = _daily(daily_closes, "2026-05-04")
+    day_before, day_d = "2026-05-23", "2026-05-24"
+    intraday = bars_from([_RSI_FADE[-1]] * 3, f"{day_before}T14:00:00Z") + bars_from(
+        [120.0, 125.0, _MOONSHOT], f"{day_d}T14:00:00Z"
+    )
+    strat = copy.deepcopy(STRATEGY)
+    strat["params"]["entry"]["rsi_min"] = 50.0  # only buy names with real strength
+
+    prepared = {"TEST": bt._prepare(intraday, bt._et_day)}
+    bt._annotate_rsi(prepared, strat["params"], {"TEST": daily}, bt._et_day)
+    assert stats.rsi_from_closes(daily_closes) > 50  # day D's close WOULD clear the band
+    assert [b["rsi"] for b in prepared["TEST"] if b["day"] == day_d] == [0.0, 0.0, 0.0]
+
+    res = run_backtest(
+        strat, {"TEST": intraday}, RISK, starting_cash=5000, spread_pct=0,
+        daily_bars_by_symbol={"TEST": daily},
+    )
+    assert _entries(res) == 0  # RSI 0 through yesterday → below the band → no entry
+
+
+# A calm 1%/day climb (MACD bullish), one +4% day that triggers the entry, then a
+# day that CLOSES only 1% down but was 10% down mid-day — right through the 4% stop.
+_TREND = [round(100 * (1.01 ** i), 2) for i in range(10)]
+_TREND_LAST = _TREND[-1]
+_ENTRY_CLOSE = round(_TREND_LAST * 1.04, 2)
+_RECOVERED = round(_ENTRY_CLOSE * 0.99, 2)
+_INTRADAY_DIP = round(_ENTRY_CLOSE * 0.90, 2)
+
+
+def test_mixed_resolution_catches_a_stop_the_daily_replay_misses():
+    # The whole point of the feature. ONE price path, two replays. On daily bars the
+    # exit rules run once, at the close, and the day closed just 1% down — so the
+    # position survives and the dip is invisible. On intraday bars, with the very
+    # same daily MACD driving the entry, the mid-day plunge through the stop fires
+    # the stop-loss — which is what would really have happened.
+    strat = _mixed_strategy(trailing_stop_pct=0)  # isolate the hard stop
+    daily = _daily(_TREND + [_ENTRY_CLOSE, _RECOVERED], "2026-05-04")
+    intraday = (
+        bars_from([_TREND_LAST] * 3, "2026-05-13T14:00:00Z")     # the day before
+        + bars_from([_ENTRY_CLOSE] * 3, "2026-05-14T14:00:00Z")  # +4% → entry
+        + bars_from([_RECOVERED, _INTRADAY_DIP, _RECOVERED], "2026-05-15T14:00:00Z")
+    )
+
+    daily_only = run_backtest(strat, {"TEST": daily}, RISK, starting_cash=5000, spread_pct=0)
+    assert daily_only["trades"] == 0                 # no stop-out ever fired…
+    assert len(daily_only["open_positions"]) == 1    # …the position is still riding
+    assert daily_only["open_positions"][0]["entry_price"] == _ENTRY_CLOSE
+
+    mixed = run_backtest(
+        strat, {"TEST": intraday}, RISK, starting_cash=5000, spread_pct=0,
+        daily_bars_by_symbol={"TEST": daily},
+    )
+    assert mixed["trades"] == 1
+    trade = mixed["trade_list"][0]
+    assert "stop-loss" in trade["exit_reason"]
+    assert trade["entry_price"] == _ENTRY_CLOSE      # same entry signal, real exit
+    assert trade["exit_price"] == _INTRADAY_DIP
+    # The honest run is the worse one — that flattering daily result was the bug.
+    assert mixed["net_pnl"] < daily_only["net_pnl"] < 0
+
+
+def test_daily_bars_none_is_the_old_single_resolution_run():
+    # No-regression: omitting the new argument, or passing None, must reproduce the
+    # single-resolution behaviour exactly — same trade, same numbers as before.
+    series = _spread_day([100, 100, 100], [104, 107, 110, 102.5, 102.5])
+    old = run_backtest(STRATEGY, {"TEST": series}, RISK, starting_cash=5000, spread_pct=0)
+    explicit_none = run_backtest(
+        STRATEGY, {"TEST": series}, RISK, starting_cash=5000, spread_pct=0,
+        daily_bars_by_symbol=None,
+    )
+    assert old == explicit_none
+    # …and it is still the known-correct result (see test_rise_then_trail_exit).
+    assert old["trades"] == 1
+    assert "trailing stop" in old["trade_list"][0]["exit_reason"]
+    assert old["net_pnl"] == round((102.5 - 104) * 9, 2)
+
+
+def test_mixed_resolution_leaves_a_symbol_without_daily_bars_undecided():
+    # A symbol missing from the daily series must not crash the run — and must not
+    # quietly fall back to intraday-derived indicators either. Its MACD stays None,
+    # which require_macd_bullish reads as "can't tell" and fails closed. The symbol
+    # that does have daily bars trades normally.
+    strat = _mixed_strategy()
+    daily = _daily(_TREND + [_ENTRY_CLOSE], "2026-05-04")
+    intraday = bars_from([_TREND_LAST] * 3, "2026-05-13T14:00:00Z") + bars_from(
+        [_ENTRY_CLOSE] * 3, "2026-05-14T14:00:00Z"
+    )
+    res = run_backtest(
+        strat, {"HAS": intraday, "MISSING": intraday}, RISK, starting_cash=5000, spread_pct=0,
+        daily_bars_by_symbol={"HAS": daily},  # MISSING has no daily series at all
+    )
+    entered = [t["symbol"] for t in res["trade_list"]] + [p["symbol"] for p in res["open_positions"]]
+    assert entered == ["HAS"]
+
+    # The annotation itself: None on every bar, never an intraday-derived value.
+    prepared = {"MISSING": bt._prepare(intraday, bt._et_day)}
+    bt._annotate_macd(prepared, strat["params"], {}, bt._et_day)
+    assert all(b["macd_bullish"] is None for b in prepared["MISSING"])
 
 
 def test_warmup_bars_never_touch_equity_or_the_trade_log():

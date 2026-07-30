@@ -85,8 +85,30 @@ function stratWantsDaily(s: StrategyRow): boolean {
   );
 }
 
+// A price-triggered exit — stop-loss, trailing stop or take-profit. These are
+// the rules a once-a-day daily replay simply cannot simulate.
+function stratHasPriceExit(s: StrategyRow): boolean {
+  const x = s.params?.exit;
+  return (x?.stop_loss_pct ?? 0) > 0 || (x?.trailing_stop_pct ?? 0) > 0 || (x?.take_profit_pct ?? 0) > 0;
+}
+
+// MIXED RESOLUTION: daily signals AND a price-triggered exit. One bar stream
+// can't serve both (daily = correct signals + fake stops; intraday = correct
+// stops + twitchy signals), so the backend replays 15-minute bars while taking
+// MACD/RSI from completed DAILY closes. The replay is intraday — say so.
+function stratMixedResolution(s: StrategyRow): boolean {
+  return stratWantsDaily(s) && stratHasPriceExit(s);
+}
+
+// A strategy still HARD-LOCKED to daily bars: daily signals with nothing
+// price-triggered to gain from an intraday replay.
+function stratLockedDaily(s: StrategyRow): boolean {
+  return stratWantsDaily(s) && !stratMixedResolution(s);
+}
+
 // The bar size is DERIVED from the strategy, never chosen: MACD/RSI → 1 Day
-// (daily signals, matching live); VWAP → 15 Min (an intraday measure); a plain
+// (daily signals, matching live) unless a stop makes it a mixed-resolution run;
+// VWAP → 15 Min (an intraday measure); a plain
 // STOCK strategy follows its trading style (swing → daily, intraday → 15-min).
 // 1-hour is intentionally gone: 15-min is a strictly more faithful intraday
 // simulation and daily is right for daily signals — the live engine ticks every
@@ -101,7 +123,8 @@ function stratWantsDaily(s: StrategyRow): boolean {
 // not how long the trade is held.
 function deriveTimeframe(s: StrategyRow | undefined): "1Day" | "15Min" {
   if (!s) return "1Day";
-  if (stratWantsDaily(s)) return "1Day";
+  // Daily signals + a stop → the REPLAY is 15-min (the signals stay daily).
+  if (stratWantsDaily(s)) return stratMixedResolution(s) ? "15Min" : "1Day";
   if (stratWantsIntraday(s)) return "15Min";
   if (s.asset_class === "crypto") return "15Min";
   return s.swing_mode ? "1Day" : "15Min";
@@ -341,13 +364,19 @@ export default function Backtest() {
   const strategy = strategies.find((s) => s.id === strategyId);
 
   // Which bar sizes are valid for this strategy. MACD/RSI are DAILY signals (the
-  // live engine computes them from completed daily bars), so an intraday backtest
-  // computes them on intraday closes — twitchy and nothing like live; those
-  // strategies are locked to 1 Day. VWAP is the opposite — an intraday-only
-  // measure — so a VWAP strategy can't use 1 Day. (VWAP wins if somehow both are
-  // set; that strategy is misconfigured and the builder already warns about it.)
+  // live engine computes them from completed daily bars), so computing them on
+  // intraday closes would be twitchy and nothing like live. VWAP is the opposite
+  // — an intraday-only measure — so a VWAP strategy can't use 1 Day. (VWAP wins
+  // if somehow both are set; that strategy is misconfigured and the builder
+  // already warns about it.)
   const usesVwap = !!strategy && stratWantsIntraday(strategy);
   const usesDailySignals = !!strategy && stratWantsDaily(strategy);
+  // Daily signals no longer mean a daily REPLAY: a strategy that also carries a
+  // stop runs mixed-resolution — 15-minute bars for entries/exits, MACD/RSI still
+  // read off completed daily closes. Only a daily-signal strategy with nothing
+  // price-triggered stays locked to 1 Day (an intraday replay would buy it
+  // nothing).
+  const mixedResolution = !!strategy && stratMixedResolution(strategy);
 
   // Each strategy's universe is READ-ONLY here — resolved from its own config and
   // shown under its dropdown, never edited. The backtest tests the strategy's own
@@ -372,9 +401,11 @@ export default function Backtest() {
     singleTimeframe === "15Min" || compareTf === "15Min" ? "15Min" : "1Day";
   // A genuine conflict: the shared bar size violates a strategy's HARD lock
   // (MACD/RSI must be daily; VWAP must be intraday) — can't test them together.
+  // A mixed-resolution strategy is NOT locked to daily: 15-min is exactly what it
+  // wants, so pairing it with a VWAP strategy is fine.
   const barConflict = (s: StrategyRow | undefined) =>
     !!s &&
-    ((compareTimeframe === "15Min" && stratWantsDaily(s)) ||
+    ((compareTimeframe === "15Min" && stratLockedDaily(s)) ||
       (compareTimeframe === "1Day" && stratWantsIntraday(s)));
   const compareMixedBars = barConflict(strategy) || barConflict(compareStrat);
   const effectiveTimeframe = mode === "compare" ? compareTimeframe : singleTimeframe;
@@ -925,17 +956,19 @@ export default function Backtest() {
               hides intraday stops. Both come straight from the strategy. */}
           <p className="hint">
             <strong>Bar size {effectiveTimeframe === "1Day" ? "1 Day" : "15 Min"}</strong>
-            {usesDailySignals
-              ? " (MACD/RSI are daily signals)"
-              : usesVwap
-                ? " (VWAP is an intraday measure)"
-                : mode === "compare"
-                  ? " (the finer of the two strategies)"
-                  : strategy?.asset_class === "crypto"
-                    ? " (crypto trades 24/7 — stops need intraday bars)"
-                    : strategy?.swing_mode
-                      ? " (swing strategy)"
-                      : " (intraday strategy)"}{" "}
+            {mixedResolution && effectiveTimeframe === "15Min"
+              ? " · signals from daily closes (MACD/RSI), stops checked every 15 minutes"
+              : usesDailySignals
+                ? " (MACD/RSI are daily signals)"
+                : usesVwap
+                  ? " (VWAP is an intraday measure)"
+                  : mode === "compare"
+                    ? " (the finer of the two strategies)"
+                    : strategy?.asset_class === "crypto"
+                      ? " (crypto trades 24/7 — stops need intraday bars)"
+                      : strategy?.swing_mode
+                        ? " (swing strategy)"
+                        : " (intraday strategy)"}{" "}
             ·{" "}
             {mode === "compare" ? (
               <>
@@ -999,12 +1032,25 @@ export default function Backtest() {
                   (Settings → Historical bar cache) so replay uses 15-minute bars, then re-run for a true test.
                 </p>
               )}
+            {/* The honest-run note: signals were still daily (as live reads
+                them) but the stops were checked bar by intraday bar, so the
+                warning below deliberately does NOT apply here. */}
+            {result.mixed_resolution && (
+              <p className="hint">
+                <strong>Signals from daily closes, exits on 15-minute bars.</strong> MACD/RSI were computed
+                from <em>completed</em> daily closes — exactly how the live engine reads them, with no peek at
+                the day still in progress — while your stop-loss, trailing stop and take-profit were checked
+                every 15 minutes. So a dip through your stop that recovered by the close is scored as the loss
+                it really was, not as a winner.
+              </p>
+            )}
             {/* Daily bars call the exit logic ONCE per day, at the close — so a
                 price-triggered exit (stop / trailing / take-profit) can't be
                 simulated: a position that dipped through its stop and recovered
                 scores as a winner. Say so on every daily run that has one, not
                 just scanner replays. */}
             {result.timeframe === "1Day" &&
+              !result.mixed_resolution &&
               !result.scanner_replay &&
               strategy &&
               ((strategy.params.exit.stop_loss_pct ?? 0) > 0 ||

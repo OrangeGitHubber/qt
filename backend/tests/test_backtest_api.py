@@ -350,10 +350,24 @@ def test_scanner_replay_crypto_prefers_intraday_bars(client, configured, monkeyp
     assert _entries(body) == 1  # entered on the intraday crypto mover, held to window end
 
 
-def test_macd_strategy_rejects_intraday_bars(client, configured):
-    """MACD is a DAILY signal live — an intraday backtest would compute a twitchy
-    intraday MACD unlike live, so the endpoint rejects 15Min/1Hour and 1Day works."""
-    strat = _strategy("stock")
+def _no_price_exits(strat: dict) -> dict:
+    """Strip every price-triggered exit (stop / trailing / take-profit). Without
+    one there is nothing an intraday replay could simulate that a daily one
+    can't, so such a strategy stays locked to daily bars. A hard stop is
+    mandatory for every strategy EXCEPT a buy-and-hold DCA sleeve, so this is
+    the one shape that can legitimately have no price exit at all."""
+    strat["params"]["exit"].update(
+        {"stop_loss_pct": 0, "trailing_stop_pct": 0, "take_profit_pct": 0}
+    )
+    strat["params"]["dca"] = {"interval_days": 7}
+    return strat
+
+
+def test_macd_strategy_with_no_stops_rejects_intraday_bars(client, configured):
+    """MACD is a DAILY signal live. With no price-triggered exit there's nothing
+    to gain from an intraday replay — it would just compute a twitchy intraday
+    MACD unlike live — so the endpoint still rejects 15Min/1Hour, and 1Day works."""
+    strat = _no_price_exits(_strategy("stock"))
     strat["params"]["entry"]["require_macd_bullish"] = True
     sid = client.post("/api/strategies", json=strat).json()["id"]
 
@@ -370,11 +384,14 @@ def test_macd_strategy_rejects_intraday_bars(client, configured):
             "strategy_id": sid, "symbols": ["NVDA"], "days": 30,
             "timeframe": "1Day", "starting_cash": 5000, "spread_pct": 0})
     assert ok.status_code == 200, ok.text
+    assert ok.json()["timeframe"] == "1Day"
+    assert ok.json()["mixed_resolution"] is False
 
 
-def test_rsi_exit_strategy_rejects_intraday_bars(client, configured):
-    """The RSI overbought exit is likewise a daily signal — intraday is rejected."""
-    strat = _strategy("stock")
+def test_rsi_exit_strategy_with_no_stops_rejects_intraday_bars(client, configured):
+    """The RSI overbought exit is likewise a daily signal — and with no stop to
+    simulate, intraday stays rejected."""
+    strat = _no_price_exits(_strategy("stock"))
     strat["params"]["exit"]["exit_rsi_above"] = 70
     sid = client.post("/api/strategies", json=strat).json()["id"]
     r = client.post("/api/backtest", json={
@@ -382,6 +399,33 @@ def test_rsi_exit_strategy_rejects_intraday_bars(client, configured):
         "timeframe": "15Min", "starting_cash": 5000, "spread_pct": 0})
     assert r.status_code == 422
     assert "daily" in r.json()["detail"]
+
+
+def test_macd_strategy_with_stops_runs_mixed_resolution(client, configured):
+    """A MACD strategy that ALSO carries a stop is the case one bar stream can't
+    serve: daily bars fake the stop, intraday bars fake the signal. It now
+    replays 15-minute bars with the MACD taken from a daily series — two fetches,
+    the daily one reaching back over the warm-up, the intraday one only over the
+    tested window."""
+    strat = _strategy("stock")  # keeps stop_loss 4% / trailing 5%
+    strat["params"]["entry"]["require_macd_bullish"] = True
+    sid = client.post("/api/strategies", json=strat).json()["id"]
+
+    fetch = AsyncMock(side_effect=[{"NVDA": BARS}, {"NVDA": BARS}, {"SPY": BARS}])
+    with patch.object(AlpacaClient, "historical_bars", new=fetch):
+        r = client.post("/api/backtest", json={
+            "strategy_id": sid, "symbols": ["NVDA"], "days": 30,
+            "timeframe": "15Min", "starting_cash": 5000, "spread_pct": 0})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["mixed_resolution"] is True
+    assert body["timeframe"] == "15Min"        # what the exits were checked on
+    assert body["signal_timeframe"] == "1Day"  # where MACD/RSI came from
+
+    daily_call, intraday_call = fetch.await_args_list[0], fetch.await_args_list[1]
+    assert daily_call.args[2] == "1Day" and intraday_call.args[2] == "15Min"
+    # The daily series starts WARMUP_DAYS earlier; the intraday one does not.
+    assert daily_call.args[3] < intraday_call.args[3]
 
 
 def test_market_benchmark_kept_for_a_basket_including_it(client, configured):

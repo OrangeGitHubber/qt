@@ -3,6 +3,42 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Backtests can now be honest about signals AND stops at the same time (2026-07-30)
+
+Until today a MACD or RSI strategy had to pick which half of its own rules the
+backtest would lie about.
+
+The signals had to come from **completed daily closes**, because that is exactly
+what the live engine reads — so those strategies were forced onto daily bars. But
+a daily replay checks your exit rules **once a day, at the close**. A position
+that dipped straight through your stop-loss at lunchtime and clawed its way back
+by 4pm was scored as a *winner*. Live, it would have been sold. For crypto it was
+worse still: a daily bar covers a full 24 hours of continuous trading, so it hid
+even more. The alternative — replaying on 15-minute bars — fixed the stops but
+computed MACD/RSI off 15-minute closes, which whipsaw and look nothing like live.
+Correct signals with fake stops, or correct stops with the wrong signals.
+
+**Now it does both at once.** A strategy with daily signals *and* a
+price-triggered exit (stop-loss, trailing stop or take-profit — and a hard stop
+is mandatory, so this is most of them) is replayed on **15-minute bars**, with
+MACD and RSI taken from a **separate daily series**. Your stops are checked every
+15 minutes, and the signals are still the ones live would have seen.
+
+The part that matters most is the part you can't see: on any 15-minute bar during
+a given day, the indicator is derived **only from daily closes that finished
+before that day started**. Mid-day, live, today's close hasn't happened yet — so
+the backtest is never allowed to know it either. That rule is enforced in one
+place and pinned by a test that builds a day whose own close *would* flip MACD
+from bearish to bullish, then proves every bar of that day still reads bearish.
+Without it, every backtest of every MACD strategy would quietly flatter itself.
+
+Expect these runs to look **worse** than the old daily ones. That's the point:
+the losses were always there, the daily replay just couldn't see them. The bar
+size shown under the form now says what actually happens ("signals from daily
+closes, stops checked every 15 minutes"), and the "your stops weren't simulated"
+warning correctly stops appearing on these runs. Portfolio (multi-strategy)
+backtests still pick one resolution for now.
+
 ## Fixed: "max holding time" could be silently ignored; crypto loses a fake toggle (2026-07-30)
 
 Two related fixes, one of them a genuine bug, both found by putting the question

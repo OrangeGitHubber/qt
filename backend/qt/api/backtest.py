@@ -158,6 +158,28 @@ def _uses_daily_only_signals(params: dict) -> bool:
     return macd or rsi
 
 
+def _has_price_triggered_exit(params: dict) -> bool:
+    """Whether any exit fires off the PRICE itself — stop-loss, trailing stop or
+    take-profit. These are the rules a once-a-day daily replay cannot simulate:
+    it checks them at the close, so a position that dipped through its stop and
+    recovered is scored a winner."""
+    x = params.get("exit") or {}
+    return any(
+        float(x.get(k, 0) or 0) > 0
+        for k in ("stop_loss_pct", "trailing_stop_pct", "take_profit_pct")
+    )
+
+
+def _mixed_resolution(params: dict) -> bool:
+    """The strategy that needs BOTH resolutions at once: its signals are daily
+    (MACD/RSI — the live engine reads them off completed daily closes) but its
+    exits are price-triggered (a stop only means something intraday). On one bar
+    stream it can have correct signals with fake stops (1Day) or correct stops
+    with twitchy signals (15Min) — never both. Mixed-resolution replay gives it
+    both: indicators from the daily series, entries/exits over 15-minute bars."""
+    return _uses_daily_only_signals(params) and _has_price_triggered_exit(params)
+
+
 # Calendar days of history fetched BEFORE the tested window so the daily
 # indicators (MACD/RSI/ATR) are defined from day one of the window — the backtest
 # equivalent of the live engine's 120-day MACD lookback. ~150 days ≈ 100 trading
@@ -327,12 +349,23 @@ async def run(
     if len(symbols) > 50:
         raise HTTPException(status_code=422, detail="Max 50 symbols per backtest (rate limits).")
 
-    if body.timeframe == "1Day" and json.loads(strategy.params).get("entry", {}).get("require_above_vwap"):
+    params = strategy_dict["params"]
+    # Daily signals + a price-triggered exit → replay INTRADAY with the indicators
+    # taken from the daily series (see _mixed_resolution). This is a property of
+    # the strategy, not of the requested bar size, so it's decided here and the
+    # replay timeframe follows from it.
+    mixed = _mixed_resolution(params)
+
+    if body.timeframe == "1Day" and params.get("entry", {}).get("require_above_vwap"):
         raise HTTPException(
             status_code=422,
             detail="This strategy uses the VWAP rule, which needs intraday bars — pick 1Hour or 15Min.",
         )
-    if body.timeframe in ("15Min", "1Hour") and _uses_daily_only_signals(json.loads(strategy.params)):
+    if body.timeframe in ("15Min", "1Hour") and _uses_daily_only_signals(params) and not mixed:
+        # Still wrong for a MACD/RSI strategy with no price-triggered exit: there
+        # is nothing an intraday replay would buy us, and the indicators would be
+        # computed off intraday closes. Mixed-resolution runs are exempt — they
+        # replay intraday precisely BECAUSE the signals stay daily.
         raise HTTPException(
             status_code=422,
             detail="This strategy uses MACD/RSI, which are daily signals — on intraday bars they "
@@ -343,18 +376,48 @@ async def run(
     # indicators, so MACD/RSI/ATR are defined from day one of the tested window
     # (the sim ignores warm-up bars for trading — see run_backtest's sim_start).
     window_start = datetime.now(timezone.utc) - timedelta(days=body.days)
-    warmup = WARMUP_DAYS if body.timeframe == "1Day" and _needs_warmup(strategy_dict["params"]) else 0
+    needs_warmup = _needs_warmup(params)
+    warmup = WARMUP_DAYS if (body.timeframe == "1Day" or mixed) and needs_warmup else 0
     fetch_start = (window_start - timedelta(days=warmup)).strftime("%Y-%m-%dT%H:%M:%SZ")
     window_start_str = window_start.strftime("%Y-%m-%dT%H:%M:%SZ")
+    # The bar size actually REPLAYED. Mixed resolution always replays 15-minute
+    # bars — the finest the free feed gives — whatever the caller asked for.
+    replay_timeframe = "15Min" if mixed else body.timeframe
+    daily_bars: dict[str, list[dict]] | None = None
     try:
-        bars = await client.historical_bars(symbols, strategy.asset_class, body.timeframe, fetch_start)
+        if mixed:
+            # Two fetches, deliberately different windows: the DAILY series reaches
+            # back over the warm-up so the indicators are defined from day one,
+            # while the intraday series covers only the tested window — 15-minute
+            # crypto bars are 96/symbol/day, so fetching warm-up intraday too would
+            # multiply the download for bars that could never trade.
+            daily_bars = await client.historical_bars(
+                symbols, strategy.asset_class, "1Day", fetch_start
+            )
+            bars = await client.historical_bars(
+                symbols, strategy.asset_class, replay_timeframe, window_start_str
+            )
+        else:
+            bars = await client.historical_bars(
+                symbols, strategy.asset_class, replay_timeframe, fetch_start
+            )
     except AlpacaError as exc:
         raise HTTPException(status_code=502, detail=f"Bar download failed ({exc.status_code}): {exc}")
 
+    # Day bucketing must be the SAME on both sides of a mixed run, or the daily
+    # series and the intraday bars disagree about which day a bar belongs to and
+    # the look-ahead frontier leaks. Crypto daily bars are stamped 00:00Z, so a
+    # crypto mixed run must bucket by the UTC day (as the live engine does);
+    # single-resolution runs keep the historical 'stock' default untouched.
+    market = "crypto" if (mixed and strategy.asset_class == "crypto") else "stock"
     result = backtest.run_backtest(
         strategy_dict, bars, get_risk(session),
         starting_cash=body.starting_cash, spread_pct=body.spread_pct,
-        sim_start=window_start if warmup else None,
+        market=market,
+        # Mixed runs fetch intraday bars for the window only, so sim_start is a
+        # belt-and-braces guard: nothing before the window can ever trade.
+        sim_start=window_start if (warmup or mixed) else None,
+        daily_bars_by_symbol=daily_bars,
     )
     if "error" in result:
         raise HTTPException(status_code=422, detail=result["error"])
@@ -369,7 +432,10 @@ async def run(
     if [market_symbol] != symbols:
         try:
             result["benchmark"] = await backtest.fetch_benchmark(
-                client, strategy.asset_class, window_start_str, result["equity_days"]
+                # Same day bucketing as the run, or the benchmark line lands a day
+                # off the equity curve (only differs for a crypto mixed run).
+                client, strategy.asset_class, window_start_str, result["equity_days"],
+                market=market,
             )
             result["benchmark_symbol"] = market_symbol
         except Exception:
@@ -378,7 +444,12 @@ async def run(
 
     result["strategy_name"] = strategy.name
     result["symbols"] = symbols
-    result["timeframe"] = body.timeframe
+    # `timeframe` is what was REPLAYED (what the stops were checked on); on a
+    # mixed run the signals came from a coarser series, named separately.
+    result["timeframe"] = replay_timeframe
+    result["mixed_resolution"] = mixed
+    if mixed:
+        result["signal_timeframe"] = "1Day"
     result["days"] = body.days
     return result
 

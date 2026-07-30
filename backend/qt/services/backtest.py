@@ -12,6 +12,7 @@ Honest limitations, surfaced in the UI:
 """
 
 import os
+from bisect import bisect_left
 from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -29,6 +30,26 @@ from qt.services.engine import (
 )
 
 ET = ZoneInfo("America/New_York")
+
+
+def _parse_ts(iso: str) -> datetime:
+    return datetime.fromisoformat(iso.replace("Z", "+00:00"))
+
+
+def _et_day(ts: datetime) -> str:
+    return ts.astimezone(ET).strftime("%Y-%m-%d")
+
+
+def _utc_day(ts: datetime) -> str:
+    return ts.astimezone(timezone.utc).strftime("%Y-%m-%d")
+
+
+def _day_fn(market: str):
+    """The day-bucketing function for a market. Stocks bucket by the ET SESSION
+    day (the default — keeps every existing stock backtest byte-identical);
+    crypto is 24/7 and Alpaca's crypto bars are UTC-aligned, so crypto buckets by
+    the UTC calendar day — matching how crypto movers are keyed in the cache."""
+    return _utc_day if market == "crypto" else _et_day
 
 
 def _btlog(day: str, symbol: str, bar: dict, params: dict, decision: str) -> None:
@@ -69,24 +90,77 @@ def _atr_on(params: dict) -> bool:
     return float(a.get("stop_mult", 0) or 0) > 0 or float(a.get("risk_usd", 0) or 0) > 0
 
 
-def _annotate_atr(prepared: dict[str, list[dict]], bars_by_symbol: dict[str, list[dict]], params: dict) -> None:
+def _daily_frontier(
+    series: list[dict], daily_bars: list[dict], day_of
+) -> tuple[list[dict], dict[str, int]]:
+    """Mixed-resolution plumbing, and the ONE place the look-ahead rule is
+    enforced. Returns (a) the DAILY series collapsed to one bar per calendar day,
+    oldest-first, and (b) for every day the INTRADAY series touches, how many
+    daily bars precede it.
+
+    THE RULE: `bisect_left(days, d)` counts the daily bars STRICTLY BEFORE day d
+    (ISO day strings sort lexicographically == chronologically). So an indicator
+    read on any intraday bar of day D is derived from daily closes through D−1
+    only — day D's own daily close, which live hasn't happened yet while the day
+    is still in progress, can never enter the calculation. That is exactly the
+    `closes[:i]` semantic the daily-only annotators use, carried onto an intraday
+    replay: one frontier per day, shared by every bar of that day.
+
+    A symbol with no daily bars yields an empty series and a 0 cutoff for every
+    day → the indicator is None everywhere (never crash, never fall back to
+    intraday-derived values)."""
+    by_day: dict[str, dict] = {}
+    for b in daily_bars:
+        by_day[day_of(_parse_ts(b["t"]))] = b  # defensive: last bar of a day wins
+    days = sorted(by_day)
+    ordered = [by_day[d] for d in days]
+    cutoff = {d: bisect_left(days, d) for d in {b["day"] for b in series}}
+    return ordered, cutoff
+
+
+def _annotate_atr(
+    prepared: dict[str, list[dict]],
+    bars_by_symbol: dict[str, list[dict]],
+    params: dict,
+    daily_bars_by_symbol: dict[str, list[dict]] | None = None,
+    day_of=_et_day,
+) -> None:
     """Attach `atr_pct` to each prepared bar, in place, when the strategy opts
     into ATR. The value at bar i is computed from the raw OHLC bars up to and
     INCLUDING the prior completed bar (raw[:i]) — never the current bar, so there
     is NO look-ahead — mirroring _annotate_macd. The prepared series and the raw
     bars are index-aligned (1:1, same order), so raw[:i] is exactly the completed
     history at prepared bar i. No-op when ATR is off, keeping non-ATR backtests
-    byte-identical."""
+    byte-identical.
+
+    MIXED RESOLUTION: with `daily_bars_by_symbol`, the true range comes from the
+    DAILY bars completed before the bar's own day (see _daily_frontier) while the
+    price denominator stays the intraday close — exactly what the live engine
+    does (completed daily bars, current price)."""
     if not _atr_on(params):
         return
     period = int((params.get("atr") or {}).get("period", 14) or 14)
+    if daily_bars_by_symbol is not None:
+        for symbol, series in prepared.items():
+            ordered, cutoff = _daily_frontier(series, daily_bars_by_symbol.get(symbol) or [], day_of)
+            history = {d: ordered[:k] for d, k in cutoff.items()}  # sliced once per day
+            for bar in series:
+                bar["atr_pct"] = stats.atr_pct(
+                    history[bar["day"]], period, current_price=bar["close"]
+                )
+        return
     for symbol, series in prepared.items():
         raw = bars_by_symbol.get(symbol) or []
         for i, bar in enumerate(series):
             bar["atr_pct"] = stats.atr_pct(raw[:i], period, current_price=bar["close"])
 
 
-def _annotate_macd(prepared: dict[str, list[dict]], params: dict) -> None:
+def _annotate_macd(
+    prepared: dict[str, list[dict]],
+    params: dict,
+    daily_bars_by_symbol: dict[str, list[dict]] | None = None,
+    day_of=_et_day,
+) -> None:
     """Attach `macd_bullish` to each prepared bar, in place, when the strategy
     opts into MACD. The value at bar i is computed from the replayed closes up to
     and INCLUDING the prior completed bar (closes[:i]) — never the current bar,
@@ -97,11 +171,27 @@ def _annotate_macd(prepared: dict[str, list[dict]], params: dict) -> None:
     use the backtest's OWN timeframe bars. For the intended daily/swing use
     (1Day, or 1Hour where a daily MACD and an hourly replay track closely enough)
     this matches the live behaviour; on much finer timeframes the two would
-    diverge, which is why MACD is documented as a daily/swing signal."""
+    diverge, which is why MACD is documented as a daily/swing signal.
+
+    MIXED RESOLUTION: with `daily_bars_by_symbol` the nuance above disappears —
+    the MACD comes from the DAILY closes completed before each intraday bar's own
+    day (see _daily_frontier), exactly like live, while the replay itself runs on
+    the intraday bars so price-triggered exits are real."""
     if not _macd_on(params):
         return
     m = params.get("macd") or {}
     fast, slow, signal = int(m.get("fast", 12)), int(m.get("slow", 26)), int(m.get("signal", 9))
+    if daily_bars_by_symbol is not None:
+        for symbol, series in prepared.items():
+            ordered, cutoff = _daily_frontier(series, daily_bars_by_symbol.get(symbol) or [], day_of)
+            closes = [float(b["c"]) for b in ordered]
+            # One macd() per DAY (the frontier is shared by that day's bars).
+            by_day = {d: stats.macd(closes[:k], fast, slow, signal) for d, k in cutoff.items()}
+            for bar in series:
+                m = by_day[bar["day"]]
+                bar["macd_raw"] = m
+                bar["macd_bullish"] = None if m is None else (m[0] > m[1])
+        return
     for series in prepared.values():
         closes = [b["close"] for b in series]
         for i, bar in enumerate(series):
@@ -124,13 +214,28 @@ def _rsi_on(params: dict) -> bool:
     )
 
 
-def _annotate_rsi(prepared: dict[str, list[dict]], params: dict) -> None:
+def _annotate_rsi(
+    prepared: dict[str, list[dict]],
+    params: dict,
+    daily_bars_by_symbol: dict[str, list[dict]] | None = None,
+    day_of=_et_day,
+) -> None:
     """Attach `rsi` (Wilder 14) to each prepared bar, in place, when the strategy
     opts into an RSI rule. The value at bar i uses the replayed closes up to and
     INCLUDING the prior completed bar (closes[:i]) — no look-ahead — mirroring
     _annotate_macd. No-op when RSI is off, keeping non-RSI backtests byte-
-    identical. Same daily/swing timeframe caveat as MACD."""
+    identical. Same daily/swing timeframe caveat as MACD — and the same
+    MIXED-RESOLUTION escape from it (daily closes completed before the bar's own
+    day; see _daily_frontier)."""
     if not _rsi_on(params):
+        return
+    if daily_bars_by_symbol is not None:
+        for symbol, series in prepared.items():
+            ordered, cutoff = _daily_frontier(series, daily_bars_by_symbol.get(symbol) or [], day_of)
+            closes = [float(b["c"]) for b in ordered]
+            by_day = {d: stats.rsi_from_closes(closes[:k]) for d, k in cutoff.items()}
+            for bar in series:
+                bar["rsi"] = by_day[bar["day"]]
         return
     for series in prepared.values():
         closes = [b["close"] for b in series]
@@ -303,26 +408,6 @@ class SimState:
     last_loss_at: dict[str, datetime] = field(default_factory=dict)
 
 
-def _parse_ts(iso: str) -> datetime:
-    return datetime.fromisoformat(iso.replace("Z", "+00:00"))
-
-
-def _et_day(ts: datetime) -> str:
-    return ts.astimezone(ET).strftime("%Y-%m-%d")
-
-
-def _utc_day(ts: datetime) -> str:
-    return ts.astimezone(timezone.utc).strftime("%Y-%m-%d")
-
-
-def _day_fn(market: str):
-    """The day-bucketing function for a market. Stocks bucket by the ET SESSION
-    day (the default — keeps every existing stock backtest byte-identical);
-    crypto is 24/7 and Alpaca's crypto bars are UTC-aligned, so crypto buckets by
-    the UTC calendar day — matching how crypto movers are keyed in the cache."""
-    return _utc_day if market == "crypto" else _et_day
-
-
 def _prepare(bars: list[dict], day_of=_et_day, rolling_24h: bool = False) -> list[dict]:
     """Annotate each bar with day-gain and a running intraday VWAP. `day_of`
     buckets bars into trading days (ET for stocks, UTC for crypto).
@@ -428,6 +513,8 @@ def run_backtest(
     eligible_by_day: dict[str, set[str]] | None = None,
     market: str = "stock",
     sim_start: datetime | None = None,
+    *,
+    daily_bars_by_symbol: dict[str, list[dict]] | None = None,
 ) -> dict:
     """Pure simulation: strategy dict (same shape as the DB row), raw bars per
     symbol, global risk config. Returns metrics + equity curve + trades.
@@ -447,7 +534,22 @@ def run_backtest(
 
     `market` selects day bucketing: 'stock' (default) keys days by the ET session
     day; 'crypto' keys by the UTC calendar day, matching the crypto movers cache.
-    The default keeps every existing stock backtest byte-identical."""
+    The default keeps every existing stock backtest byte-identical.
+
+    `daily_bars_by_symbol` turns on MIXED-RESOLUTION replay, which resolves the
+    one tension a single bar stream can't: MACD/RSI/ATR must come from COMPLETED
+    DAILY closes (that's how the live engine reads them), but a daily replay calls
+    the exit logic once a day at the close, so a stop-loss or trailing stop can't
+    be simulated — an intraday dip through the stop that recovers by the close is
+    scored a WINNER. When given, `bars_by_symbol` is the INTRADAY replay timeline
+    (entries, exits, equity, day-gain, VWAP) and `daily_bars_by_symbol` is a daily
+    series used ONLY to derive the indicators, per symbol, day by day. The daily
+    series is expected to reach BACK BEFORE the intraday window — that's the
+    indicator warm-up. Look-ahead safety is enforced in _daily_frontier: an
+    intraday bar on day D reads the value derived from daily closes through D−1,
+    never D's own close. A symbol with no daily bars gets None indicators for
+    every bar (the entry/exit rules already treat None as "can't tell").
+    None (the default) = single-resolution replay, byte-identical to before."""
     params = strategy["params"]
     swing = strategy["swing_mode"]
     sizing = strategy["sizing_usd"]
@@ -457,9 +559,13 @@ def run_backtest(
     prepared = {
         s: _prepare(b, day_of, rolling_24h=market == "crypto") for s, b in bars_by_symbol.items() if b
     }
-    _annotate_macd(prepared, params)  # no-op unless the strategy opts into MACD
-    _annotate_atr(prepared, bars_by_symbol, params)  # no-op unless the strategy opts into ATR
-    _annotate_rsi(prepared, params)  # no-op unless the strategy opts into an RSI rule
+    # Each is a no-op unless the strategy opts in. `daily_bars_by_symbol` (None
+    # by default) switches them to the daily series for their values while the
+    # replay below still runs bar by intraday bar — same `day_of` bucketing on
+    # both sides, so the two resolutions agree on what "a day" is.
+    _annotate_macd(prepared, params, daily_bars_by_symbol, day_of)
+    _annotate_atr(prepared, bars_by_symbol, params, daily_bars_by_symbol, day_of)
+    _annotate_rsi(prepared, params, daily_bars_by_symbol, day_of)
     # chronological event stream across all symbols
     events: dict[datetime, dict[str, dict]] = {}
     for symbol, series in prepared.items():
@@ -885,6 +991,9 @@ def run_portfolio_backtest(
         for sid in strat_by_id
     }
     # Each strategy carries its own MACD/ATR periods/toggles; annotate its own bars.
+    # (Mixed-resolution replay — daily signals over an intraday timeline — is
+    # single-strategy only for now: run_backtest takes daily_bars_by_symbol, this
+    # merged-timeline run does not. A portfolio still picks ONE resolution.)
     for sid, prepared in prepared_by_strategy.items():
         _annotate_macd(prepared, strat_by_id[sid]["params"])
         _annotate_atr(prepared, bars_by_strategy.get(sid) or {}, strat_by_id[sid]["params"])

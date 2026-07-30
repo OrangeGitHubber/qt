@@ -472,7 +472,13 @@ export interface BacktestResult {
   replay_top_n?: number;
   universe_size?: number;
   days_replayed?: number;
+  // The bar size actually REPLAYED — what the entries and exits were checked on.
   timeframe: string;
+  // Mixed-resolution run: the indicators came from COMPLETED DAILY closes (like
+  // the live engine) while entries/exits replayed on `timeframe` bars, so
+  // price-triggered stops were simulated for real. Absent/false = one resolution.
+  mixed_resolution?: boolean;
+  signal_timeframe?: string; // where MACD/RSI came from on a mixed run ("1Day")
   days: number;
   starting_cash: number;
   final_equity: number;
