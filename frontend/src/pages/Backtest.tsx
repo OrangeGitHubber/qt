@@ -808,8 +808,10 @@ export default function Backtest() {
               below it. The universe is defined by the strategy — not chosen here. */}
           <div className="filter-grid backtest-strats">
             <div className="bt-strat-col">
-              <label>
-                <span className="field-cap">Strategy</span>
+              {/* Selector sized to its content, with Edit right beside it — a
+                  strategy name doesn't need a full-column-wide control. */}
+              <span className="field-cap">Strategy</span>
+              <div className="picker-row">
                 <select value={strategyId ?? ""} onChange={(e) => setStrategyId(Number(e.target.value))} required>
                   {strategies.length === 0 && <option value="">— create a strategy first —</option>}
                   {strategies.map((s) => (
@@ -818,24 +820,24 @@ export default function Backtest() {
                     </option>
                   ))}
                 </select>
-              </label>
+                {strategy && (
+                  <button
+                    type="button"
+                    className="small btn-icon btn-ghost"
+                    onClick={() => requestNav({ tab: "strategies", strategyId: strategy.id })}
+                    title="Open this strategy in the editor"
+                  >
+                    <IconEdit />
+                    Edit
+                  </button>
+                )}
+              </div>
               <UniverseChips uni={uniA} />
-              {strategy && (
-                <button
-                  type="button"
-                  className="small btn-icon btn-ghost"
-                  onClick={() => requestNav({ tab: "strategies", strategyId: strategy.id })}
-                  title="Open this strategy in the editor"
-                >
-                  <IconEdit />
-                  Edit this strategy
-                </button>
-              )}
             </div>
             {mode === "compare" && (
               <div className="bt-strat-col">
-                <label>
-                  <span className="field-cap">Compare against</span>
+                <span className="field-cap">Compare against</span>
+                <div className="picker-row">
                   <select value={compareId ?? ""} onChange={(e) => setCompareId(e.target.value ? Number(e.target.value) : null)}>
                     <option value="">— pick a strategy —</option>
                     {strategies
@@ -846,19 +848,19 @@ export default function Backtest() {
                         </option>
                       ))}
                   </select>
-                </label>
+                  {compareStrat && (
+                    <button
+                      type="button"
+                      className="small btn-icon btn-ghost"
+                      onClick={() => requestNav({ tab: "strategies", strategyId: compareStrat.id })}
+                      title="Open this strategy in the editor"
+                    >
+                      <IconEdit />
+                      Edit
+                    </button>
+                  )}
+                </div>
                 {compareStrat && <UniverseChips uni={uniB} />}
-                {compareStrat && (
-                  <button
-                    type="button"
-                    className="small btn-icon btn-ghost"
-                    onClick={() => requestNav({ tab: "strategies", strategyId: compareStrat.id })}
-                    title="Open this strategy in the editor"
-                  >
-                    <IconEdit />
-                    Edit this strategy
-                  </button>
-                )}
               </div>
             )}
           </div>

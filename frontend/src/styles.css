@@ -1326,6 +1326,51 @@ td.detail p {
   color: #fff;
 }
 
+/* Two-line pill: bold-ish name + a quieter line saying what it does, for
+   options whose name alone isn't self-explanatory ("Scanner" / today's risers). */
+.segmented button .seg-sub {
+  display: block;
+  font-size: 0.72rem;
+  font-weight: 400;
+  opacity: 0.72;
+  margin-top: 0.1rem;
+  white-space: nowrap;
+}
+
+/* A 5-option group can't fit one row on narrow cards — let it wrap. Borders
+   move to each button so wrapped rows keep clean edges. */
+.segmented-wrap {
+  flex-wrap: wrap;
+  border: none;
+  gap: 0.4rem;
+  background: transparent;
+}
+.segmented-wrap button {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  text-align: left;
+}
+.segmented-wrap button + button {
+  border-left: 1px solid var(--border);
+}
+
+/* A select sized to its content with an action button beside it. */
+.picker-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.3rem;
+  flex-wrap: wrap;
+}
+.picker-row select {
+  width: auto;
+  max-width: 22rem;
+  margin-top: 0;
+}
+.picker-row button {
+  margin-top: 0;
+}
+
 /* Strategy builder — outlined sections + compact numeric params so the form
    reads as grouped stages, not one long stack of full-width text boxes. */
 .builder-sec {

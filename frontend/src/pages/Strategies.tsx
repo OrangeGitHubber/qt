@@ -100,20 +100,25 @@ function Param({
   );
 }
 
-// A two-option segmented "slider" (used for Asset class and Trading style).
+// A segmented pill group — two options as a "slider" (Asset class, Trading
+// style) or a wrapping multi-option set with sub-labels (Universe).
 function Segmented<T extends string>({
   value,
   onChange,
   options,
   ariaLabel,
+  wrap = false,
 }: {
   value: T;
   onChange: (v: T) => void;
-  options: { value: T; label: string }[];
+  // `sub` renders a smaller second line under the label — for options whose
+  // name alone doesn't say what they do (e.g. "Scanner" / today's risers).
+  options: { value: T; label: string; sub?: string }[];
   ariaLabel: string;
-}) {
+  wrap?: boolean; // let a 5-option group wrap instead of overflowing the card
+}): ReactNode {
   return (
-    <div className="segmented" role="group" aria-label={ariaLabel}>
+    <div className={`segmented${wrap ? " segmented-wrap" : ""}`} role="group" aria-label={ariaLabel}>
       {options.map((o) => (
         <button
           key={o.value}
@@ -123,6 +128,7 @@ function Segmented<T extends string>({
           onClick={() => onChange(o.value)}
         >
           {o.label}
+          {o.sub && <span className="seg-sub">{o.sub}</span>}
         </button>
       ))}
     </div>
@@ -624,20 +630,23 @@ function Editor({
           Universe <InfoTip k="universe" />
         </h4>
         <p className="sec-sub">Where this strategy looks for things to buy.</p>
+        <div className="field">
+          <span className="field-cap">Look in</span>
+          <Segmented
+            value={s.universe as NonNullable<StrategyRow["universe"]>}
+            ariaLabel="Universe"
+            wrap
+            onChange={(v) => setS({ ...s, universe: v })}
+            options={[
+              { value: "scanner", label: "Scanner", sub: "today's risers" },
+              { value: "watchlist", label: "Watchlist", sub: "your list only" },
+              { value: "both", label: "Scanner + watchlist", sub: "both sources" },
+              { value: "basket", label: "Basket", sub: "sector or theme" },
+              { value: "custom", label: "Specific symbols", sub: "pick your own" },
+            ]}
+          />
+        </div>
         <div className="filter-grid">
-          <label>
-            Look in
-            <select
-              value={s.universe}
-              onChange={(e) => setS({ ...s, universe: e.target.value as StrategyRow["universe"] })}
-            >
-              <option value="scanner">Scanner (today's risers)</option>
-              <option value="watchlist">Watchlist only</option>
-              <option value="both">Scanner + watchlist</option>
-              <option value="basket">Basket (sector/theme)</option>
-              <option value="custom">Specific symbols (pick your own)</option>
-            </select>
-          </label>
           {s.universe === "basket" && (
             <label>
               Basket
