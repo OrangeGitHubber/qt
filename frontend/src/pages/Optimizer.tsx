@@ -50,6 +50,53 @@ function pct(v: number | null | undefined): string {
   return v != null ? `${v}%` : "—";
 }
 
+// --- Which bar size this strategy's rules demand (mirrors the backend guards in
+// qt/api/backtest.py: _uses_daily_only_signals / _has_price_triggered_exit /
+// _mixed_resolution, and the same helpers on the Backtest page). ---
+
+// VWAP and an entry-time window can only be evaluated on intraday bars.
+function wantsIntradayRules(s: StrategyRow | undefined): boolean {
+  const e = s?.params?.entry;
+  return !!(e?.require_above_vwap || (e?.entry_window_start && e?.entry_window_end));
+}
+
+// MACD/RSI are DAILY signals — the live engine reads them off completed daily closes.
+function wantsDailySignals(s: StrategyRow | undefined): boolean {
+  if (!s || wantsIntradayRules(s)) return false;
+  const e = s.params?.entry;
+  const x = s.params?.exit;
+  return !!(
+    e?.require_macd_bullish ||
+    x?.exit_on_macd_bearish ||
+    (e?.rsi_min ?? 0) > 0 ||
+    (e?.rsi_max ?? 0) > 0 ||
+    (x?.exit_rsi_above ?? 0) > 0
+  );
+}
+
+// A price-triggered exit — stop-loss, trailing stop or take-profit. Three of the
+// four knobs the search tunes ARE these, and a once-a-day replay checks them only
+// at the close, so on daily bars a tight stop looks nearly free.
+function hasPriceExit(s: StrategyRow | undefined): boolean {
+  const x = s?.params?.exit;
+  return (x?.stop_loss_pct ?? 0) > 0 || (x?.trailing_stop_pct ?? 0) > 0 || (x?.take_profit_pct ?? 0) > 0;
+}
+
+// MIXED RESOLUTION: daily signals AND a price-triggered exit. One bar stream
+// can't serve both, so the search replays 15-minute bars while MACD/RSI still
+// come from completed daily closes.
+function isMixedResolution(s: StrategyRow | undefined): boolean {
+  return wantsDailySignals(s) && hasPriceExit(s);
+}
+
+// The bar size a strategy is actually searched on, so the form never offers
+// something the backend will override.
+function deriveSearchTimeframe(s: StrategyRow | undefined): "1Day" | "15Min" {
+  if (isMixedResolution(s)) return "15Min";
+  if (wantsDailySignals(s)) return "1Day";
+  return wantsIntradayRules(s) ? "15Min" : "1Day";
+}
+
 // Spell out EXACTLY which symbols the search will run on, mirroring the backend's
 // _resolve_symbols rules, so there's no mystery about the universe. `warn` = the
 // surprising / fallback cases the user should notice.
@@ -155,23 +202,13 @@ export default function Optimizer() {
   const sweepPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const strategy = strategies.find((s) => s.id === strategyId);
-  const stratNeedsIntraday = !!(
-    strategy?.params?.entry?.require_above_vwap ||
-    (strategy?.params?.entry?.entry_window_start && strategy?.params?.entry?.entry_window_end)
-  );
-  // MACD/RSI are daily signals — an intraday search is unfaithful to live, so
-  // lock those strategies to 1 Day (the mirror of stratNeedsIntraday for VWAP).
-  const entryP = strategy?.params?.entry;
-  const exitP = strategy?.params?.exit;
-  const stratWantsDaily =
-    !stratNeedsIntraday &&
-    !!(
-      entryP?.require_macd_bullish ||
-      exitP?.exit_on_macd_bearish ||
-      (entryP?.rsi_min ?? 0) > 0 ||
-      (entryP?.rsi_max ?? 0) > 0 ||
-      (exitP?.exit_rsi_above ?? 0) > 0
-    );
+  const stratNeedsIntraday = wantsIntradayRules(strategy);
+  // MACD/RSI are daily signals — an intraday search computes them off intraday
+  // closes, which whipsaws and won't match live. But a strategy that ALSO has a
+  // stop runs MIXED: 15-minute replay, signals still from daily closes. Only a
+  // daily-signal strategy with nothing price-triggered stays locked to 1 Day.
+  const stratMixed = isMixedResolution(strategy);
+  const stratLockedDaily = wantsDailySignals(strategy) && !stratMixed;
   const running = status?.running ?? false;
   const result: OptimizerResult | null = status && !status.running ? status.result : null;
   const sweepRunning = sweepStatus?.running ?? false;
@@ -224,13 +261,11 @@ export default function Optimizer() {
       const isScanner = strat.universe === "scanner";
       setScannerReplay(isScanner);
       if (isScanner) setReplayTopN(strat.top_n || 10);
-      // VWAP and an entry-time window are INTRADAY rules — they can't be evaluated
-      // on daily bars (every entry gets rejected, so the whole search returns 0
-      // trades). Default such strategies to 15-minute bars so the search is valid;
+      // The bar size follows the strategy's own rules: VWAP / an entry-time window
+      // are INTRADAY (on daily bars every entry is rejected and the search returns
+      // 0 trades); MACD/RSI with a stop is MIXED (15-minute replay, daily signals);
       // otherwise daily (fast) is the sensible default.
-      const e = strat.params?.entry;
-      const needsIntraday = !!(e?.require_above_vwap || (e?.entry_window_start && e?.entry_window_end));
-      setTimeframe(needsIntraday ? "15Min" : "1Day");
+      setTimeframe(deriveSearchTimeframe(strat));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [strategyId, strategies]);
@@ -484,18 +519,35 @@ export default function Optimizer() {
               <select
                 value={timeframe}
                 onChange={(e) => setTimeframe(e.target.value)}
-                disabled={scannerReplay}
-                title={scannerReplay ? "Ignored in scanner replay — the cache decides (15-min if swept, else daily)" : undefined}
+                disabled={scannerReplay || stratMixed}
+                title={
+                  scannerReplay
+                    ? "Ignored in scanner replay — the cache decides (15-min if swept, else daily)"
+                    : stratMixed
+                      ? "Fixed by the strategy: daily signals + a stop means a 15-minute replay"
+                      : undefined
+                }
               >
                 {/* No 1-hour option, same as the backtest: 15-min is strictly the
                     more faithful intraday simulation (the live engine ticks ~60s). */}
-                <option value="1Day">1 day (fast — recommended for a search)</option>
-                <option value="15Min" disabled={stratWantsDaily}>15 minutes (slower, precise)</option>
+                <option value="1Day" disabled={stratMixed}>1 day (fast — recommended for a search)</option>
+                <option value="15Min" disabled={stratLockedDaily}>15 minutes (slower, precise)</option>
               </select>
-              {stratWantsDaily && !scannerReplay && (
+              {stratLockedDaily && !scannerReplay && (
                 <span className="field-help warn">
-                  <IconWarn className="icon-inline" /> This strategy uses MACD/RSI (daily signals), so the search is
-                  locked to 1 Day — on intraday bars they whipsaw and won't match the live engine.
+                  <IconWarn className="icon-inline" /> This strategy uses MACD/RSI (daily signals) and has no stop /
+                  trailing stop / take-profit, so the search is locked to 1 Day — on intraday bars the signals whipsaw
+                  and won't match the live engine, and there's no price-triggered exit an intraday replay could test.
+                </span>
+              )}
+              {stratMixed && !scannerReplay && (
+                <span className="field-help">
+                  This strategy has <strong>daily signals (MACD/RSI) and a price-triggered stop</strong>, so the search
+                  runs <strong>mixed resolution</strong>: entries and exits replay on 15-minute bars while MACD/RSI keep
+                  coming from <em>completed daily closes</em>, exactly as the live engine reads them. That matters here —
+                  three of the four searched knobs (trailing stop, stop-loss, take-profit) only trigger intraday, so on
+                  daily bars a tight stop looks almost free and the search would drift toward stops that whipsaw for
+                  real. Expect it to take <strong>much longer</strong>: ~26× as many bars per day to replay.
                 </span>
               )}
               {stratNeedsIntraday && !scannerReplay && (
@@ -572,6 +624,14 @@ export default function Optimizer() {
             ) : (
               <p className="hint">
                 Tested on: <strong>{result.symbols.join(", ")}</strong>
+              </p>
+            )}
+            {result.mixed_resolution && (
+              <p className="hint">
+                <strong>Stops tested on 15-minute bars, signals from daily closes.</strong> MACD/RSI came from{" "}
+                <em>completed</em> daily closes (no peek at the day in progress), while every searched stop-loss,
+                trailing stop and take-profit was checked against real intraday prices — so a tight stop was scored on
+                whether it would actually have been hit, not on where the day happened to close.
               </p>
             )}
             {result.no_trade_reason && (
@@ -749,6 +809,15 @@ export default function Optimizer() {
           of history each search never saw. A winner with no out-of-sample trades ranks last as untested. Every row is a{" "}
           <strong>hypothesis to shadow- and paper-trade</strong>, never a verdict; the numbers come from the backtester,
           not from anyone's opinion.
+        </p>
+        <p className="hint warn">
+          <IconWarn className="icon-inline" /> <strong>The sweep ranks on daily bars, so its stop values are
+          indicative.</strong>{" "}
+          A daily replay checks a stop once a day at the close, so a position that dipped through its stop and recovered
+          is scored a winner — which makes a tight stop look almost free. The <em>ranking</em> survives that (every
+          basket is scored the same way), but before trusting a row's stop-loss or trailing stop, re-run that basket
+          through the single-strategy search above, where a strategy with a price-triggered exit is replayed on
+          15-minute bars. Sweeping every basket intraday would mean an enormous download, which is why it stays daily.
         </p>
         <div className="filter-grid">
           <label>

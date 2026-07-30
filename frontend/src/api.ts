@@ -687,7 +687,10 @@ export interface OptimizerResult {
   symbols: string[];
   warnings: string[];
   strategy_name?: string;
-  timeframe?: string;
+  timeframe?: string; // the bar size REPLAYED (what the searched stops were checked on)
+  // Mixed resolution: signals from `signal_timeframe` (daily), replay on `timeframe`.
+  mixed_resolution?: boolean;
+  signal_timeframe?: string;
   days?: number;
   scanner_replay?: boolean;
   replay_intraday?: boolean;

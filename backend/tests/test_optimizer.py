@@ -307,3 +307,82 @@ def test_eligible_by_day_is_threaded_to_every_backtest():
     # And the plain (fixed-universe) path passes None, unchanged.
     _, fake2 = _run()
     assert all(e is None for e in fake2.eligible_seen)
+
+
+class MixedFake:
+    """A fake backtest fn for MIXED-RESOLUTION searches: records the intraday
+    replay window it was handed AND the daily indicator series that came with it,
+    so the tests can prove the daily series was never sliced up."""
+
+    def __init__(self):
+        self.calls: list[dict] = []
+
+    def __call__(
+        self, strategy, bars_by_symbol, risk, *,
+        starting_cash=5000.0, spread_pct=0.1, market="stock", eligible_by_day=None,
+        sim_start=None, daily_bars_by_symbol=None,
+    ):
+        ts = sorted(b["t"] for series in bars_by_symbol.values() for b in series)
+        self.calls.append({
+            "window": (ts[0], ts[-1]),
+            "daily": daily_bars_by_symbol,
+            "sim_start": sim_start,
+        })
+        return {
+            "net_pnl_pct": 5.0, "trades": 10, "win_rate": 55.0,
+            "return_on_deployed_pct": 7.5, "max_drawdown_pct": 3.0,
+            "hold_benchmark": [0.0, 2.0], "hold_benchmark_label": "TEST",
+        }
+
+
+def test_mixed_resolution_daily_bars_are_never_split():
+    # THE REGRESSION THIS PINS: split_in_out_of_sample splits the INTRADAY replay
+    # timeline. The daily series is the indicator SOURCE, not a timeline — slice it
+    # and the out-of-sample half loses its MACD/RSI history, every indicator comes
+    # back None, and the honest verdict number silently collapses to "no trades".
+    # So BOTH slices must receive the WHOLE daily series (look-ahead safety is
+    # enforced downstream by _daily_frontier's per-day cutoff, not by slicing).
+    fake = MixedFake()
+    intraday = {"AAA": _bars(60, start="2026-03-01T14:00:00Z")}
+    daily = {"AAA": _bars(200, start="2025-09-01T14:00:00Z")}  # reaches back over warm-up
+    optimizer.optimize(
+        BASE_STRATEGY, intraday, {}, iterations=6, seed=5,
+        backtest_fn=fake, daily_bars_by_symbol=daily,
+    )
+    assert fake.calls, "the fake was never called"
+    # Both an in-sample and an out-of-sample slice really ran (two distinct windows).
+    assert len({c["window"] for c in fake.calls}) == 2
+    for call in fake.calls:
+        got = call["daily"]
+        assert got is not None, "a slice ran with no daily indicator source"
+        assert list(got) == list(daily)
+        # Whole series, both ends: a split would trim one or the other.
+        assert len(got["AAA"]) == len(daily["AAA"])
+        assert got["AAA"][0]["t"] == daily["AAA"][0]["t"]
+        assert got["AAA"][-1]["t"] == daily["AAA"][-1]["t"]
+
+
+def test_mixed_resolution_daily_bars_reach_the_out_of_sample_slice():
+    # Same guarantee, aimed squarely at the LATER slice — the one that produces the
+    # only number the optimizer treats as real. Identified by its own sim_start
+    # (the split boundary), not by position in the call list.
+    fake = MixedFake()
+    intraday = {"AAA": _bars(60, start="2026-03-01T14:00:00Z")}
+    daily = {"AAA": _bars(200, start="2025-09-01T14:00:00Z")}
+    window_start = datetime.fromisoformat(intraday["AAA"][0]["t"].replace("Z", "+00:00"))
+    optimizer.optimize(
+        BASE_STRATEGY, intraday, {}, iterations=6, seed=5, backtest_fn=fake,
+        daily_bars_by_symbol=daily, sim_start=window_start,
+    )
+    oos_calls = [c for c in fake.calls if c["sim_start"] != window_start]
+    assert oos_calls, "no out-of-sample slice ran"
+    for call in oos_calls:
+        assert len(call["daily"]["AAA"]) == len(daily["AAA"])
+
+
+def test_daily_bars_none_keeps_the_plain_backtest_signature():
+    # Backward-compat: with no daily series the kwarg is not passed at all, so a
+    # fake (or any caller) with the pre-mixed signature keeps working untouched.
+    result, fake = _run()  # RecordingFake has NO daily_bars_by_symbol parameter
+    assert fake.combos_seen
+    assert result["tested_combinations"] >= 1

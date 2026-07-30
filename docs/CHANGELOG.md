@@ -3,6 +3,42 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## The optimizer stops tuning your stops against a replay that can't see them (2026-07-30)
+
+Yesterday the backtest learned to run mixed resolution — 15-minute bars for the
+stops, daily closes for the MACD/RSI signals. The **optimizer** hadn't caught up,
+and that mattered more than it sounds.
+
+The search tunes four knobs: minimum gain today, trailing stop, stop-loss and
+take-profit. **Three of those four only ever trigger intraday.** But a MACD or RSI
+strategy was flatly refused on intraday bars and forced onto daily ones — where a
+stop is only checked at the closing price. On daily bars a 2% stop almost never
+fires, so tightness looked practically free, and the search happily drifted toward
+stops that would have whipsawed you out repeatedly in real trading. It wasn't just
+inconsistent with the backtest; it was quietly recommending bad numbers.
+
+**Now the search runs mixed resolution too.** A strategy with daily signals *and*
+a price-triggered exit gets the same deal the backtest gives it: entries and exits
+replayed on 15-minute bars, MACD and RSI still read off completed daily closes.
+Every stop the search tries is now scored on whether it would genuinely have been
+hit. The old "use 1 Day" rejection still applies to a MACD/RSI strategy with no
+stop at all — there, an intraday replay would buy you nothing and only make the
+signals twitchy. The bar-size dropdown says which of the two you're getting, and
+warns that a mixed search takes a good deal longer (~26× the bars per day).
+
+One thing you can't see but should know about: the daily signal history is handed
+**whole** to both halves of the in-sample / out-of-sample split. Only the
+15-minute replay timeline is cut in two. Split the daily series as well and the
+out-of-sample half — the only number the optimizer treats as real — would lose its
+MACD/RSI history and silently report "no trades". Two tests now fail loudly if
+anyone ever does that.
+
+The **basket sweep** still runs on daily bars, and now says so on the page: 12
+baskets × 25 symbols of 15-minute bars is an enormous download. Its *ranking* is
+still fair (every basket is scored the same way), but treat a row's stop values as
+indicative and re-run that basket through the single-strategy search before
+trusting them.
+
 ## Backtests can now be honest about signals AND stops at the same time (2026-07-30)
 
 Until today a MACD or RSI strategy had to pick which half of its own rules the

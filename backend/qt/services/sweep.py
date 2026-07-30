@@ -11,6 +11,16 @@ Anti-overfitting posture is inherited wholesale from the optimizer: the split,
 the plateau sweep, the combination count, and its warnings all ride along on
 each row. A row whose winner made no out-of-sample trades is ranked LAST no
 matter its numbers — an untested hypothesis can't sit above tested ones.
+
+KNOWN LIMITATION — the sweep ranks on DAILY bars. Two of the four searched knobs
+(stop_loss_pct, trailing_stop_pct) are price-triggered exits, and a daily replay
+checks them once a day at the close: a position that dipped through its stop and
+recovered is scored a winner, so a tight stop looks nearly free here. The RANKING
+(which theme beat SPY) survives that — every basket is scored the same way — but
+the per-row STOP VALUES are indicative only. Re-optimize the basket you like on
+the single-strategy optimizer, which replays intraday when the strategy has a
+price-triggered exit, before trusting its stops. This is deliberate, not an
+oversight: 12 baskets x 25 symbols of 15-minute bars is an enormous download.
 """
 
 from collections.abc import Callable

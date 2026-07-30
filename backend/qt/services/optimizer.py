@@ -239,6 +239,7 @@ def optimize(
     backtest_fn: BacktestFn = run_backtest,
     progress: ProgressFn | None = None,
     sim_start: datetime | None = None,
+    daily_bars_by_symbol: dict[str, list[dict]] | None = None,
 ) -> dict:
     """Search the momentum param space and return the out-of-sample-validated
     findings.
@@ -255,7 +256,15 @@ def optimize(
          Only these numbers are treated as real.
 
     `backtest_fn` defaults to the real backtester but can be injected (tests pass
-    a fake — no network). Returns the dict documented at the bottom."""
+    a fake — no network). Returns the dict documented at the bottom.
+
+    `daily_bars_by_symbol` turns on MIXED-RESOLUTION search: `bars_by_symbol` is
+    then the INTRADAY replay timeline (so the searched stop-loss / trailing stop /
+    take-profit are checked against real intraday prices instead of once a day at
+    the close) while the indicators come from the daily series. Three of the four
+    core knobs are price-triggered exits, so without this a daily replay makes a
+    tight stop look almost free — it only ever triggers on a close — and the
+    search drifts toward stops that would whipsaw in real trading."""
     rng = random.Random(seed)
 
     in_sample, out_sample, t0, boundary, t1 = split_in_out_of_sample(
@@ -271,6 +280,20 @@ def optimize(
     in_kw = {} if sim_start is None else {"sim_start": sim_start}
     out_kw = {} if sim_start is None else {"sim_start": boundary}
 
+    # MIXED RESOLUTION — the daily series is NEVER SPLIT. split_in_out_of_sample
+    # divides the INTRADAY replay timeline by time; the daily bars are not a replay
+    # timeline at all, they are the indicator SOURCE, so both slices get the WHOLE
+    # series. That stays look-ahead-safe because _daily_frontier derives a per-day
+    # cutoff from whichever intraday series it is handed and only ever uses daily
+    # bars strictly BEFORE each bar's own day — later daily bars in the series are
+    # unreachable. Split them and the out-of-sample slice would lose its MACD/RSI
+    # history, every indicator would come back None, and the honest verdict number
+    # would silently collapse to "no trades". Passed only when given, so injected
+    # test fakes with the plain signature stay callable (same as in_kw/out_kw).
+    daily_kw = (
+        {} if daily_bars_by_symbol is None else {"daily_bars_by_symbol": daily_bars_by_symbol}
+    )
+
     # In scanner-replay mode a symbol may only ENTER on the days it was a top-N
     # riser. The same eligible-by-day map is passed to both slices: run_backtest
     # only ever looks up the days present in the bars it's given, so the early
@@ -281,7 +304,7 @@ def optimize(
         return backtest_fn(
             strat, in_sample, risk,
             starting_cash=starting_cash, spread_pct=spread_pct, market=market,
-            eligible_by_day=eligible_by_day, **in_kw,
+            eligible_by_day=eligible_by_day, **in_kw, **daily_kw,
         )
 
     def run_out_of_sample(combo: dict) -> dict:
@@ -289,7 +312,8 @@ def optimize(
         return backtest_fn(
             strat, out_sample, risk,
             starting_cash=starting_cash, spread_pct=spread_pct, market=market,
-            eligible_by_day=eligible_by_day, **out_kw,
+            # NOT split: the same WHOLE daily series the in-sample slice got.
+            eligible_by_day=eligible_by_day, **out_kw, **daily_kw,
         )
 
     # ---- 1 & 2: random search over the coarse grid (in-sample only) ----

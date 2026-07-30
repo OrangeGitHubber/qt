@@ -109,6 +109,7 @@ async def _run_search(
     prebuilt_bars: dict | None = None,
     eligible_by_day: dict | None = None,
     replay_extra: dict | None = None,
+    mixed: bool = False,
 ) -> None:
     """Background worker: get the bars once, then run the search in a worker
     thread (it is CPU-heavy — dozens of full backtests — so it must not block the
@@ -118,7 +119,11 @@ async def _run_search(
     passes `prebuilt_bars` (read offline from the cache) + `eligible_by_day` (each
     day's top-N risers) so every backtest can only ENTER a symbol on the days it
     actually rose — the search then optimizes the strategy against its real
-    universe, not a stand-in watchlist."""
+    universe, not a stand-in watchlist.
+
+    `mixed` = MIXED-RESOLUTION search (see qt.api.backtest._mixed_resolution): two
+    fetches, a daily series for the indicators and 15-minute bars for the replay,
+    so the searched stops are tested against real intraday prices."""
     # Warm-up: a daily MACD/RSI/ATR search needs history BEFORE the window so the
     # indicators are defined from the first traded bar — in BOTH the in-sample and
     # out-of-sample slices (the split gives each its own warm-up prefix). Without
@@ -127,18 +132,35 @@ async def _run_search(
     from qt.api.backtest import WARMUP_DAYS, _needs_warmup
 
     sim_start: datetime | None = None
+    daily_bars: dict[str, list[dict]] | None = None
     try:
         if prebuilt_bars is not None:
             bars = prebuilt_bars
         else:
             _progress.phase = "downloading bars"
             window_start = datetime.now(timezone.utc) - timedelta(days=days)
-            warmup = WARMUP_DAYS if timeframe == "1Day" and _needs_warmup(strategy_dict["params"]) else 0
+            needs_warmup = _needs_warmup(strategy_dict["params"])
+            warmup = WARMUP_DAYS if (timeframe == "1Day" or mixed) and needs_warmup else 0
             start = (window_start - timedelta(days=warmup)).strftime("%Y-%m-%dT%H:%M:%SZ")
-            bars = await client.historical_bars(symbols, asset_class, timeframe, start)
+            if mixed:
+                # Two fetches with deliberately different windows, exactly like the
+                # mixed backtest: the DAILY series reaches back over the warm-up so
+                # the indicators are defined from day one, while the 15-minute
+                # series covers only the tested window (96 bars/symbol/day for
+                # crypto — fetching warm-up intraday too would multiply the
+                # download for bars that could never trade).
+                daily_bars = await client.historical_bars(symbols, asset_class, "1Day", start)
+                bars = await client.historical_bars(
+                    symbols, asset_class, "15Min",
+                    window_start.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                )
+            else:
+                bars = await client.historical_bars(symbols, asset_class, timeframe, start)
             if not any(bars.get(s) for s in symbols):
                 raise ValueError("No historical bars for those symbols/timeframe.")
-            sim_start = window_start if warmup else None
+            # A mixed run always gates trading at the window start: its intraday
+            # bars begin there, and the daily series before it is warm-up only.
+            sim_start = window_start if (warmup or mixed) else None
 
         _progress.phase = "searching"
 
@@ -159,9 +181,15 @@ async def _run_search(
             eligible_by_day=eligible_by_day,
             progress=on_progress,
             sim_start=sim_start,
+            daily_bars_by_symbol=daily_bars,
         )
         result["strategy_name"] = _progress.strategy_name
+        # `timeframe` is what was REPLAYED (what the searched stops were checked
+        # on); on a mixed run the signals came from a coarser series, named apart.
         result["timeframe"] = timeframe
+        result["mixed_resolution"] = mixed
+        if mixed:
+            result["signal_timeframe"] = "1Day"
         result["days"] = days
         if replay_extra:
             result.update(replay_extra)
@@ -205,6 +233,7 @@ async def start_optimize(
     eligible_by_day: dict | None = None
     replay_extra: dict | None = None
     timeframe = body.timeframe
+    mixed = False
     if body.scanner_replay:
         from qt.api.backtest import load_scanner_replay_dataset
 
@@ -246,14 +275,28 @@ async def start_optimize(
         # The mirror of the above: MACD/RSI are DAILY signals live, so an intraday
         # search computes a twitchy intraday MACD/RSI that whipsaws and won't match
         # the live engine — lock the search to 1 Day (same as the backtest).
-        from qt.api.backtest import _uses_daily_only_signals
+        #
+        # UNLESS the strategy is MIXED RESOLUTION (daily signals AND a price-
+        # triggered exit). Three of the four searched knobs — trailing stop,
+        # stop-loss, take-profit — are price-triggered exits, and a once-a-day
+        # replay checks them only at the close, so a tight stop looks nearly free
+        # and the search drifts toward stops that would whipsaw for real. Such a
+        # strategy replays 15-minute bars with MACD/RSI still taken from completed
+        # daily closes — the same deal the backtest gives it.
+        from qt.api.backtest import _mixed_resolution, _uses_daily_only_signals
 
-        if body.timeframe in ("15Min", "1Hour") and _uses_daily_only_signals(json.loads(strategy.params)):
+        params = json.loads(strategy.params)
+        mixed = _mixed_resolution(params)
+        if body.timeframe in ("15Min", "1Hour") and _uses_daily_only_signals(params) and not mixed:
             raise HTTPException(
                 status_code=422,
                 detail="This strategy uses MACD/RSI, which are daily signals — an intraday search "
                 "whipsaws and won't match the live engine. Use 1 Day.",
             )
+        if mixed:
+            # A property of the STRATEGY, not of what was asked for: the replay is
+            # 15-minute whatever timeframe the caller sent.
+            timeframe = "15Min"
 
     # Read everything the (session-less) background task needs NOW, while the
     # request's DB session is open — pass plain dicts/lists into the task.
@@ -281,11 +324,13 @@ async def start_optimize(
             client, strategy_dict, risk, symbols, strategy.asset_class,
             timeframe, body.days, body.iterations, body.starting_cash, body.spread_pct,
             prebuilt_bars=prebuilt_bars, eligible_by_day=eligible_by_day, replay_extra=replay_extra,
+            mixed=mixed,
         )
     )
     return {
         "ok": True, "started": True, "symbols": symbols, "iterations": body.iterations,
-        "scanner_replay": body.scanner_replay,
+        "scanner_replay": body.scanner_replay, "timeframe": timeframe,
+        "mixed_resolution": mixed,
     }
 
 
