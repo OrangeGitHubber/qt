@@ -157,6 +157,8 @@ export interface Scoreboard {
   spy: (number | null)[];
   btc: (number | null)[];
   verdict: string | null;
+  account?: string | null; // the broker account this series is scoped to
+  base_equity?: number; // equity every point is measured against ($ → % points)
 }
 
 const json = (body: unknown): RequestInit => ({

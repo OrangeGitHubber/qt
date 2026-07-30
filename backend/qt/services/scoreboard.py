@@ -93,6 +93,10 @@ def series(session: Session, account: str | None = None) -> dict:
         "spy": [pct(r.spy_close, base.spy_close) for r in rows],
         "btc": [pct(r.btc_close, base.btc_close) for r in rows],
         "account": base.account_id,
+        # The equity every point is measured against. Exposed so the UI can turn
+        # a strategy's DOLLAR P&L into the same percentage points the chart plots
+        # — otherwise per-strategy attribution can't be compared to the line.
+        "base_equity": base.bot_equity,
     }
     last = rows[-1]
     bot_r = pct(last.bot_equity, base.bot_equity)

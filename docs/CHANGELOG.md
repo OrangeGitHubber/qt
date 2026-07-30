@@ -3,6 +3,31 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Scoreboard: the −80% cliff was an account switch, not a loss (2026-07-30)
+
+The dashboard's honesty meter showed the bot down **−80%** overnight. It never
+lost that money: benchmark snapshots stored one equity row per day with **no
+record of which broker account it came from**, and the chart measured every point
+against the first row ever recorded. Swapping to a new paper account with a
+smaller balance made the *step between two unrelated accounts* read as a
+catastrophic trading loss (20k ÷ 100k − 1 = −80%). Because the row is keyed by
+day, the new account also overwrote the old one's row for the switch day —
+hence one sharp cliff instead of a gap.
+
+Snapshots now record their account (trades already did), and the scoreboard
+**scopes to the account you're actually trading** and measures from *its* first
+day — bot and both benchmarks alike, so the chart reads "since this account
+started". Old rows are kept as legacy history, and the cross-account view is
+still available on request if you ever want to see it. Switching accounts from
+here on starts a clean line instead of faking a crash.
+
+Two more things while in there: the chart's last point used to be up to an hour
+stale (the snapshot job runs hourly) — it now refreshes on load. And **hovering a
+day tells you which strategies moved it**, in the same percentage points the
+line is drawn in, like the backtest chart's per-symbol breakdown. That
+attribution is *realized* P&L, so it won't always add up to the whole day's step
+— open positions move the line too, and the card says so.
+
 ## Backtests and searches stop re-downloading the same history (2026-07-30)
 
 Every backtest and every parameter search used to pull its bars from Alpaca from

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   EngineState,
   getEngine,
@@ -17,7 +17,7 @@ import {
 import { requestNav } from "../lib/nav";
 import AccountSelect from "../components/AccountSelect";
 import InfoTip from "../components/InfoTip";
-import LineChart from "../components/LineChart";
+import LineChart, { DayHolding } from "../components/LineChart";
 import StackedPnlBars, { PnlSeries } from "../components/StackedPnlBars";
 import { IconWarn } from "../components/icons";
 
@@ -471,10 +471,32 @@ function EngineCard({ heartbeat }: { heartbeat: { stale: boolean; label: string 
 
 function ScoreboardCard() {
   const [board, setBoard] = useState<Scoreboard | null>(null);
+  const [daily, setDaily] = useState<StrategyPnlDaily | null>(null);
 
   useEffect(() => {
     getScoreboard().then(setBoard);
+    // Per-strategy realized P&L per day — the attribution behind each move.
+    getStrategyPnlDaily(0).then(setDaily).catch(() => setDaily(null));
   }, []);
+
+  // {day -> per-strategy contribution}, converted from DOLLARS into the same
+  // percentage points the chart plots (÷ the baseline equity), so "who moved the
+  // line" is directly comparable to the line itself. Realized only: a position
+  // that merely moved in value isn't attributed until it's closed, so the parts
+  // won't always sum to the day's step — said plainly under the chart.
+  const attribution = useMemo<Record<string, DayHolding[]> | undefined>(() => {
+    if (!daily || !board?.base_equity) return undefined;
+    const base = board.base_equity;
+    const out: Record<string, DayHolding[]> = {};
+    daily.days.forEach((day, i) => {
+      const rows = daily.strategies
+        .map((s) => ({ symbol: s.name, qty: 1, day_pnl_pct: ((s.values[i] ?? 0) / base) * 100 }))
+        .filter((r) => r.day_pnl_pct !== 0)
+        .sort((a, b) => Math.abs(b.day_pnl_pct) - Math.abs(a.day_pnl_pct));
+      if (rows.length) out[day] = rows;
+    });
+    return out;
+  }, [daily, board]);
 
   return (
     <div className="card scoreboard">
@@ -492,7 +514,23 @@ function ScoreboardCard() {
             { label: "Buy & hold SPY", color: "var(--ok)", values: board.spy },
             { label: "Buy & hold BTC", color: "var(--warn)", values: board.btc },
           ]}
+          holdings={attribution}
+          holdingsLabel="strategies"
         />
+      )}
+      {board && (
+        <p className="hint">
+          Measured from <strong>{board.days[0] ?? "—"}</strong> on account{" "}
+          <strong>{board.account ?? "—"}</strong> — equity is only comparable within one broker account, so switching
+          accounts starts a fresh line rather than reading the balance change as a loss.
+          {attribution && (
+            <>
+              {" "}
+              Hover a day to see which strategies moved it. Attribution is <strong>realized</strong> P&amp;L (closed
+              trades), so it won't always add up to the day's full step — open positions move the line too.
+            </>
+          )}
+        </p>
       )}
     </div>
   );

@@ -34,6 +34,7 @@ export default function LineChart({
   markers = [],
   noTradeReasons,
   holdings,
+  holdingsLabel,
   onZoomChange,
 }: {
   labels: string[];
@@ -45,6 +46,9 @@ export default function LineChart({
   // {day label -> holdings}: what was held that day and each holding's dollar
   // contribution to the day's move — so a trade-less rise/fall is attributable.
   holdings?: Record<string, DayHolding[]>;
+  // Noun for the holdings line ("2 open:" on a backtest, "2 strategies:" on the
+  // scoreboard). When set, every row is listed and `qty` is ignored.
+  holdingsLabel?: string;
   // Reports the visible index window [start, end] while zoomed (null = full
   // range), so the parent can show a trade log scoped to what's on screen.
   onZoomChange?: (range: [number, number] | null) => void;
@@ -280,12 +284,13 @@ export default function LineChart({
               return (
                 <div className="td-holdings">
                   <span className="td-day">
-                    {hs.filter((h) => h.qty > 0).length} open:
+                    {holdingsLabel ? hs.length : hs.filter((h) => h.qty > 0).length}{" "}
+                    {holdingsLabel ?? "open"}:
                   </span>{" "}
                   {hs.map((h) => (
                     <span key={h.symbol} className={`td-item ${h.day_pnl_pct >= 0 ? "up" : "down"}`}>
                       {h.symbol}
-                      {h.qty === 0 ? " (sold)" : ""} {h.day_pnl_pct >= 0 ? "+" : "−"}
+                      {!holdingsLabel && h.qty === 0 ? " (sold)" : ""} {h.day_pnl_pct >= 0 ? "+" : "−"}
                       {Math.abs(h.day_pnl_pct).toFixed(2)}%
                     </span>
                   ))}
