@@ -3,6 +3,16 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Polish: modern dropdowns, right-sized symbol search (2026-07-30)
+
+Every dropdown in the app sheds the dated stock-browser look: flat panel
+surface, a chevron matching the app's icon set, hover/focus states like every
+other control, and a dark option list on Windows (it used to flash to a light
+native palette). Still a native `<select>` underneath — keyboard and screen
+reader behaviour are untouched. The symbol-search box is also capped at a sane
+width — a six-character ticker doesn't need the whole card — while the
+suggestion list below stays wide enough for full company names.
+
 ## Onboarding: the app now explains itself from the first screen (2026-07-30)
 
 - **README rewritten to match reality.** The status section had been frozen at

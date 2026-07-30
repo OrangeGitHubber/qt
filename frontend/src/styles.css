@@ -761,15 +761,6 @@ tr.log-gap td {
   margin: 0;
 }
 
-.addform select {
-  padding: 0.6rem 0.75rem;
-  border-radius: 8px;
-  border: 1px solid var(--border);
-  background: var(--bg);
-  color: var(--text);
-  font-size: 1rem;
-}
-
 .addform button {
   margin: 0;
 }
@@ -864,16 +855,48 @@ label.check {
   margin-top: 1.4rem;
 }
 
+/* Selects are NATIVE (keyboard/AT behavior for free) but drop the dated
+   browser chrome: flat panel surface, a Lucide-style chevron (stroke 1.75,
+   matching the icon set), hover/focus states like every other control. */
 select {
   display: block;
   width: 100%;
   margin-top: 0.3rem;
-  padding: 0.55rem 0.75rem;
+  padding: 0.6rem 2.4rem 0.6rem 0.75rem; /* right pad = room for the chevron */
   border-radius: 8px;
   border: 1px solid var(--border);
-  background: var(--bg);
+  background-color: var(--panel);
   color: var(--text);
   font-size: 0.95rem;
+  min-height: 2.6rem;
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%238b94a7' stroke-width='1.75' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.7rem center;
+  transition: border-color 150ms ease-out, background-color 150ms ease-out;
+}
+
+select:hover:not(:disabled) {
+  border-color: var(--muted);
+}
+
+select:focus {
+  outline: 2px solid var(--accent);
+  border-color: transparent;
+}
+
+select:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* Windows/Chromium paints option lists from these; without them the popup can
+   flash to a light native palette that clashes with the dark theme. */
+select option {
+  background: var(--panel);
+  color: var(--text);
 }
 
 .toolbar select {
@@ -999,10 +1022,12 @@ td.detail p {
   min-width: 260px;
 }
 
-/* fill the picker (and override the 200px .addform input default) so the
-   search box is roomy */
+/* Roomy enough for a ticker or company name, but never a full-card-width
+   runway — a 6-character symbol doesn't need 900px of input. The suggestion
+   popover below stays wider than the input by design (full company names). */
 .picker input {
   width: 100%;
+  max-width: 380px;
   box-sizing: border-box;
   margin-top: 0.3rem;
 }
