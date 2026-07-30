@@ -2,14 +2,18 @@ import { FormEvent, useEffect, useRef, useState } from "react";
 import {
   Basket,
   createStrategy,
+  getBasketSweepStatus,
   getBaskets,
   getOptimizerStatus,
   getStrategies,
   OptimizerNeighbourPoint,
   OptimizerResult,
   OptimizerStatus,
+  startBasketSweep,
   startOptimizer,
   StrategyRow,
+  SweepRow,
+  SweepStatus,
 } from "../api";
 import InfoTip from "../components/InfoTip";
 import NumberField from "../components/NumberField";
@@ -140,6 +144,15 @@ export default function Optimizer() {
   const [saving, setSaving] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
+  // Basket sweep: the same search across EVERY basket, ranked by out-of-sample
+  // margin over SPY. Own status/poll so it can't tangle with the single search.
+  const [sweepStatus, setSweepStatus] = useState<SweepStatus | null>(null);
+  const [sweepError, setSweepError] = useState<string | null>(null);
+  const [sweepDays, setSweepDays] = useState(365);
+  const [sweepIterations, setSweepIterations] = useState(60);
+  const [sweepSaved, setSweepSaved] = useState<Record<number, string>>({}); // basket_id → draft name
+  const sweepPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
   const strategy = strategies.find((s) => s.id === strategyId);
   const stratNeedsIntraday = !!(
     strategy?.params?.entry?.require_above_vwap ||
@@ -160,6 +173,8 @@ export default function Optimizer() {
     );
   const running = status?.running ?? false;
   const result: OptimizerResult | null = status && !status.running ? status.result : null;
+  const sweepRunning = sweepStatus?.running ?? false;
+  const sweepResult = sweepStatus && !sweepStatus.running ? sweepStatus.result : null;
   // RSI/MACD knobs are only searched when the strategy uses that signal — show
   // those result columns only when they were actually part of the search.
   const showRsiMax = !!result && result.results.some((r) => (r.params.rsi_max ?? 0) > 0);
@@ -180,7 +195,16 @@ export default function Optimizer() {
         if (s.running) startPolling();
       })
       .catch(() => {});
-    return () => stopPolling();
+    getBasketSweepStatus()
+      .then((s) => {
+        setSweepStatus(s);
+        if (s.running) startSweepPolling();
+      })
+      .catch(() => {});
+    return () => {
+      stopPolling();
+      stopSweepPolling();
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -228,6 +252,69 @@ export default function Optimizer() {
     };
     tick();
     pollRef.current = setInterval(tick, 1500);
+  }
+
+  function stopSweepPolling() {
+    if (sweepPollRef.current) {
+      clearInterval(sweepPollRef.current);
+      sweepPollRef.current = null;
+    }
+  }
+
+  function startSweepPolling() {
+    stopSweepPolling();
+    const tick = async () => {
+      try {
+        const s = await getBasketSweepStatus();
+        setSweepStatus(s);
+        if (!s.running) stopSweepPolling();
+      } catch (err) {
+        setSweepError((err as Error).message);
+        stopSweepPolling();
+      }
+    };
+    tick();
+    sweepPollRef.current = setInterval(tick, 1500);
+  }
+
+  async function runSweep() {
+    setSweepError(null);
+    setSweepSaved({});
+    setSweepStatus(null);
+    try {
+      await startBasketSweep({ days: sweepDays, iterations: sweepIterations });
+      startSweepPolling();
+    } catch (err) {
+      setSweepError((err as Error).message);
+    }
+  }
+
+  async function saveSweepDraft(row: SweepRow) {
+    const sizing = sweepStatus?.result?.template_sizing;
+    try {
+      // Mirror what was actually tested: the whole basket eligible (top_n = its
+      // size, so ranking doesn't gate) with the sweep's template sizing. Created
+      // DISABLED — a hypothesis to review and walk up the shadow → paper ladder.
+      const draft = await createStrategy({
+        name: `${row.basket_name} (sweep draft)`,
+        asset_class: "stock",
+        universe: "basket",
+        basket_id: row.basket_id,
+        symbols: [],
+        rank_by: "momentum_today",
+        top_n: Math.min(row.symbols.length, 50),
+        preset: "custom",
+        params: row.best_draft_params,
+        sizing_usd: sizing?.sizing_usd ?? 1000,
+        sleeve_usd: sizing?.sleeve_usd ?? 5000,
+        max_positions: sizing?.max_positions ?? 5,
+        swing_mode: true,
+        ignore_regime: false,
+      });
+      setSweepSaved((m) => ({ ...m, [row.basket_id]: draft.name }));
+    } catch (err) {
+      setSweepError((err as Error).message);
+    }
   }
 
   async function start(e: FormEvent) {
@@ -640,6 +727,135 @@ export default function Optimizer() {
           </div>
         </>
       )}
+
+      <div className="card">
+        <h3>
+          Basket sweep — which theme would have beaten SPY? <InfoTip k="parameter_search" />
+        </h3>
+        <p className="hint">
+          Runs the <strong>same parameter search across every basket</strong> with one identical momentum template
+          {sweepResult
+            ? ` ($${sweepResult.template_sizing.sizing_usd.toLocaleString()}/trade, $${sweepResult.template_sizing.sleeve_usd.toLocaleString()} sleeve, max ${sweepResult.template_sizing.max_positions} positions, daily bars)`
+            : " ($1,000/trade, $5,000 sleeve, max 5 positions, daily bars)"}
+          , then ranks the winners by their <strong>out-of-sample margin over SPY</strong> — measured only on the slice
+          of history each search never saw. A winner with no out-of-sample trades ranks last as untested. Every row is a{" "}
+          <strong>hypothesis to shadow- and paper-trade</strong>, never a verdict; the numbers come from the backtester,
+          not from anyone's opinion.
+        </p>
+        <div className="filter-grid">
+          <label>
+            <span className="field-cap">
+              History (days) <InfoTip k="history_days" />
+            </span>
+            <NumberField min={90} max={730} step={1} value={sweepDays} onChange={setSweepDays} />
+          </label>
+          <label>
+            <span className="field-cap">Combinations per basket</span>
+            <NumberField min={5} max={200} step={1} value={sweepIterations} onChange={setSweepIterations} />
+          </label>
+        </div>
+        {sweepError && <div className="error">{sweepError}</div>}
+        {sweepStatus?.error && !sweepRunning && <div className="error">Sweep failed: {sweepStatus.error}</div>}
+        <button type="button" disabled={sweepRunning || running} onClick={runSweep}>
+          {sweepRunning ? "Sweeping…" : "Sweep all baskets"}
+        </button>
+        {sweepRunning && sweepStatus && (
+          <>
+            <p className="hint">
+              {sweepStatus.phase === "downloading bars"
+                ? "Downloading daily bars for every basket (one batched pull)…"
+                : `Searching basket ${Math.min(sweepStatus.baskets_done + 1, sweepStatus.baskets_total)} of ${sweepStatus.baskets_total}${sweepStatus.current_basket ? ` — ${sweepStatus.current_basket}` : ""}…`}
+            </p>
+            <div className="progress-track" aria-label="sweep progress">
+              <div
+                className="progress-fill"
+                style={{
+                  width: `${
+                    sweepStatus.phase === "downloading bars" || !sweepStatus.baskets_total
+                      ? 5
+                      : Math.round((sweepStatus.baskets_done / sweepStatus.baskets_total) * 100)
+                  }%`,
+                }}
+              />
+            </div>
+          </>
+        )}
+        {sweepResult && (
+          <>
+            <p className="hint">
+              Swept <strong>{sweepResult.rows.length} baskets</strong> × ~{sweepResult.iterations} combinations each
+              over the last {sweepResult.days} days.
+              {!sweepResult.spy_available && " SPY data was unavailable, so margins are missing."}
+            </p>
+            <div className="table-scroll">
+              <table>
+                <thead>
+                  <tr>
+                    <th>#</th>
+                    <th>Basket</th>
+                    <th>Out-of-sample (real)</th>
+                    <th>SPY (same window)</th>
+                    <th>Margin</th>
+                    <th>vs holding the basket</th>
+                    <th>OOS trades</th>
+                    <th>Winning settings</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {sweepResult.rows.map((r) => (
+                    <tr key={r.basket_id} className={r.rank === 1 && !r.untested ? "cmp-win" : ""}>
+                      <td>{r.rank}</td>
+                      <td className="sym">
+                        {r.basket_name} <span className="hint">({r.symbols.length} symbols)</span>
+                      </td>
+                      <td className={(r.oos_pct ?? 0) >= 0 ? "up" : "down"}>{pct(r.oos_pct)}</td>
+                      <td>{pct(r.spy_oos_pct)}</td>
+                      <td className={r.margin_vs_spy == null ? "" : r.margin_vs_spy >= 0 ? "up" : "down"}>
+                        {r.margin_vs_spy == null
+                          ? "—"
+                          : `${r.margin_vs_spy >= 0 ? "+" : ""}${r.margin_vs_spy} pts`}
+                      </td>
+                      <td>{r.beat_hold == null ? "—" : r.beat_hold ? "beat it" : "lost to it"}</td>
+                      <td>
+                        {r.oos_trades ?? "—"}
+                        {r.untested && <span className="hint"> (untested)</span>}
+                      </td>
+                      <td className="hint">
+                        gain≥{r.best_params.min_day_gain_pct}% · trail {r.best_params.trailing_stop_pct}% · stop{" "}
+                        {r.best_params.stop_loss_pct}% · TP {r.best_params.take_profit_pct || "off"}
+                      </td>
+                      <td>
+                        {sweepSaved[r.basket_id] ? (
+                          <span className="hint">saved ✓</span>
+                        ) : (
+                          <button type="button" className="small" onClick={() => saveSweepDraft(r)}>
+                            Save draft
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {sweepResult.rows[0]?.warnings.map((w, i) => (
+              <p key={i} className="hint warn">
+                <IconWarn className="icon-inline" /> Leader: {w}
+              </p>
+            ))}
+            {sweepResult.skipped.length > 0 && (
+              <p className="hint">
+                Skipped: {sweepResult.skipped.map((s) => `${s.basket_name} (${s.reason})`).join("; ")}.
+              </p>
+            )}
+            <p className="hint">
+              "Save draft" creates a <strong>disabled</strong> strategy on that basket with the winning settings —
+              review it, run it in shadow, and let the paper scoreboard be the judge.
+            </p>
+          </>
+        )}
+      </div>
     </>
   );
 }

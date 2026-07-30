@@ -26,8 +26,8 @@ from sqlalchemy.orm import Session
 from qt.api.market import require_client
 from qt.broker.alpaca import AlpacaClient, AlpacaError
 from qt.db import get_session
-from qt.models import BasketItem, Strategy, WatchlistItem
-from qt.services import optimizer
+from qt.models import Basket, BasketItem, Strategy, WatchlistItem
+from qt.services import optimizer, sweep
 from qt.services.engine import get_risk
 
 log = logging.getLogger("qt.api.optimizer")
@@ -191,6 +191,8 @@ async def start_optimize(
     global _task
     if _progress.running:
         raise HTTPException(status_code=409, detail="A parameter search is already running.")
+    if _sweep_progress.running:
+        raise HTTPException(status_code=409, detail="A basket sweep is already running — wait for it to finish.")
 
     strategy = session.get(Strategy, body.strategy_id)
     if not strategy:
@@ -290,3 +292,128 @@ async def start_optimize(
 @router.get("/status")
 def optimize_status() -> dict:
     return asdict(_progress)
+
+
+# ---------------------------------------------------------------------------
+# Basket sweep: the parameter search across EVERY basket, ranked by the
+# out-of-sample margin over SPY. Same background-task + status shape as the
+# single search above; the two are mutually exclusive (both are CPU-heavy).
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class SweepProgress:
+    running: bool = False
+    phase: str = ""  # "downloading bars" | "searching" | "done"
+    baskets_total: int = 0
+    baskets_done: int = 0
+    current_basket: str = ""
+    started_at: str | None = None
+    finished_at: str | None = None
+    error: str | None = None
+    result: dict | None = field(default=None)
+
+
+_sweep_progress = SweepProgress()
+_sweep_task: asyncio.Task | None = None
+
+# Per-basket symbol cap — matches the backtest's basket cap; keeps a mega-basket
+# from dominating the one batched bar download.
+SWEEP_BASKET_CAP = 25
+
+
+class SweepBody(BaseModel):
+    days: int = Field(default=365, ge=90, le=730)
+    iterations: int = Field(default=60, ge=5, le=200)  # per basket
+    spread_pct: float = Field(default=0.1, ge=0, le=2)
+
+
+async def _run_sweep(
+    client: AlpacaClient, baskets: list[dict], risk: dict,
+    days: int, iterations: int, spread_pct: float,
+) -> None:
+    """Background worker: ONE batched daily-bar download for the union of every
+    basket's symbols (+ SPY for the margin), then the whole sweep in a worker
+    thread. Plain-momentum template → no indicator warm-up needed."""
+    try:
+        _sweep_progress.phase = "downloading bars"
+        start = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        union = sorted({sym for b in baskets for sym in b["symbols"]} | {"SPY"})
+        bars: dict[str, list] = {}
+        for i in range(0, len(union), 50):  # same 50-symbol batch cap as the search
+            bars.update(await client.historical_bars(union[i : i + 50], "stock", "1Day", start))
+
+        _sweep_progress.phase = "searching"
+
+        def on_progress(done: int, total: int, name: str) -> None:
+            _sweep_progress.baskets_done = done
+            _sweep_progress.baskets_total = total
+            _sweep_progress.current_basket = name
+
+        result = await asyncio.to_thread(
+            sweep.sweep_baskets, baskets, bars, risk,
+            iterations=iterations, spread_pct=spread_pct, progress=on_progress,
+        )
+        result["days"] = days
+        _sweep_progress.result = result
+        _sweep_progress.phase = "done"
+    except AlpacaError as exc:
+        log.exception("basket sweep bar download failed")
+        _sweep_progress.error = f"Bar download failed ({exc.status_code}): {exc}"
+    except Exception as exc:  # noqa: BLE001 — record any failure for the status view
+        log.exception("basket sweep failed")
+        _sweep_progress.error = str(exc)
+    finally:
+        _sweep_progress.running = False
+        _sweep_progress.finished_at = datetime.now(timezone.utc).isoformat()
+
+
+@router.post("/sweep")
+async def start_sweep(
+    body: SweepBody,
+    session: Session = Depends(get_session),
+    client: AlpacaClient = Depends(require_client),
+) -> dict:
+    """Run the parameter search across every basket (stock members only) and rank
+    the winners by out-of-sample margin over SPY. Background task; poll
+    /sweep/status. Mutually exclusive with the single search."""
+    global _sweep_task
+    if _sweep_progress.running:
+        raise HTTPException(status_code=409, detail="A basket sweep is already running.")
+    if _progress.running:
+        raise HTTPException(status_code=409, detail="A parameter search is already running — wait for it to finish.")
+
+    baskets: list[dict] = []
+    for b in session.query(Basket).order_by(Basket.name).all():
+        symbols = sorted(
+            {
+                i.symbol
+                for i in session.query(BasketItem).filter(
+                    BasketItem.basket_id == b.id, BasketItem.asset_class == "stock"
+                )
+            }
+        )[:SWEEP_BASKET_CAP]
+        if len(symbols) >= 2:
+            baskets.append({"id": b.id, "name": b.name, "symbols": symbols})
+    if not baskets:
+        raise HTTPException(status_code=422, detail="No baskets with at least 2 stock symbols to sweep.")
+
+    risk = get_risk(session)
+    _sweep_progress.running = True
+    _sweep_progress.phase = "starting"
+    _sweep_progress.baskets_total = len(baskets)
+    _sweep_progress.baskets_done = 0
+    _sweep_progress.current_basket = ""
+    _sweep_progress.started_at = datetime.now(timezone.utc).isoformat()
+    _sweep_progress.finished_at = None
+    _sweep_progress.error = None
+    _sweep_progress.result = None
+    _sweep_task = asyncio.create_task(
+        _run_sweep(client, baskets, risk, body.days, body.iterations, body.spread_pct)
+    )
+    return {"ok": True, "started": True, "baskets": len(baskets), "iterations": body.iterations}
+
+
+@router.get("/sweep/status")
+def sweep_status() -> dict:
+    return asdict(_sweep_progress)

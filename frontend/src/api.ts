@@ -667,6 +667,61 @@ export const startOptimizer = (body: {
 export const getOptimizerStatus = () =>
   fetch("/api/optimizer/status").then((r) => handle<OptimizerStatus>(r));
 
+// Basket sweep: the parameter search across EVERY basket, ranked by the
+// out-of-sample margin over SPY. Same background-task + status shape.
+export interface SweepRow {
+  rank: number;
+  untested: boolean; // no OOS trades / no margin — ranked last regardless of numbers
+  basket_id: number;
+  basket_name: string;
+  symbols: string[];
+  tested_combinations: number;
+  search_space_size: number;
+  best_params: Record<string, number>;
+  best_draft_params: StrategyParams;
+  in_sample_pct: number | null;
+  oos_pct: number | null;
+  oos_trades: number | null;
+  oos_win_rate: number | null;
+  oos_max_drawdown_pct: number | null;
+  oos_window: OptimizerWindow;
+  hold_oos_pct: number | null;
+  beat_hold: boolean | null;
+  spy_oos_pct: number | null;
+  margin_vs_spy: number | null;
+  warnings: string[];
+  no_trade_reason: string | null;
+}
+
+export interface SweepResult {
+  rows: SweepRow[];
+  skipped: { basket_name: string; reason: string }[];
+  iterations: number;
+  days: number;
+  spy_available: boolean;
+  template_sizing: { sizing_usd: number; sleeve_usd: number; max_positions: number };
+}
+
+export interface SweepStatus {
+  running: boolean;
+  phase: string; // "downloading bars" | "searching" | "done"
+  baskets_total: number;
+  baskets_done: number;
+  current_basket: string;
+  started_at: string | null;
+  finished_at: string | null;
+  error: string | null;
+  result: SweepResult | null;
+}
+
+export const startBasketSweep = (body: { days: number; iterations: number; spread_pct?: number }) =>
+  fetch("/api/optimizer/sweep", json(body)).then(
+    (r) => handle<{ ok: boolean; started: boolean; baskets: number; iterations: number }>(r),
+  );
+
+export const getBasketSweepStatus = () =>
+  fetch("/api/optimizer/sweep/status").then((r) => handle<SweepStatus>(r));
+
 async function handle<T>(resp: Response): Promise<T> {
   if (!resp.ok) {
     let detail = resp.statusText;

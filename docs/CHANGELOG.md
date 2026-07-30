@@ -39,6 +39,24 @@ in-sample window — feeding the indicators. So both slices judge the strategy
 with live signals from their very first traded bar. If you optimized a MACD or
 RSI strategy before, re-run it: the out-of-sample numbers were understated.
 
+## Basket sweep: "which theme would have beaten SPY?" — answered honestly (2026-07-29)
+
+A new one-click experiment at the bottom of the Optimizer page: **Sweep all
+baskets**. It runs the *same* parameter search across **every basket** (one
+identical momentum template — $1k/trade, $5k sleeve, max 5 positions, daily
+bars — so the only variable is the basket itself), then ranks the winners by
+their **out-of-sample margin over SPY**: each basket's best config, measured
+only on the slice of history its search never saw, against what SPY did over
+that exact same window.
+
+The honesty rules are inherited from the optimizer wholesale: in-sample numbers
+are context, not proof; every row shows its combination count; a winner that
+made **no out-of-sample trades ranks last as "untested"** no matter how good its
+numbers look; and the leader's warnings ride along. One click saves any row as a
+**disabled draft strategy** on that basket — to review, shadow, and paper-trade,
+never to enable automatically. The point: the leaderboard's numbers come from
+the backtester on real data, not from anyone's (or any AI's) opinion.
+
 ## Backtest: positions open at the end stay open (no forced sale) (2026-07-29)
 
 A backtest used to **force-sell** every position still held on the last bar and
