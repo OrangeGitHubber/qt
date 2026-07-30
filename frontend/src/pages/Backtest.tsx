@@ -92,21 +92,18 @@ function stratWantsDaily(s: StrategyRow): boolean {
 // simulation and daily is right for daily signals — the live engine ticks every
 // ~60s, so a coarse hourly bar would miss intraday stops and VWAP crosses.
 //
-// CRYPTO has no session, so swing/intraday doesn't apply to it (see the strategy
-// editor) and can't pick the resolution. Its HOLD TIME does: a cap of a couple of
-// days or less is a short-horizon trade that needs intraday bars to simulate its
-// stops honestly; no cap (or a long one) is a multi-day hold, where daily bars
-// are right and far cheaper.
-const CRYPTO_INTRADAY_MAX_HOLD_HRS = 48;
-
+// CRYPTO always replays on 15-min bars (unless MACD/RSI force daily). A daily
+// bar spans a full 24h of continuous trading — 3.7x more hidden movement than a
+// stock's 6.5h session — so a stop-loss or trailing stop simply cannot be
+// simulated on it: the exit logic would run once per day at the close, and a
+// position that dipped through its stop and recovered would be scored a winner.
+// Resolution follows whether intraday exits EXIST (with a mandatory stop, always),
+// not how long the trade is held.
 function deriveTimeframe(s: StrategyRow | undefined): "1Day" | "15Min" {
   if (!s) return "1Day";
   if (stratWantsDaily(s)) return "1Day";
   if (stratWantsIntraday(s)) return "15Min";
-  if (s.asset_class === "crypto") {
-    const hold = s.params?.exit?.max_holding_hours ?? 0;
-    return hold > 0 && hold <= CRYPTO_INTRADAY_MAX_HOLD_HRS ? "15Min" : "1Day";
-  }
+  if (s.asset_class === "crypto") return "15Min";
   return s.swing_mode ? "1Day" : "15Min";
 }
 
@@ -935,9 +932,7 @@ export default function Backtest() {
                 : mode === "compare"
                   ? " (the finer of the two strategies)"
                   : strategy?.asset_class === "crypto"
-                    ? effectiveTimeframe === "15Min"
-                      ? " (short crypto hold limit)"
-                      : " (crypto, no short hold limit)"
+                    ? " (crypto trades 24/7 — stops need intraday bars)"
                     : strategy?.swing_mode
                       ? " (swing strategy)"
                       : " (intraday strategy)"}{" "}
@@ -1002,6 +997,40 @@ export default function Backtest() {
                   like they exit the next day and stops can gap overnight instead of firing intraday. Run a{" "}
                   <strong>{strategy.asset_class === "crypto" ? "crypto intraday sweep" : "intraday sweep"}</strong>{" "}
                   (Settings → Historical bar cache) so replay uses 15-minute bars, then re-run for a true test.
+                </p>
+              )}
+            {/* Daily bars call the exit logic ONCE per day, at the close — so a
+                price-triggered exit (stop / trailing / take-profit) can't be
+                simulated: a position that dipped through its stop and recovered
+                scores as a winner. Say so on every daily run that has one, not
+                just scanner replays. */}
+            {result.timeframe === "1Day" &&
+              !result.scanner_replay &&
+              strategy &&
+              ((strategy.params.exit.stop_loss_pct ?? 0) > 0 ||
+                (strategy.params.exit.trailing_stop_pct ?? 0) > 0 ||
+                (strategy.params.exit.take_profit_pct ?? 0) > 0) && (
+                <p className="hint warn">
+                  <IconWarn className="icon-inline" /> <strong>Your stops weren't simulated at intraday resolution.</strong>{" "}
+                  On daily bars the exit rules are checked once per day, at the close, so a position that dipped through
+                  your stop-loss and recovered by the close is scored as a <em>winner</em> here — live, it would have been
+                  sold.
+                  {strategy.asset_class === "crypto" && (
+                    <>
+                      {" "}
+                      A crypto daily bar covers a full 24 hours of trading, so it hides even more than a stock's 6.5-hour
+                      session.
+                    </>
+                  )}{" "}
+                  {usesDailySignals ? (
+                    <>
+                      MACD/RSI have to come from daily closes (that's how the live engine reads them), so this run is an
+                      honest test of the <strong>entry signal</strong> — treat the P&amp;L, win rate and drawdown as
+                      indicative only.
+                    </>
+                  ) : (
+                    <>Treat the P&amp;L, win rate and drawdown as indicative only.</>
+                  )}
                 </p>
               )}
             {result.trades === 0 && result.diagnosis?.summary && (
