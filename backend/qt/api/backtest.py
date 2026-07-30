@@ -1,7 +1,25 @@
-"""Backtest endpoint: replay a saved strategy over history."""
+"""Backtest endpoint: replay a saved strategy over history.
 
+Two ways in, same work:
+
+* ``POST /api/backtest`` (and ``/portfolio``) run the replay INSIDE the request
+  and return the result. Simple, and what the tests drive.
+* ``POST /api/backtest/start`` runs the very same handler as a background task
+  and returns a job id to poll at ``/api/backtest/job/{id}``.
+
+The second exists because a long replay outlives an HTTP request. A 350-day,
+30-symbol backtest takes minutes, and anything in front of this container gives
+up long before that: nginx defaults to a 60-second read timeout and Cloudflare
+enforces a fixed 100 seconds (HTTP 524) that no plan setting can raise. The
+work was fine — the connection died. Polling a job keeps every request short,
+so the proxy has nothing to time out.
+"""
+
+import asyncio
 import json
-from dataclasses import dataclass
+import logging
+import uuid
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -10,10 +28,12 @@ from sqlalchemy.orm import Session
 
 from qt.api.market import require_client
 from qt.broker.alpaca import AlpacaClient, AlpacaError
-from qt.db import get_session
+from qt.db import get_session, session_scope
 from qt.models import BasketItem, Strategy, WatchlistItem
 from qt.services import backtest, barfetch
 from qt.services.engine import get_risk
+
+log = logging.getLogger("qt.api.backtest")
 
 router = APIRouter(prefix="/api/backtest", tags=["backtest"])
 
@@ -321,7 +341,10 @@ async def run_portfolio(
     # keys by the ET session day (mixed books use the stock convention).
     market = "crypto" if all(s.asset_class == "crypto" for s in strategies) else "stock"
 
-    result = backtest.run_portfolio_backtest(
+    # OFF the event loop — see the note on run()'s call. get_risk() returns a
+    # plain dict, so nothing DB-bound crosses the thread boundary.
+    result = await asyncio.to_thread(
+        backtest.run_portfolio_backtest,
         strategy_dicts, bars_by_strategy, get_risk(session),
         starting_cash=body.starting_cash, spread_pct=body.spread_pct, market=market,
         sim_start=window_start if warmup else None,
@@ -436,7 +459,15 @@ async def run(
     # crypto mixed run must bucket by the UTC day (as the live engine does);
     # single-resolution runs keep the historical 'stock' default untouched.
     market = "crypto" if (mixed and strategy.asset_class == "crypto") else "stock"
-    result = backtest.run_backtest(
+    # Run the replay OFF the event loop. It is pure CPU over every bar — a
+    # 350-day, 30-symbol run is hundreds of thousands of them — and a coroutine
+    # that never awaits owns the loop for its whole duration. That would freeze
+    # the engine tick, every other request, AND the very /job polls that exist to
+    # keep each request short, so the proxy would time out anyway. A thread lets
+    # the loop breathe (Python drops the GIL periodically), which is all the
+    # poller needs; get_risk() is a plain dict, so nothing DB-bound crosses over.
+    result = await asyncio.to_thread(
+        backtest.run_backtest,
         strategy_dict, bars, get_risk(session),
         starting_cash=body.starting_cash, spread_pct=body.spread_pct,
         market=market,
@@ -489,9 +520,14 @@ async def _scanner_replay(
     close, VWAP, the entry window — behave for real); falls back to daily bars
     when no intraday sweep has been run. Fully offline. Works for stocks (ET
     session days) and crypto (UTC calendar days) off their SEPARATE caches."""
-    ds = load_scanner_replay_dataset(strategy.asset_class, body.days, body.replay_top_n)
+    # Both off the event loop: the dataset read sweeps the whole bar cache and the
+    # replay is pure CPU. See the note on run()'s call.
+    ds = await asyncio.to_thread(
+        load_scanner_replay_dataset, strategy.asset_class, body.days, body.replay_top_n
+    )
 
-    result = backtest.run_backtest(
+    result = await asyncio.to_thread(
+        backtest.run_backtest,
         strategy_dict, ds.bars, get_risk(session),
         starting_cash=body.starting_cash, spread_pct=body.spread_pct,
         eligible_by_day=ds.eligible_by_day, market=ds.market,
@@ -526,3 +562,160 @@ async def _scanner_replay(
     result["timeframe"] = timeframe
     result["days"] = body.days
     return result
+
+
+# ---------------------------------------------------------------------------
+# Background jobs
+#
+# A replay that takes minutes cannot live inside an HTTP request: nginx's default
+# read timeout is 60s and Cloudflare's is a FIXED 100s (it answers HTTP 524, and
+# no plan setting raises it). Start the same handler as a task, hand back an id,
+# and let the browser poll — every request then finishes in milliseconds.
+#
+# In-process and deliberately not persisted: a backtest is a read-only
+# experiment, so losing jobs on restart just means running it again.
+# ---------------------------------------------------------------------------
+
+JOB_TTL_SECONDS = 900  # keep a finished job around this long for the poller
+MAX_JOBS = 12
+
+
+@dataclass
+class BacktestJob:
+    id: str
+    kind: str  # "single" | "portfolio"
+    running: bool = True
+    started_at: str = ""
+    finished_at: str | None = None
+    error: str | None = None
+    # Carried so the browser can tell "your strategy is misconfigured" (422) from
+    # "Alpaca is down" (502) — the same distinction the direct endpoint gives.
+    status_code: int | None = None
+    result: dict | None = field(default=None)
+
+
+_jobs: dict[str, BacktestJob] = {}
+_tasks: set[asyncio.Task] = set()
+
+
+def _prune_jobs() -> None:
+    """Drop finished jobs the browser is done with. Results carry full equity
+    curves and trade lists, so they are not something to accumulate forever."""
+    now = datetime.now(timezone.utc)
+    for job_id, job in list(_jobs.items()):
+        if job.running or not job.finished_at:
+            continue
+        age = (now - datetime.fromisoformat(job.finished_at)).total_seconds()
+        if age > JOB_TTL_SECONDS:
+            del _jobs[job_id]
+    # Backstop: a browser that never polls would otherwise pile results up.
+    if len(_jobs) > MAX_JOBS:
+        finished = sorted(
+            (j for j in _jobs.values() if not j.running),
+            key=lambda j: j.finished_at or "",
+        )
+        for job in finished[: len(_jobs) - MAX_JOBS]:
+            _jobs.pop(job.id, None)
+
+
+def _new_job(kind: str) -> BacktestJob:
+    _prune_jobs()
+    job = BacktestJob(
+        id=uuid.uuid4().hex, kind=kind, started_at=datetime.now(timezone.utc).isoformat()
+    )
+    _jobs[job.id] = job
+    return job
+
+
+async def _run_job(job: BacktestJob, handler, body, client: AlpacaClient) -> None:
+    """Run one of the request handlers with a session of the JOB's own.
+
+    The request's session is closed the moment the start endpoint returns, so the
+    task opens its own. Reusing the handlers verbatim is the point: there is one
+    implementation of a backtest, and polling must not become a second one that
+    can drift from it.
+    """
+    try:
+        with session_scope() as session:
+            job.result = await handler(body, session, client)
+    except HTTPException as exc:
+        job.error = str(exc.detail)
+        job.status_code = exc.status_code
+    except AlpacaError as exc:
+        log.exception("backtest job: bar download failed")
+        job.error = f"Bar download failed ({exc.status_code}): {exc}"
+        job.status_code = 502
+    except asyncio.CancelledError:
+        # Never leave a cancelled job looking like a finished one with no result —
+        # that is the silent failure this whole change exists to remove.
+        job.error = "The backtest was cancelled (the server shut down or reloaded). Run it again."
+        job.status_code = 503
+        raise
+    except Exception as exc:  # noqa: BLE001 — surface any failure to the poller
+        log.exception("backtest job failed")
+        job.error = str(exc) or exc.__class__.__name__
+        job.status_code = 500
+    finally:
+        job.running = False
+        job.finished_at = datetime.now(timezone.utc).isoformat()
+
+
+def _spawn(job: BacktestJob, handler, body, client: AlpacaClient) -> None:
+    task = asyncio.create_task(_run_job(job, handler, body, client))
+    # Without a strong reference the loop may garbage-collect a running task.
+    _tasks.add(task)
+    task.add_done_callback(_tasks.discard)
+
+
+@router.post("/start")
+async def start_backtest(
+    body: BacktestBody,
+    session: Session = Depends(get_session),
+    client: AlpacaClient = Depends(require_client),
+) -> dict:
+    """Start a single-strategy backtest in the background; poll /job/{id}."""
+    # Cheap existence check up front so a bad id still fails immediately, the way
+    # it did before. Everything else is validated by the handler itself.
+    if not session.get(Strategy, body.strategy_id):
+        raise HTTPException(status_code=404, detail="Strategy not found.")
+    job = _new_job("single")
+    _spawn(job, run, body, client)
+    return {"job_id": job.id}
+
+
+@router.post("/portfolio/start")
+async def start_portfolio_backtest(
+    body: PortfolioBacktestBody,
+    session: Session = Depends(get_session),
+    client: AlpacaClient = Depends(require_client),
+) -> dict:
+    """Start a portfolio backtest in the background; poll /job/{id}."""
+    if not body.strategy_ids:
+        raise HTTPException(status_code=422, detail="Pick at least one strategy.")
+    job = _new_job("portfolio")
+    _spawn(job, run_portfolio, body, client)
+    return {"job_id": job.id}
+
+
+@router.get("/job/{job_id}")
+def backtest_job(job_id: str) -> dict:
+    """Poll a background backtest. While it runs the result is null; when it
+    finishes, exactly one of `result` / `error` is set."""
+    job = _jobs.get(job_id)
+    if job is None:
+        # Expired, or lost to a restart. Say which — "not found" alone reads like
+        # a bug, and the honest answer is that the run has to be repeated.
+        raise HTTPException(
+            status_code=404,
+            detail="That backtest is no longer available (it expired, or the server restarted). Run it again.",
+        )
+    return {
+        "job_id": job.id,
+        "kind": job.kind,
+        "running": job.running,
+        "started_at": job.started_at,
+        "finished_at": job.finished_at,
+        "error": job.error,
+        "status_code": job.status_code,
+        "result": job.result,
+    }

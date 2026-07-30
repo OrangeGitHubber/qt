@@ -556,6 +556,35 @@ export interface OpenPosition {
   strategy_name?: string; // portfolio only
 }
 
+/** Run a backtest as a background JOB and wait for it, polling.
+ *
+ *  A long replay outlives an HTTP request. A 350-day, 30-symbol backtest takes
+ *  minutes, and every proxy gives up first: nginx's default read timeout is 60
+ *  seconds and Cloudflare's is a FIXED 100 (HTTP 524 — no plan setting raises
+ *  it). The replay itself was fine; the connection died and took the answer with
+ *  it. Polling keeps every request to milliseconds, so there's nothing to time
+ *  out however long the run takes.
+ *
+ *  Callers see the same Promise<Result> as before — the waiting lives here so no
+ *  page has to know a job exists.
+ */
+async function runAsJob<T>(startUrl: string, body: unknown): Promise<T> {
+  const { job_id } = await fetch(startUrl, json(body)).then((r) => handle<{ job_id: string }>(r));
+  // Fast enough to feel instant on a short run, slow enough not to hammer a home
+  // server through a 20-minute one.
+  const POLL_MS = 1500;
+  for (;;) {
+    await new Promise((r) => setTimeout(r, POLL_MS));
+    const st = await fetch(`/api/backtest/job/${job_id}`).then((r) =>
+      handle<{ running: boolean; error: string | null; result: T | null }>(r),
+    );
+    if (st.running) continue;
+    if (st.error) throw new Error(st.error);
+    if (st.result === null) throw new Error("The backtest finished without a result — check the server log.");
+    return st.result;
+  }
+}
+
 export const runBacktest = (body: {
   strategy_id: number;
   symbols: string[];
@@ -565,7 +594,7 @@ export const runBacktest = (body: {
   timeframe: string;
   starting_cash: number;
   spread_pct: number;
-}) => fetch("/api/backtest", json(body)).then((r) => handle<BacktestResult>(r));
+}) => runAsJob<BacktestResult>("/api/backtest/start", body);
 
 // Portfolio (multi-strategy) backtest: N strategies over the SAME period sharing
 // ONE account + the global rails, with a per-strategy contribution breakdown.
@@ -621,7 +650,7 @@ export const runPortfolioBacktest = (body: {
   timeframe: string;
   starting_cash: number;
   spread_pct: number;
-}) => fetch("/api/backtest/portfolio", json(body)).then((r) => handle<PortfolioBacktestResult>(r));
+}) => runAsJob<PortfolioBacktestResult>("/api/backtest/portfolio/start", body);
 
 // ---- Strategy optimizer (parameter search) ----
 // Searches a momentum strategy's parameter space with the SAME backtester,
@@ -823,14 +852,24 @@ async function failure(resp: Response): Promise<Error> {
     /* not our JSON — a proxy error page, or an empty body */
   }
   if (detail) return new Error(detail); // the app's own wording, already user-facing
-  if (resp.status === 502 || resp.status === 503 || resp.status === 504)
+  // 524 is Cloudflare's own: the origin took longer than its FIXED 100-second
+  // limit. 520-527 is the rest of that range; 502/503/504 are the generic ones.
+  if (resp.status === 524)
     return new Error(
-      `HTTP ${resp.status} — the server didn't answer in time. A long backtest, optimizer run or ` +
-        `bar sweep can outlast a reverse proxy's default 60-second timeout; raise it, or test a shorter period.`,
+      "HTTP 524 — Cloudflare gave up waiting for QT after 100 seconds. That limit can't be raised. " +
+        "Long backtests now run in the background and poll, so if you see this, something else took too long.",
+    );
+  if (resp.status === 502 || resp.status === 503 || resp.status === 504 || (resp.status >= 520 && resp.status <= 527))
+    return new Error(
+      `HTTP ${resp.status} — the server didn't answer in time. A long sweep can outlast a reverse ` +
+        `proxy's timeout (nginx defaults to 60 seconds); raise it, or run it in smaller pieces.`,
     );
   if (resp.status === 401 || resp.status === 403)
     return new Error(`HTTP ${resp.status} — your sign-in expired. Reload the page to sign in again.`);
-  const fallback = resp.statusText || body.trim().slice(0, 200);
+  // A proxy's error page is HTML. Pasting 200 characters of doctype and IE
+  // conditional comments at the user tells them nothing — name it instead.
+  const html = /^\s*<(!doctype|html)/i.test(body);
+  const fallback = resp.statusText || (html ? "the server returned an error page, not a reply" : body.trim().slice(0, 200));
   return new Error(`HTTP ${resp.status}${fallback ? ` — ${fallback}` : ""}`);
 }
 

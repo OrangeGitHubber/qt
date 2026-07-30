@@ -192,6 +192,21 @@ export default function Backtest() {
   const [portfolioBusy, setPortfolioBusy] = useState(false);
   const [portfolioError, setPortfolioError] = useState<string | null>(null);
 
+  // A long replay now runs as a background job the browser polls, so it can
+  // legitimately take minutes. A button frozen on "Replaying history…" with
+  // nothing moving is exactly what "it just stopped working" felt like — count
+  // the seconds so a slow run is visibly a slow run, not a dead one.
+  const [elapsed, setElapsed] = useState(0);
+  const working = busy || portfolioBusy;
+  useEffect(() => {
+    if (!working) return;
+    setElapsed(0);
+    const started = Date.now();
+    const t = setInterval(() => setElapsed(Math.round((Date.now() - started) / 1000)), 1000);
+    return () => clearInterval(t);
+  }, [working]);
+  const since = elapsed >= 60 ? `${Math.floor(elapsed / 60)}m ${elapsed % 60}s` : `${elapsed}s`;
+
   // Place each buy/sell on the equity curve's day index. Positions still open at
   // the window end aren't in trade_list (no forced sale), but their BUYS still
   // happened — mark them too, or the last entries of a run silently vanish.
@@ -636,7 +651,7 @@ export default function Backtest() {
               )}
               {portfolioError !== null && <div className="error">{portfolioError}</div>}
               <button disabled={portfolioBusy || portfolioIds.length === 0 || portfolioMixedBars}>
-                {portfolioBusy ? "Replaying history…" : "Run portfolio"}
+                {portfolioBusy ? `Replaying history… ${since}` : "Run portfolio"}
               </button>
             </form>
           </div>
@@ -1022,7 +1037,11 @@ export default function Backtest() {
               is indistinguishable from a broken one. Let the click through and let
               run() say why nothing happened. */}
           <button disabled={busy || (mode === "compare" && (!compareId || compareMixedBars))}>
-            {busy ? "Replaying history…" : mode === "compare" ? "Run comparison" : "Run backtest"}
+            {busy
+              ? `Replaying history… ${since}`
+              : mode === "compare"
+                ? "Run comparison"
+                : "Run backtest"}
           </button>
         </form>
       </div>

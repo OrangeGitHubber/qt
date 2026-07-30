@@ -3,6 +3,31 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Long backtests no longer die at 100 seconds (2026-07-30)
+
+A 350-day backtest over 30 symbols ran for a few minutes and then failed with
+**HTTP 524**. That code is Cloudflare's own: it waited 100 seconds for QT, gave
+up, and closed the connection. The replay was fine — the *answer* had nowhere to
+go. The 100-second limit is fixed and cannot be raised by any setting, so the
+fix isn't a bigger timeout; it's not holding a connection open for minutes.
+
+Backtests (single and portfolio) now run **in the background**: the browser
+starts one, gets a ticket, and asks "done yet?" every second and a half. Every
+request finishes in milliseconds, so there's nothing left for a proxy to time
+out, however long the run takes. The Run button counts the elapsed time while it
+waits — a slow run now visibly *is* slow rather than looking frozen.
+
+One thing that had to change underneath: the replay is pure arithmetic over
+every bar, and Python would otherwise do it *instead of* answering anything
+else. Left as-is it would have frozen the trading engine's minute tick, every
+other page, and the very "done yet?" checks — timing out on those instead. The
+replay now runs alongside them.
+
+Two smaller honesty fixes: a backtest cut short by a restart used to look like
+one that finished with no result, and now says it was cancelled; and asking
+about a run the server no longer remembers explains that it expired rather than
+just saying "not found".
+
 ## Buttons that "did nothing" were failing with an invisible message (2026-07-30)
 
 "Save & backtest" sometimes appeared to do nothing and then worked on the next
