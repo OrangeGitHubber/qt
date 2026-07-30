@@ -311,22 +311,27 @@ function OpenPositionsCard() {
   if (!data) return null;
   const pnl = data.total_unrealized_pnl;
   return (
-    <div className="card">
-      <h3>
-        Open positions — all strategies{" "}
-        <span className="hint">
-          ({data.positions.length} open
-          {data.positions.length > 0 && (
-            <>
-              {" · "}
-              <span className={pnl >= 0 ? "up" : "down"}>
-                {pnl >= 0 ? "+" : "−"}${Math.abs(pnl).toFixed(2)} unrealized
-              </span>
-            </>
-          )}
-          )
-        </span>
-      </h3>
+    // Folded by default: the summary carries the numbers that matter at a
+    // glance (how many open, total unrealized); open it for the per-position
+    // detail. Same fold pattern as the Settings cards.
+    <details className="card fold">
+      <summary>
+        <h3>
+          Open positions — all strategies{" "}
+          <span className="hint">
+            ({data.positions.length} open
+            {data.positions.length > 0 && (
+              <>
+                {" · "}
+                <span className={pnl >= 0 ? "up" : "down"}>
+                  {pnl >= 0 ? "+" : "−"}${Math.abs(pnl).toFixed(2)} unrealized
+                </span>
+              </>
+            )}
+            )
+          </span>
+        </h3>
+      </summary>
       {data.positions.length === 0 ? (
         <p className="hint">
           Nothing is held right now. When a strategy buys, the position appears here with its owner — including the one
@@ -368,7 +373,7 @@ function OpenPositionsCard() {
           </table>
         </div>
       )}
-    </div>
+    </details>
   );
 }
 

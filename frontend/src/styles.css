@@ -78,6 +78,23 @@ h1 {
   padding: 1.25rem;
 }
 
+/* Vertical rhythm between stacked top-level blocks. Cards had no margin at all,
+   so a card following a .grid (or another card) sat flush against it — the
+   dashboard's grid row and the panel below it touched. Matches the grid's own
+   1rem gap so horizontal and vertical spacing agree. */
+.card + .card,
+.card + .grid,
+.grid + .card,
+.grid + .grid {
+  margin-top: 1rem;
+}
+
+/* …but cards INSIDE a grid are spaced by its gap; a margin there would offset
+   the columns from each other. */
+.grid > .card + .card {
+  margin-top: 0;
+}
+
 .card h2,
 .card h3 {
   margin-top: 0;
