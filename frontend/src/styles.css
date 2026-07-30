@@ -1682,6 +1682,11 @@ button.linklike {
   color: var(--muted);
 }
 
+/* Second line of the hover panel: the day's holdings + their contributions. */
+.chart-trade-detail .td-holdings {
+  margin-top: 0.25rem;
+}
+
 .chart-trade-detail .td-day {
   color: var(--text);
   font-weight: 600;

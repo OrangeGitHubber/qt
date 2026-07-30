@@ -484,6 +484,16 @@ export interface BacktestResult {
   // Positions still held when the window ended — marked to market (not sold), so
   // their unrealized P&L is already in net_pnl / the equity curve.
   open_positions: OpenPosition[];
+  // {day -> holdings}: what was held each day and each holding's dollar
+  // contribution to that day's move (qty 0 = closed that day). Chart hover.
+  daily_positions?: Record<string, DayHolding[]>;
+}
+
+export interface DayHolding {
+  symbol: string;
+  qty: number;
+  price: number | null;
+  day_pnl: number;
 }
 
 export interface OpenPosition {

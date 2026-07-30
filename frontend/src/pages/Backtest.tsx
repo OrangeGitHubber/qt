@@ -1069,6 +1069,7 @@ export default function Backtest() {
               onZoomChange={setZoomRange}
               markers={compareResult ? compareMarkers : markers}
               noTradeReasons={compareResult ? undefined : result.no_trade_reasons}
+              holdings={compareResult ? undefined : result.daily_positions}
               series={[
                 {
                   label: compareResult ? strategies.find((s) => s.id === strategyId)?.name ?? "Strategy A" : "This strategy",

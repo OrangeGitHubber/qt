@@ -39,6 +39,18 @@ in-sample window — feeding the indicators. So both slices judge the strategy
 with live signals from their very first traded bar. If you optimized a MACD or
 RSI strategy before, re-run it: the out-of-sample numbers were understated.
 
+## Backtest chart: hover a day → see what was held and what it cost you (2026-07-30)
+
+When the equity line moves on a day with **no trades**, the cause was always
+invisible — a position held overnight did it, but nothing said which one. Now
+the backtest records, for every simulated day, **which positions were open and
+each one's dollar contribution** to that day's move. Hovering a day on the chart
+shows a second line under the trade detail: e.g. *"2 open: NVDA −$28.10 · GOLD
++$3.20 → day −$24.90"*. A position closed that day appears too (labelled
+"sold"), entries count from their fill price, and the per-day sum always equals
+the equity curve's move — it's an exact decomposition, not an estimate. Biggest
+mover listed first.
+
 ## Basket sweep: "which theme would have beaten SPY?" — answered honestly (2026-07-29)
 
 A new one-click experiment at the bottom of the Optimizer page: **Sweep all

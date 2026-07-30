@@ -16,6 +16,13 @@ export interface ChartMarker {
   seriesIndex?: number;
 }
 
+// One holding's contribution to a single day's move (qty 0 = closed that day).
+export interface DayHolding {
+  symbol: string;
+  qty: number;
+  day_pnl: number;
+}
+
 /** Multi-series % chart with a hover crosshair and optional trade markers.
  *  Hovering reports the date and every series' value at that point, so the
  *  lines don't have to be decoded from the legend alone. */
@@ -24,6 +31,7 @@ export default function LineChart({
   series,
   markers = [],
   noTradeReasons,
+  holdings,
   onZoomChange,
 }: {
   labels: string[];
@@ -32,6 +40,9 @@ export default function LineChart({
   // {day label -> why no entry} — shown on the panel when you land on a day the
   // strategy traded nothing, so a flat stretch is explained, not a mystery.
   noTradeReasons?: Record<string, string>;
+  // {day label -> holdings}: what was held that day and each holding's dollar
+  // contribution to the day's move — so a trade-less rise/fall is attributable.
+  holdings?: Record<string, DayHolding[]>;
   // Reports the visible index window [start, end] while zoomed (null = full
   // range), so the parent can show a trade log scoped to what's on screen.
   onZoomChange?: (range: [number, number] | null) => void;
@@ -237,7 +248,7 @@ export default function LineChart({
       {/* Trade detail for the hovered day. Below the chart, so it can wrap to as
           many lines as the day's trades need and be read in FULL — its growth
           pushes the legend down, never the chart. */}
-      {markers.length > 0 && (
+      {(markers.length > 0 || holdings) && (
         <div className="chart-trade-detail">
           {hover === null ? (
             <span className="cr-trade-empty">Hover a day to see the trades made that day.</span>
@@ -257,6 +268,31 @@ export default function LineChart({
               ))}
             </>
           )}
+          {/* What was HELD that day and what each holding did to the equity —
+              this is how a big trade-less rise or fall explains itself. */}
+          {hover !== null &&
+            (holdings?.[labels[hover]]?.length ?? 0) > 0 &&
+            (() => {
+              const hs = holdings![labels[hover]];
+              const total = hs.reduce((sum, h) => sum + h.day_pnl, 0);
+              return (
+                <div className="td-holdings">
+                  <span className="td-day">
+                    {hs.filter((h) => h.qty > 0).length} open:
+                  </span>{" "}
+                  {hs.map((h) => (
+                    <span key={h.symbol} className={`td-item ${h.day_pnl >= 0 ? "up" : "down"}`}>
+                      {h.symbol}
+                      {h.qty === 0 ? " (sold)" : ""} {h.day_pnl >= 0 ? "+" : "−"}${Math.abs(h.day_pnl).toFixed(2)}
+                    </span>
+                  ))}
+                  <span className="td-day">
+                    {" "}
+                    → day {total >= 0 ? "+" : "−"}${Math.abs(total).toFixed(2)}
+                  </span>
+                </div>
+              );
+            })()}
         </div>
       )}
 

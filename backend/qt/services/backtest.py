@@ -487,13 +487,34 @@ def run_backtest(
                 flush=True,
             )
 
+    # Per-day P&L attribution: for every simulated day, which positions were held
+    # and how much each moved the equity. A holding's day-P&L = Δ(position value)
+    # + that symbol's cash flows today (exit proceeds / entry cost) — the three
+    # cases (held through, entered today, exited today) all fall out of the one
+    # formula, and the per-day sum equals the equity curve's day change.
+    attrib_day: str | None = None
+    prev_day_value: dict[str, float] = {}  # position values at the PRIOR day's close
+    day_flows: dict[str, float] = {}  # today's cash flows per symbol (+sell, −buy)
+    day_contrib: dict[str, list[dict]] = {}
+
     for ts in sorted(events):
         bars = events[ts]
-        for symbol, bar in bars.items():
-            last_price[symbol] = bar["close"]
         day = day_of(ts)
         if sim_start is not None and ts < sim_start:
+            for symbol, bar in bars.items():
+                last_price[symbol] = bar["close"]
             continue  # warm-up bar: fed the indicators above; no trading / equity / diagnostics
+        if day != attrib_day:
+            # Day rollover: freeze YESTERDAY's closing position values before
+            # today's prices overwrite last_price — that's the baseline each
+            # holding's day-P&L is measured against.
+            prev_day_value = {
+                s: t.qty * last_price.get(s, t.entry_price) for s, t in state.open_trades.items()
+            }
+            day_flows = {}
+            attrib_day = day
+        for symbol, bar in bars.items():
+            last_price[symbol] = bar["close"]
 
         # ---- exits first ----
         for symbol, trade in list(state.open_trades.items()):
@@ -517,6 +538,7 @@ def run_backtest(
             trade.exit_reason = reason
             trade.pnl = round((fill - trade.entry_price) * trade.qty, 2)
             state.cash += fill * trade.qty
+            day_flows[symbol] = day_flows.get(symbol, 0.0) + fill * trade.qty
             state.realized_by_day[day] = state.realized_by_day.get(day, 0.0) + trade.pnl
             if trade.pnl < 0:
                 state.last_loss_at[symbol] = ts
@@ -623,6 +645,7 @@ def run_backtest(
                     _btlog(day, symbol, bar, params, f"reject-sizing: qty={qty} cost={fill * qty:.2f} cash={state.cash:.2f}")
                 continue
             state.cash -= fill * qty
+            day_flows[symbol] = day_flows.get(symbol, 0.0) - fill * qty
             state.entries_by_day[day] = state.entries_by_day.get(day, 0) + 1
             if debug:
                 _btlog(day, symbol, bar, params, f"ENTER @ {fill:.2f} x{qty} ({entry_reason})")
@@ -643,6 +666,23 @@ def run_backtest(
             equity_curve.append((day, mark))
         else:
             equity_curve[-1] = (day, mark)
+
+        # Per-holding contribution to today's move (recomputed each bar; the last
+        # write is the day's close). qty 0 = a position closed earlier today.
+        touched = set(prev_day_value) | set(day_flows) | set(state.open_trades)
+        contrib = []
+        for s in touched:
+            t = state.open_trades.get(s)
+            value_now = t.qty * last_price.get(s, t.entry_price) if t else 0.0
+            pnl = value_now - prev_day_value.get(s, 0.0) + day_flows.get(s, 0.0)
+            contrib.append({
+                "symbol": s,
+                "qty": t.qty if t else 0,
+                "price": round(last_price[s], 4) if s in last_price else None,
+                "day_pnl": round(pnl, 2),
+            })
+        contrib.sort(key=lambda c: -abs(c["day_pnl"]))
+        day_contrib[day] = contrib
 
     # Positions still open at the end are NOT force-sold: the strategy never
     # signalled an exit, so a synthetic end-of-test sale would invent a trade and
@@ -749,6 +789,10 @@ def run_backtest(
         # Positions still held when the test window ended (marked to market, not
         # sold). Their unrealized P&L is already in net_pnl / the equity curve.
         "open_positions": open_positions,
+        # {day -> [{symbol, qty, price, day_pnl}]}: what was held each day and how
+        # much each holding moved the equity (qty 0 = closed that day). The chart
+        # hover uses it to explain a day's rise/fall position by position.
+        "daily_positions": day_contrib,
         "trade_list": [
             {
                 "symbol": t.symbol, "qty": t.qty,

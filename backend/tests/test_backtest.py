@@ -425,6 +425,28 @@ def _macd_strategy() -> dict:
     return strat
 
 
+def test_daily_positions_attribute_each_days_move():
+    # Per-day holdings attribution: AAA rises (+$36 on day 3) while BBB collapses
+    # and stops out (−$126 the same day). Each day lists what was held with its
+    # dollar contribution; entered-today costs nothing at spread 0; a position
+    # closed that day appears with qty 0; rows sort by |impact|.
+    aaa = _daily([100.0, 104.0, 108.0, 99.0])
+    bbb = _daily([100.0, 104.0, 90.0, 90.0])
+    res = run_backtest(STRATEGY, {"AAA": aaa, "BBB": bbb}, RISK, starting_cash=5000, spread_pct=0)
+    dp = res["daily_positions"]
+    d1, d2, d3 = "2026-05-04", "2026-05-05", "2026-05-06"
+
+    assert dp[d1] == []  # nothing held on the baseline day
+    # Day 2: both entered at their close (9 shares @ 104) — zero cost at spread 0.
+    assert {(c["symbol"], c["qty"], c["day_pnl"]) for c in dp[d2]} == {("AAA", 9, 0.0), ("BBB", 9, 0.0)}
+    # Day 3: BBB stopped out for 9 × (90 − 104) = −$126 (qty 0 = closed today);
+    # AAA held through for 9 × (108 − 104) = +$36. Biggest impact first.
+    assert dp[d3][0] == {"symbol": "BBB", "qty": 0, "price": 90.0, "day_pnl": -126.0}
+    assert dp[d3][1] == {"symbol": "AAA", "qty": 9, "price": 108.0, "day_pnl": 36.0}
+    # The day's contributions sum to the equity move: 5000 → 4910 on day 3.
+    assert sum(c["day_pnl"] for c in dp[d3]) == -90.0
+
+
 def test_no_trade_log_reports_not_enough_funds_after_a_loss():
     # All-in sizing: $ per trade == the sleeve == starting cash. The first trade
     # loses a little, dropping equity below one full position; the no-leverage
