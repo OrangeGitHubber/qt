@@ -1170,13 +1170,22 @@ async def _symbol_candidates(
     is the candidate set, not an auto-buy list."""
     is_stock = asset_class == "stock"
     snaps = await (client.stock_snapshots(symbols) if is_stock else client.crypto_snapshots(symbols))
+    # Crypto "day gain" is the ROLLING 24h change (the scanner's definition —
+    # crypto has no session day), NOT the 00:00-UTC calendar bar. The snapshot
+    # still supplies price/vwap (freshest for sizing); only the change baseline
+    # differs. Stocks keep the session-day change from the snapshot.
+    crypto_stats = {} if is_stock else await scanner.crypto_rolling_stats(client, symbols)
     out: list[Candidate] = []
     for sym in symbols:
         snap = snaps.get(sym) or {}
         price, vwap = _price_from_snapshot(snap)
-        daily = (snap.get("dailyBar") or {}).get("c")
-        prev = (snap.get("prevDailyBar") or {}).get("c")
-        change = ((daily / prev - 1) * 100) if daily and prev else 0.0
+        if is_stock:
+            daily = (snap.get("dailyBar") or {}).get("c")
+            prev = (snap.get("prevDailyBar") or {}).get("c")
+            change = ((daily / prev - 1) * 100) if daily and prev else 0.0
+        else:
+            stats = crypto_stats.get(sym)
+            change = stats[1] if stats else 0.0
         if price:
             out.append(
                 Candidate(
@@ -1204,12 +1213,19 @@ async def _pool_metrics(
 
     is_stock = asset_class == "stock"
     snaps = await (client.stock_snapshots(symbols) if is_stock else client.crypto_snapshots(symbols))
+    # Crypto momentum_today = rolling 24h change (one definition everywhere —
+    # see scanner.rolling_24h); stocks use the snapshot's session-day change.
+    crypto_stats = {} if is_stock else await scanner.crypto_rolling_stats(client, symbols)
     for sym in symbols:
         snap = snaps.get(sym) or {}
         price, vwap = _price_from_snapshot(snap)
-        daily = (snap.get("dailyBar") or {}).get("c")
-        prev = (snap.get("prevDailyBar") or {}).get("c")
-        change = ((daily / prev - 1) * 100) if daily and prev else None
+        if is_stock:
+            daily = (snap.get("dailyBar") or {}).get("c")
+            prev = (snap.get("prevDailyBar") or {}).get("c")
+            change = ((daily / prev - 1) * 100) if daily and prev else None
+        else:
+            stats = crypto_stats.get(sym)
+            change = stats[1] if stats else None
         if price:
             price_map[sym] = price
         vwap_map[sym] = vwap

@@ -133,6 +133,14 @@ async def watchlist(
     except AlpacaError as exc:
         errors.append(f"History fetch failed ({exc.status_code}): {exc} — 30d/ATR/MA columns unavailable")
 
+    # Crypto "today" = rolling 24h change, matching the scanner and the engine
+    # (one definition everywhere; see scanner.rolling_24h). Best-effort too.
+    crypto_stats: dict[str, tuple[float, float, float]] = {}
+    try:
+        crypto_stats = await scanner.crypto_rolling_stats(client, crypto_symbols)
+    except AlpacaError as exc:
+        errors.append(f"Crypto 24h fetch failed ({exc.status_code}): {exc}")
+
     rows = []
     for item in items:
         snapshot = quotes.get(item.symbol) or {}
@@ -140,7 +148,10 @@ async def watchlist(
         prev = snapshot.get("prevDailyBar") or {}
         price = daily_bar.get("c")
         change_pct = None
-        if daily_bar.get("c") and prev.get("c"):
+        if item.asset_class == "crypto":
+            stats24 = crypto_stats.get(item.symbol)
+            change_pct = round(stats24[1], 2) if stats24 else None
+        elif daily_bar.get("c") and prev.get("c"):
             change_pct = round((daily_bar["c"] - prev["c"]) / prev["c"] * 100, 2)
         row = {
             "symbol": item.symbol,

@@ -238,7 +238,7 @@ export const GLOSSARY: Record<string, GlossaryEntry> = {
   min_day_gain: {
     term: "Min gain today (%)",
     explain:
-      "How far a stock must be up versus yesterday's close to qualify — on the scanner, to appear on the list; on a strategy, to be eligible to enter. It's the core momentum trigger. Higher = only strong movers (fewer, more extended); lower = more candidates, including weak ones.",
+      "How far a symbol must be up to qualify — on the scanner, to appear on the list; on a strategy, to be eligible to enter. It's the core momentum trigger. For stocks, 'up' means versus yesterday's session close. For crypto (which has no daily close), it means the ROLLING last-24-hours change — the same number crypto sites quote, and the same number everywhere in QT: scanner, watchlist, strategy engine and backtest all use one definition, so what you see is what the bot trades on. Higher = only strong movers (fewer, more extended); lower = more candidates, including weak ones.",
     url: "https://www.investopedia.com/terms/m/momentum.asp",
   },
   entry_window: {

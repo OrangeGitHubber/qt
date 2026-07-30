@@ -3,6 +3,24 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Crypto "day gain" now means the same thing everywhere: rolling 24h (2026-07-30)
+
+A real inconsistency, caught by a user comparing screens: the crypto
+**scanner** measured gains over a **rolling 24 hours** (deliberately — crypto
+has no daily close, and that's how crypto sites quote change), but the
+**strategy engine** for a hand-picked crypto list measured **since 00:00 UTC**
+(Alpaca's calendar bar). So SOL/USD could show +0.95% on the scanner while the
+strategy saw +0.23% and skipped the buy — the threshold you calibrated against
+one number was judged against another. The watchlist and the backtester's
+intraday crypto mode had the same midnight-UTC baseline.
+
+Now the scanner's rolling-24h definition is THE crypto day-gain everywhere:
+engine candidates (custom lists and ranked universes), the watchlist's "today"
+column, and the backtester's intraday crypto replay (which measures each bar
+against the bar ~24h back). Daily-bar crypto backtests are unchanged — daily
+closes already sit exactly 24h apart. Stocks are untouched; they genuinely have
+a session day. The "Min gain today" ? bubble now spells out both definitions.
+
 ## Backtest form polish: edit shortcut + right-sized inputs (2026-07-30)
 
 - Each strategy column on the Backtest page gains an **"Edit this strategy"**

@@ -482,6 +482,35 @@ def test_daily_positions_same_day_round_trip():
     ]
 
 
+def test_crypto_day_gain_uses_a_rolling_24h_baseline():
+    # Crypto has no session day: its day-gain must measure vs ~24h back (the
+    # scanner's rolling definition), not vs the previous UTC-day close. Here the
+    # prior UTC day CLOSED at 104 after rising from 100; a +8% entry threshold:
+    #   vs previous day close (stock rule): 110/104 → +5.8% → skipped
+    #   vs 24h back (crypto rule):          110/100 → +10%  → enters
+    def ib(ts: str, c: float) -> dict:
+        return {"t": ts, "c": c, "v": 1000, "vw": c}
+
+    bars = [
+        ib("2026-05-04T12:00:00Z", 100.0), ib("2026-05-04T18:00:00Z", 104.0),
+        ib("2026-05-05T12:00:00Z", 110.0), ib("2026-05-05T18:00:00Z", 110.0),
+    ]
+    strat = copy.deepcopy(STRATEGY)
+    strat["asset_class"] = "crypto"
+    strat["params"]["entry"]["min_day_gain_pct"] = 8.0
+
+    crypto = run_backtest(strat, {"BTC/USD": bars}, RISK, starting_cash=5000, spread_pct=0, market="crypto")
+    assert _entries(crypto) == 1
+    entered = ([t["entry_day"] for t in crypto["trade_list"]] + [p["entry_day"] for p in crypto["open_positions"]])
+    assert entered == ["2026-05-05"]
+
+    # Control: identical bars under the stock session rule never reach +8%.
+    stock_strat = copy.deepcopy(strat)
+    stock_strat["asset_class"] = "stock"
+    stock = run_backtest(stock_strat, {"TEST": bars}, RISK, starting_cash=5000, spread_pct=0)
+    assert _entries(stock) == 0
+
+
 def test_daily_positions_exclude_warmup_days():
     # With warm-up bars before sim_start, the attribution map must only contain
     # days inside the traded window — warm-up days feed indicators, nothing else.

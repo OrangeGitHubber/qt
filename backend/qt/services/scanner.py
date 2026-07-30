@@ -124,7 +124,7 @@ def _stock_session_volume(snapshot: dict, market_open: bool) -> float:
     return vol if vol > 0 else _bar_dollar_volume(secondary)
 
 
-def _rolling_24h(bars: list[dict]) -> tuple[float, float, float] | None:
+def rolling_24h(bars: list[dict]) -> tuple[float, float, float] | None:
     """(price, % change, $ volume) over the trailing ~24h from hourly bars.
 
     Crypto has no daily close, so we use a ROLLING 24-hour window rather than
@@ -132,6 +132,10 @@ def _rolling_24h(bars: list[dict]) -> tuple[float, float, float] | None:
     (matches how crypto sites quote "24h change") and, crucially, means the
     scanner isn't blind to crypto for the first hours of each UTC day while a
     fresh calendar bar slowly accumulates volume.
+
+    This is THE definition of a crypto "day gain" everywhere in QT — scanner,
+    engine candidates, ranking, watchlist — so the number a user calibrates a
+    strategy against is the number the engine actually trades on.
     """
     if not bars:
         return None
@@ -191,25 +195,41 @@ async def scan_stocks(client: AlpacaClient, cfg: dict, market_open: bool) -> tup
     return rows[: cfg["top_n"]], _meta(len(gainers), best)
 
 
+async def crypto_rolling_stats(
+    client: AlpacaClient, symbols: list[str]
+) -> dict[str, tuple[float, float, float]]:
+    """{symbol: (price, 24h % change, 24h $ volume)} for each pair with data —
+    ONE batched fetch of hourly bars over the trailing ~25h.
+
+    IMPORTANT: uses the time-windowed, paginated historical endpoint — NOT
+    crypto_bars(limit=N). Alpaca's `limit` on the multi-symbol bars endpoint is
+    a TOTAL cap across all symbols, so a small limit gets consumed by the first
+    symbol or two and every other pair comes back empty (that bug read as
+    "scanned 2 symbols" with ~$0 volume). `start` = ~25h ago (24h + the current
+    partial hour) gives each pair its full window."""
+    if not symbols:
+        return {}
+    start_iso = (datetime.now(timezone.utc) - timedelta(hours=25)).isoformat()
+    bars_by_symbol = await client.historical_bars(symbols, "crypto", "1Hour", start_iso)
+    out: dict[str, tuple[float, float, float]] = {}
+    for symbol in symbols:
+        stats = rolling_24h(bars_by_symbol.get(symbol) or [])
+        if stats is not None:
+            out[symbol] = stats
+    return out
+
+
 async def scan_crypto(client: AlpacaClient, cfg: dict) -> tuple[list[dict], dict]:
     f = cfg["crypto"]
     assets = await client.crypto_assets()
     usd_pairs = [a["symbol"] for a in assets if a["symbol"].endswith("/USD")]
-    # Hourly bars over a rolling 24h window instead of the 00:00-UTC daily bar.
-    # IMPORTANT: use the time-windowed, paginated historical endpoint — NOT
-    # crypto_bars(limit=N). Alpaca's `limit` on the multi-symbol bars endpoint
-    # is a TOTAL cap across all symbols, so a small limit gets consumed by the
-    # first symbol or two and every other pair comes back empty (that bug read
-    # as "scanned 2 symbols" with ~$0 volume). `start` = ~25h ago (24h + the
-    # current partial hour) gives each pair its full window.
-    start_iso = (datetime.now(timezone.utc) - timedelta(hours=25)).isoformat()
-    bars_by_symbol = await client.historical_bars(usd_pairs, "crypto", "1Hour", start_iso)
+    stats_by_symbol = await crypto_rolling_stats(client, usd_pairs)
 
     rows = []
     scanned = 0
     best: tuple[str, float, float, float] | None = None
     for symbol in usd_pairs:
-        stats = _rolling_24h(bars_by_symbol.get(symbol) or [])
+        stats = stats_by_symbol.get(symbol)
         if stats is None:
             continue
         scanned += 1

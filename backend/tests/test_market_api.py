@@ -44,7 +44,18 @@ def test_scanner_config_rejects_bad_values(client):
 
 def test_watchlist_crud(client, configured):
     snapshot = {"BTC/USD": {"dailyBar": {"c": 105000.0}, "prevDailyBar": {"c": 100000.0}}}
-    with patch.object(AlpacaClient, "crypto_snapshots", new=AsyncMock(return_value=snapshot)):
+    # Crypto "today" is the ROLLING 24h change from hourly bars (the scanner's
+    # definition), not the snapshot's UTC-day bar: 100k open 24h ago → 105k now.
+    hourly = {
+        "BTC/USD": [
+            {"t": "2026-07-29T00:00:00Z", "o": 100000.0, "c": 100500.0, "v": 1, "vw": 100500.0},
+            {"t": "2026-07-29T23:00:00Z", "o": 104000.0, "c": 105000.0, "v": 1, "vw": 105000.0},
+        ]
+    }
+    with (
+        patch.object(AlpacaClient, "crypto_snapshots", new=AsyncMock(return_value=snapshot)),
+        patch.object(AlpacaClient, "historical_bars", new=AsyncMock(return_value=hourly)),
+    ):
         resp = client.post("/api/watchlist", json={"symbol": "btc/usd", "asset_class": "crypto"})
         assert resp.status_code == 200
         assert resp.json()["symbol"] == "BTC/USD"

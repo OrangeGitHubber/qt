@@ -136,8 +136,8 @@ async def test_scan_crypto_rolling_24h_change_and_filters_losers():
 
 
 def test_rolling_24h_handles_empty_and_missing():
-    assert scanner._rolling_24h([]) is None
-    assert scanner._rolling_24h([{"t": "x", "c": 0, "o": 0}]) is None  # no usable price
+    assert scanner.rolling_24h([]) is None
+    assert scanner.rolling_24h([{"t": "x", "c": 0, "o": 0}]) is None  # no usable price
 
 
 async def test_scan_reports_errors_instead_of_crashing(db_session):

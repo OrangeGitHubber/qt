@@ -323,17 +323,25 @@ def _day_fn(market: str):
     return _utc_day if market == "crypto" else _et_day
 
 
-def _prepare(bars: list[dict], day_of=_et_day) -> list[dict]:
-    """Annotate each bar with day-gain vs previous day's close and a running
-    intraday VWAP. `day_of` buckets bars into trading days (ET for stocks, UTC
-    for crypto)."""
+def _prepare(bars: list[dict], day_of=_et_day, rolling_24h: bool = False) -> list[dict]:
+    """Annotate each bar with day-gain and a running intraday VWAP. `day_of`
+    buckets bars into trading days (ET for stocks, UTC for crypto).
+
+    Day-gain baseline: stocks measure vs the previous SESSION day's close;
+    crypto (`rolling_24h=True`) measures vs the close ~24h back — the same
+    rolling definition the scanner/engine/watchlist use live (crypto has no
+    session day). On DAILY crypto bars the two are identical (closes sit
+    exactly 24h apart), so daily backtests are unchanged; on intraday bars the
+    rolling baseline is what makes the backtest faithful to live."""
     out = []
     prev_day_close: float | None = None
     cur_day: str | None = None
     last_close: float | None = None
     cum_pv = cum_v = 0.0
+    parsed = [_parse_ts(b["t"]) for b in bars]
+    ref_idx = -1  # rolling mode: newest bar at least 24h older than the current one
     for i, bar in enumerate(bars):
-        ts = _parse_ts(bar["t"])
+        ts = parsed[i]
         day = day_of(ts)
         first_of_day = day != cur_day
         if first_of_day:
@@ -343,7 +351,14 @@ def _prepare(bars: list[dict], day_of=_et_day) -> list[dict]:
         volume = float(bar.get("v") or 0)
         cum_pv += float(bar.get("vw") or bar["c"]) * volume
         cum_v += volume
-        change_pct = ((bar["c"] / prev_day_close - 1) * 100) if prev_day_close else None
+        if rolling_24h:
+            cutoff = ts - timedelta(hours=24)
+            while ref_idx + 1 < i and parsed[ref_idx + 1] <= cutoff:
+                ref_idx += 1
+            ref = float(bars[ref_idx]["c"]) if ref_idx >= 0 and parsed[ref_idx] <= cutoff else None
+            change_pct = ((bar["c"] / ref - 1) * 100) if ref else None
+        else:
+            change_pct = ((bar["c"] / prev_day_close - 1) * 100) if prev_day_close else None
         # Last bar of its day: the "before the close" moment a flatten-before-
         # close exit needs. `first_of_day` distinguishes a genuine intraday close
         # from a DAILY bar (which is both first and last of its day) — the entry
@@ -439,7 +454,9 @@ def run_backtest(
     slip = spread_pct / 100
     day_of = _day_fn(market)
 
-    prepared = {s: _prepare(b, day_of) for s, b in bars_by_symbol.items() if b}
+    prepared = {
+        s: _prepare(b, day_of, rolling_24h=market == "crypto") for s, b in bars_by_symbol.items() if b
+    }
     _annotate_macd(prepared, params)  # no-op unless the strategy opts into MACD
     _annotate_atr(prepared, bars_by_symbol, params)  # no-op unless the strategy opts into ATR
     _annotate_rsi(prepared, params)  # no-op unless the strategy opts into an RSI rule
@@ -856,7 +873,14 @@ def run_portfolio_backtest(
     # Prepare each strategy's own bars, then fold everything into one chronological
     # event stream tagged with the strategy that owns each bar.
     prepared_by_strategy: dict[int, dict[str, list[dict]]] = {
-        sid: {s: _prepare(b, day_of) for s, b in (bars_by_strategy.get(sid) or {}).items() if b}
+        sid: {
+            # Rolling 24h day-gain for a CRYPTO strategy's bars (its own asset
+            # class, not the portfolio's day-bucketing market — a mixed book
+            # keeps each side's own baseline).
+            s: _prepare(b, day_of, rolling_24h=strat_by_id[sid]["asset_class"] == "crypto")
+            for s, b in (bars_by_strategy.get(sid) or {}).items()
+            if b
+        }
         for sid in strat_by_id
     }
     # Each strategy carries its own MACD/ATR periods/toggles; annotate its own bars.
