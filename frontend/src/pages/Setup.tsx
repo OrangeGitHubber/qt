@@ -53,6 +53,12 @@ export default function Setup({ onDone }: { onDone: () => void }) {
         <button disabled={busy}>{busy ? "Verifying with Alpaca…" : "Verify & save"}</button>
       </form>
       <p className="hint">
+        <strong>What happens next:</strong> once connected, the dashboard walks you through the rest step by step —
+        pick a universe (watchlist or a basket) → create a preset strategy (it starts <strong>disabled</strong>) →
+        backtest it → optionally optimize → turn the engine on in <strong>shadow</strong> mode (journals would-be
+        trades, places no orders) → graduate to paper.
+      </p>
+      <p className="hint">
         Only paper (simulated) trading is possible in this version. Live trading arrives in a later phase, behind
         additional safeguards.
       </p>

@@ -3,6 +3,7 @@ import {
   EngineState,
   getEngine,
   getScoreboard,
+  getStrategies,
   getStrategyPnl,
   getStrategyPnlDaily,
   Scoreboard,
@@ -11,6 +12,7 @@ import {
   StrategyPnl,
   StrategyPnlDaily,
 } from "../api";
+import { requestNav } from "../lib/nav";
 import AccountSelect from "../components/AccountSelect";
 import InfoTip from "../components/InfoTip";
 import LineChart from "../components/LineChart";
@@ -57,6 +59,7 @@ export default function Dashboard({ status }: { status: StatusResponse; onRefres
   return (
     <>
       {error && <div className="card error">{error}</div>}
+      <GettingStartedCard />
       <div className="grid">
         <div className="card">
           <h3>Broker — Alpaca (paper)</h3>
@@ -105,6 +108,61 @@ export default function Dashboard({ status }: { status: StatusResponse; onRefres
       <ScoreboardCard />
       <StrategyContributionsCard />
     </>
+  );
+}
+
+// First-run guide: shown only until the FIRST strategy exists, then it retires
+// itself. Walks the whole road (universe → strategy → backtest → optimize →
+// shadow → paper) with jump buttons, so nobody needs the GitHub instructions.
+function GettingStartedCard() {
+  const [count, setCount] = useState<number | null>(null);
+  useEffect(() => {
+    getStrategies()
+      .then((rows) => setCount(rows.length))
+      .catch(() => setCount(null));
+  }, []);
+  if (count !== 0) return null;
+  const go = (tab: string, label: string) => (
+    <button type="button" className="small btn-ghost" onClick={() => requestNav({ tab })}>
+      {label} →
+    </button>
+  );
+  return (
+    <div className="card">
+      <h3>Getting started — from zero to a bot you can trust</h3>
+      <p className="hint">
+        You're connected. Everything below starts <strong>off</strong> — nothing trades until you deliberately turn it
+        on, and even then it's simulated money first.
+      </p>
+      <ol className="steps">
+        <li>
+          <strong>Pick a universe.</strong> Add a few names to the watchlist (stocks and crypto in one search), or
+          browse the curated sector/theme baskets. {go("watchlist", "Watchlist")} {go("baskets", "Baskets")}
+        </li>
+        <li>
+          <strong>Create your first strategy from a preset.</strong> Every field explains itself with a ? bubble, and
+          the strategy is created <strong>disabled</strong>. {go("strategies", "Strategies")}
+        </li>
+        <li>
+          <strong>Backtest it.</strong> The same rules replay over past prices on the strategy's own universe — equity
+          curve vs buy-and-hold vs SPY, every trade with its reason, and what was held each day.{" "}
+          {go("backtest", "Backtest")}
+        </li>
+        <li>
+          <strong>Optionally, let the optimizer search better settings.</strong> It judges configs only on history the
+          search never saw, and tells you how many combinations it tried. {go("optimizer", "Optimizer")}
+        </li>
+        <li>
+          <strong>Turn it on gently.</strong> Enable the strategy, then start the engine below in{" "}
+          <strong>shadow</strong> mode — it journals every trade it <em>would</em> make, placing no orders. Graduate to{" "}
+          <strong>paper</strong> when you're comfortable, and judge it by the scoreboard's "vs holding SPY" line.
+        </li>
+      </ol>
+      <p className="hint">
+        If a search box comes up empty, the symbol directory hasn't synced yet — Settings → Symbol directory → Sync
+        now. Slack alerts are optional under Settings too.
+      </p>
+    </div>
   );
 }
 

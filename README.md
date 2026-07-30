@@ -7,8 +7,8 @@
 Self-hosted momentum trading bot for US stocks and crypto, built on the official
 [Alpaca](https://alpaca.markets) API. It scans for what's rising today, buys into
 momentum, and sells when a configurable downturn is detected — with hard safety
-rails (daily loss kill switch, Pattern-Day-Trader guard, wash-sale awareness)
-built in from the start.
+rails (daily-loss kill switch, exposure capped at your equity so it can never
+use margin, a trade-rate brake, wash-sale awareness) built in from the start.
 
 **Paper-first by design:** the bot trades simulated money until you deliberately
 graduate it, phase by phase, to real trading with human approval.
@@ -18,13 +18,21 @@ graduate it, phase by phase, to real trading with human approval.
 
 ## Status
 
-**Phase 2 — paper-trading engine (in progress).** Scanner and watchlist are
-live; Google Sign-In, strategies, shadow mode, and paper execution are landing
-now. No real-money trading exists yet.
+**Paper trading, fully working — no real-money trading exists yet.** What's
+live today: Google Sign-In gating the whole app; the movers scanner and a
+watchlist with indicator columns (RSI, MACD, ATR, vs 200-day); curated symbol
+baskets with top-N ranking; strategies built from presets in the UI (momentum,
+rotation, MACD/RSI/VWAP/ATR rules) with config versioning; a shadow → paper
+engine with every risk rail enforced and Slack alerts; a decision journal; a
+backtester (single / compare / portfolio modes, plus "scanner replay" against
+each day's reconstructed top risers) backed by a local bar cache; a parameter
+optimizer with out-of-sample validation; and a basket sweep that ranks every
+basket's best config by its out-of-sample margin over SPY.
 
-Roadmap: ~~0) skeleton~~ → ~~1) market scanner~~ → **2) paper-trading engine**
-→ 2.5) minimal backtester → 3) reliability hardening → 4) full backtesting →
-5) graduated live trading → 6) multi-user/sharing.
+Roadmap: ~~0) skeleton~~ → ~~1) market scanner~~ → ~~2) paper-trading engine~~
+→ ~~2.5) minimal backtester~~ → **3) reliability hardening (in progress)** →
+~~3.5) baskets~~ → ~~4) backtesting & evaluation~~ → 5) graduated live trading
+→ 6) multi-user/sharing.
 
 ## Documentation
 
@@ -49,6 +57,49 @@ in the UI, no config files.
 
 The `/data` volume holds the database, encrypted API keys, and trade history.
 Back it up.
+
+## Getting started (first run, step by step)
+
+The app walks you through all of this on-screen too — these are the same steps.
+
+1. **Secure it with Google Sign-In.** On first visit QT asks for a Google OAuth
+   client. In [Google Cloud Console](https://console.cloud.google.com/apis/credentials):
+   *Create credentials → OAuth client ID → Web application* (if prompted first,
+   configure the consent screen: user type *External*, add your own email as a
+   test user). Under *Authorized redirect URIs* add **exactly** the URI the QT
+   screen shows you (`http://YOUR-SERVER:8420/api/auth/callback`). Paste the
+   client ID + secret into QT; the Google account you name becomes the owner,
+   and you can allow more emails later in **Settings → Who can sign in**.
+2. **Connect Alpaca (paper).** Create a free account at
+   [alpaca.markets](https://alpaca.markets) — paper-only needs just an email.
+   In the Alpaca dashboard flip the toggle to **Paper**, generate an API key
+   pair, and paste it into QT's wizard. Keys are verified against Alpaca and
+   stored encrypted on your server.
+3. **Let it load symbols.** QT mirrors Alpaca's tradable-symbol directory so
+   search boxes autocomplete; it syncs automatically, or on demand in
+   **Settings → Symbol directory**.
+4. **Pick a universe.** Add a few names to the **Watchlist** (one search box,
+   stocks and crypto together) or browse the curated **Baskets** (sector/theme
+   lists you can edit).
+5. **Create your first strategy** on the Strategies tab from a preset. It's
+   created **disabled** — nothing trades yet.
+6. **Backtest it** (Backtest tab): the test runs on the strategy's own universe
+   and sleeve over past prices, shows the equity curve vs buy-and-hold vs SPY,
+   every trade with its reason, and what was held each day. Drag on the chart
+   to zoom into a busy stretch.
+7. **Optionally optimize** — each strategy row has an *Optimize* action that
+   searches better settings and judges them only on data the search never saw
+   (out-of-sample). The *basket sweep* on the Optimizer tab runs that search
+   across every basket and ranks the winners against SPY.
+8. **Turn it on gently.** Enable the strategy and start the engine in
+   **shadow mode** (Dashboard): the bot journals every trade it *would* make,
+   placing no orders. When you're comfortable, switch to **paper** — simulated
+   money, real prices, all risk rails live. Slack alerts are optional in
+   **Settings → Slack notifications**.
+9. **Judge it honestly.** The Dashboard scoreboard tracks the bot against
+   simply holding SPY from day one — that's the number that decides whether it
+   ever earns real money (live trading is a later phase, behind additional
+   safeguards).
 
 ### Optional: shared bar cache (Postgres)
 

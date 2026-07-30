@@ -3,6 +3,21 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Onboarding: the app now explains itself from the first screen (2026-07-30)
+
+- **README rewritten to match reality.** The status section had been frozen at
+  "Phase 2 in progress" — it now lists what actually exists (backtester with
+  three modes + scanner replay, optimizer, basket sweep, baskets, bar cache…),
+  drops the long-gone PDT guard from the safety-rails blurb (the SEC retired
+  the rule in June 2026; QT's no-leverage cap and trade-rate brake replaced
+  it), and gains a **step-by-step first-run guide**: Google OAuth client →
+  Alpaca paper keys → universe → preset strategy → backtest → optimize →
+  shadow → paper → scoreboard.
+- **The same guide lives in the app**, so nobody needs GitHub: the setup wizard
+  now previews the road ahead, and the Dashboard shows a **Getting started**
+  checklist — with jump buttons to each tab — until your first strategy exists,
+  then retires itself.
+
 ## UX batch: compact strategies, sticky nav, folded settings, honest backtest universe (2026-07-30)
 
 - **Strategies pack tight.** Each strategy is now a compact folded row (name,
