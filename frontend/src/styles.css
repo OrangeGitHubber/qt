@@ -287,6 +287,13 @@ footer {
   gap: 0.25rem;
   margin-bottom: 1.25rem;
   border-bottom: 1px solid var(--border);
+  /* Always in reach: the ribbon pins to the top while the page scrolls. The
+     opaque background stops content ghosting through the gaps between tabs. */
+  position: sticky;
+  top: 0;
+  z-index: 40;
+  background: var(--bg);
+  padding-top: 0.4rem;
 }
 
 .tab {
@@ -1680,6 +1687,51 @@ button.linklike {
   line-height: 1.5;
   font-variant-numeric: tabular-nums;
   color: var(--muted);
+}
+
+/* Collapsible cards (Settings etc.): the title row is always visible with a
+   +/− affordance on the right; the body shows only when expanded. */
+details.fold > summary {
+  list-style: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+}
+details.fold > summary::-webkit-details-marker {
+  display: none;
+}
+details.fold > summary::after {
+  content: "+";
+  font-size: 1.3rem;
+  line-height: 1;
+  color: var(--muted);
+  flex: 0 0 auto;
+}
+details.fold[open] > summary::after {
+  content: "−";
+}
+details.fold > summary h3,
+details.fold > summary h5 {
+  margin: 0;
+}
+/* The bar-cache header (title + status pill) rides inside the summary. */
+details.fold > summary > .cache-head {
+  flex: 1;
+  margin: 0;
+}
+
+/* Compact strategy rows: folded shows the name + a one-line summary. */
+details.strat-fold > summary .strat-head {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 0;
+}
+details.strat-fold > summary .strat-head .hint {
+  margin: 0;
 }
 
 /* Second line of the hover panel: the day's holdings + their contributions. */

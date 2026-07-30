@@ -9,6 +9,7 @@ import {
   PauseCircle,
   Bitcoin,
   CandlestickChart,
+  SlidersHorizontal,
   type LucideProps,
 } from "lucide-react";
 
@@ -30,3 +31,4 @@ export const IconWarn = base(AlertTriangle); // Inline warning marker
 export const IconMarketClosed = base(PauseCircle); // Market-closed indicator
 export const IconStock = base(CandlestickChart); // Stock/equity marker
 export const IconCrypto = base(Bitcoin); // Crypto marker
+export const IconOptimize = base(SlidersHorizontal); // Run the parameter search

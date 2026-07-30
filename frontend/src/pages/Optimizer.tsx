@@ -19,6 +19,7 @@ import InfoTip from "../components/InfoTip";
 import NumberField from "../components/NumberField";
 import SymbolPicker from "../components/SymbolPicker";
 import { IconWarn } from "../components/icons";
+import { consumeNav } from "../lib/nav";
 
 // Human labels for the four searched knobs (keys match the backend PARAM_SPACE).
 const KNOB_LABELS: Record<string, string> = {
@@ -183,9 +184,12 @@ export default function Optimizer() {
   const showMacd = !!result && result.results.some((r) => (r.params.macd_slow ?? 0) > 0);
 
   useEffect(() => {
+    // A strategy row's "Optimize" button jumps here with that strategy in tow.
+    const pre = consumeNav()?.strategyId ?? null;
     getStrategies().then((rows) => {
       setStrategies(rows);
-      if (rows.length && strategyId === null) setStrategyId(rows[0].id);
+      if (rows.length && strategyId === null)
+        setStrategyId(pre !== null && rows.some((r) => r.id === pre) ? pre : rows[0].id);
     });
     getBaskets().then(setBaskets).catch(() => setBaskets([]));
     // Pick up a search already in flight (e.g. after a page switch).

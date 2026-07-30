@@ -266,8 +266,12 @@ export default function Settings() {
         </div>
       )}
 
-      <div className="card">
-        <h3>Broker connection</h3>
+      {/* Every settings card folds to its title (+/− on the right) so the page
+          scans as a short list; open only what you're working on. */}
+      <details className="card fold">
+        <summary>
+          <h3>Broker connection</h3>
+        </summary>
         {status?.broker ? (
           <dl className="cache-metrics">
             <dt>Account</dt>
@@ -331,8 +335,11 @@ export default function Settings() {
           </form>
         )}
 
-        <div className="atr-section">
-          <h5>Danger zone — liquidate holdings</h5>
+        {/* Destructive — folded shut by default even inside the expanded card. */}
+        <details className="atr-section fold">
+          <summary>
+            <h5>Danger zone — liquidate holdings</h5>
+          </summary>
           <p className="hint">
             Closes the positions QT holds (at market, by QT's own quantity), cancels its resting orders, and marks QT's
             open trades closed. Use it to start fresh, e.g. before switching accounts. It does <strong>not</strong> touch
@@ -370,11 +377,14 @@ export default function Settings() {
           >
             {liqBusy ? "Liquidating…" : liqOrphans ? "Liquidate ALL holdings (incl. orphans)" : "Liquidate QT holdings"}
           </button>
-        </div>
-      </div>
+        </details>
+      </details>
 
-      <form className="card" onSubmit={saveRisk}>
-        <h3>Risk rails (apply to every strategy, every mode)</h3>
+      <details className="card fold">
+        <summary>
+          <h3>Risk rails (apply to every strategy, every mode)</h3>
+        </summary>
+        <form onSubmit={saveRisk}>
         <div className="filter-grid">
           <label>
             Max daily loss ($) <InfoTip k="daily_loss_limit" />
@@ -451,11 +461,14 @@ export default function Settings() {
             server-level act.) <InfoTip k="leverage" />
           </p>
         )}
-        <button>Save risk settings</button>
-      </form>
+          <button>Save risk settings</button>
+        </form>
+      </details>
 
-      <div className="card">
-        <h3>Symbol directory</h3>
+      <details className="card fold">
+        <summary>
+          <h3>Symbol directory</h3>
+        </summary>
         <p className="hint">
           A local copy of Alpaca's tradable symbols and company names, so search boxes autocomplete instantly without
           calling Alpaca on every keystroke. Refreshes automatically once a day.
@@ -487,19 +500,21 @@ export default function Settings() {
         >
           {syncing ? "Syncing…" : "Sync now"}
         </button>
-      </div>
+      </details>
 
-      <div className="card">
-        <div className="cache-head">
-          <h3>Historical bar cache</h3>
-          <span className={`pill ${bars?.running ? "warn" : "muted"}`}>
-            {bars?.running
-              ? `${bars.market === "crypto" ? "crypto " : ""}${
-                  { intraday: "intraday sweep", reconstruct: "re-ranking" }[bars.kind] ?? "daily sweep"
-                }…`
-              : "idle"}
-          </span>
-        </div>
+      <details className="card fold">
+        <summary>
+          <div className="cache-head">
+            <h3>Historical bar cache</h3>
+            <span className={`pill ${bars?.running ? "warn" : "muted"}`}>
+              {bars?.running
+                ? `${bars.market === "crypto" ? "crypto " : ""}${
+                    { intraday: "intraday sweep", reconstruct: "re-ranking" }[bars.kind] ?? "daily sweep"
+                  }…`
+                : "idle"}
+            </span>
+          </div>
+        </summary>
         <p className="hint">
           The data a <strong>"scanner replay" backtest</strong> reads, stored in{" "}
           {bars ? (
@@ -646,10 +661,12 @@ export default function Settings() {
             day.
           </p>
         </details>
-      </div>
+      </details>
 
-      <div className="card">
-        <h3>Slack notifications</h3>
+      <details className="card fold">
+        <summary>
+          <h3>Slack notifications</h3>
+        </summary>
         <p className="hint">
           Create an{" "}
           <a href="https://api.slack.com/messaging/webhooks" target="_blank" rel="noreferrer">
@@ -705,10 +722,12 @@ export default function Settings() {
             ))}
           </div>
         )}
-      </div>
+      </details>
 
-      <div className="card">
-        <h3>Who can sign in</h3>
+      <details className="card fold">
+        <summary>
+          <h3>Who can sign in</h3>
+        </summary>
         {!allow ? (
           <p className="hint">Allowlist unavailable.</p>
         ) : (
@@ -755,7 +774,7 @@ export default function Settings() {
             </div>
           </>
         )}
-      </div>
+      </details>
     </>
   );
 }

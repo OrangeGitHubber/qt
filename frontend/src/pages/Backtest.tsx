@@ -128,8 +128,6 @@ export default function Backtest() {
   const [strategies, setStrategies] = useState<StrategyRow[]>([]);
   const [strategyId, setStrategyId] = useState<number | null>(null);
   const [baskets, setBaskets] = useState<Basket[]>([]);
-  const [scannerReplay, setScannerReplay] = useState(false);
-  const [replayTopN, setReplayTopN] = useState(10);
   const [days, setDays] = useState(90);
   const [spread, setSpread] = useState(0.1);
   const [busy, setBusy] = useState(false);
@@ -344,16 +342,11 @@ export default function Backtest() {
   const compareStrat = strategies.find((s) => s.id === compareId);
   const uniB = resolveUniverse(compareStrat, baskets);
 
-  // On strategy change: mirror its scanner-replay universe. Bar size and starting
-  // cash are no longer chosen — they're derived below (the strategy's signals set
-  // the bar size; its sleeve is the account).
-  useEffect(() => {
-    const strat = strategies.find((s) => s.id === strategyId);
-    if (!strat) return;
-    setScannerReplay(strat.universe === "scanner");
-    if (strat.universe === "scanner") setReplayTopN(strat.top_n || 10);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [strategyId, strategies, baskets]);
+  // The universe is EXACTLY the strategy's — nothing here can deviate from it.
+  // A scanner strategy always replays the historical daily risers with ITS OWN
+  // top-N; there is deliberately no toggle or knob to test anything else.
+  const scannerReplay = uniA.scannerReplay;
+  const replayTopN = strategy?.top_n || 10;
 
   // Bar size + account are DERIVED, not chosen. Single mode: from the one
   // strategy. Compare mode: both share ONE timeline (the chart needs it), so the
@@ -849,42 +842,17 @@ export default function Backtest() {
               </>
             )}
           </p>
-          {/* Scanner replay is ONLY meaningful for a scanner-universe strategy —
-              it reconstructs each day's top risers. A basket / custom / watchlist
-              strategy has a FIXED universe, so replaying scanner risers would test
-              a universe the strategy never trades. Hidden for those (the backtest
-              honours whatever universe the strategy is set to). */}
-          {strategy?.universe === "scanner" && (
-            <>
-              <label className="check">
-                <input
-                  type="checkbox"
-                  checked={scannerReplay}
-                  onChange={(e) => setScannerReplay(e.target.checked)}
-                />
-                Scanner replay — test against the historical <strong>top risers each day</strong> (not a fixed list){" "}
-                <InfoTip k="scanner_replay" />
-              </label>
-              {scannerReplay && (
-                <>
-                  <label style={{ display: "block", marginTop: 8 }}>
-                    <span className="field-cap">
-                      Risers per day (top N) <InfoTip k="replay_top_n" />
-                    </span>
-                    <NumberField min={1} max={100} step={1} value={replayTopN} onChange={setReplayTopN} />
-                  </label>
-                  <p className="hint">
-                    Each day, only that day's <strong>top {replayTopN}</strong> risers are eligible to enter; your
-                    strategy's entry rules then decide. The cache stores a wide set, so changing this number re-runs
-                    instantly — no re-sweep. Needs a completed sweep first (Settings → Historical bar cache). If you've
-                    also run an <strong>intraday sweep</strong>, replay uses 15-minute bars so intraday exits
-                    (flatten-before-close, VWAP, the entry window) behave for real; otherwise it falls back to daily
-                    bars, which can't simulate those. Works for stock and crypto strategies — each replays off its own
-                    cache.
-                  </p>
-                </>
-              )}
-            </>
+          {/* A scanner strategy ALWAYS replays the historical daily risers with
+              its own top-N — no toggle, no knob: the backtest offers no way to
+              test a universe the strategy doesn't actually trade. */}
+          {scannerReplay && (
+            <p className="hint">
+              <strong>Scanner replay</strong> <InfoTip k="scanner_replay" /> — tests the historical{" "}
+              <strong>top {replayTopN} risers each day</strong> (this strategy's own universe and top-N; change it on
+              the strategy, not here). Needs a completed sweep first (Settings → Historical bar cache); with an{" "}
+              <strong>intraday sweep</strong> it replays 15-minute bars so intraday exits behave for real, otherwise
+              daily bars.
+            </p>
           )}
           {/* HOW to test: period + spread only. Bar size and starting cash are
               DERIVED (shown below), never chosen. */}

@@ -1,4 +1,4 @@
-import { ReactNode, useCallback, useEffect, useState } from "react";
+import { ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import {
   Basket,
   createStrategy,
@@ -22,7 +22,8 @@ import {
 import InfoTip from "../components/InfoTip";
 import NumberField from "../components/NumberField";
 import UniverseSymbols from "../components/UniverseSymbols";
-import { IconDelete, IconEdit, IconPause, IconPlay, IconWarn } from "../components/icons";
+import { IconDelete, IconEdit, IconOptimize, IconPause, IconPlay, IconWarn } from "../components/icons";
+import { requestNav } from "../lib/nav";
 
 const RANK_LABELS: Record<RankBy, string> = {
   momentum_today: "Today's % move (momentum)",
@@ -1044,6 +1045,23 @@ export default function Strategies() {
   const [editing, setEditing] = useState<Partial<StrategyRow> | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [equity, setEquity] = useState<number | null>(null);
+  const editorRef = useRef<HTMLDivElement>(null);
+
+  // The editor opens at the TOP of the page — scroll it into view so clicking
+  // Edit far down the list doesn't look like nothing happened.
+  useEffect(() => {
+    if (editing) editorRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, [editing]);
+
+  // Switching to edit a different strategy (or starting a new one) mid-edit
+  // discards the open form — say so instead of silently eating the changes.
+  function startEdit(target: Partial<StrategyRow>) {
+    if (editing && editing.id !== target.id) {
+      const name = editing.name || "the current strategy";
+      if (!window.confirm(`You're still editing ${name} — switch anyway? Unsaved changes will be lost.`)) return;
+    }
+    setEditing(target);
+  }
 
   const refresh = useCallback(() => {
     getStrategies().then(setRows).catch((e: Error) => setNote(e.message));
@@ -1082,14 +1100,32 @@ export default function Strategies() {
   const paused = (rows ?? []).filter((r) => !r.enabled);
 
   function strategyCard(r: StrategyRow) {
+    // Compact by default: one folded row per strategy (name, state, a one-line
+    // summary); the full detail — holdings, ranking, last run, actions — shows
+    // only when the row is expanded. Keeps a long list scannable.
+    const universeShort =
+      r.universe === "basket"
+        ? `basket "${basketName(r.basket_id)}" top ${r.top_n}`
+        : r.universe === "custom"
+          ? `${r.symbols.length} symbol${r.symbols.length === 1 ? "" : "s"}`
+          : r.universe;
     return (
-      <div className={`card${r.enabled ? " card-live" : ""}`} key={r.id}>
-        <h3>
-          {r.name}{" "}
-          <span className={`pill ${r.enabled ? "ok pill-live" : "muted"}`}>
-            {r.enabled ? "● ENABLED" : "disabled"}
-          </span>
-        </h3>
+      <details className={`card fold strat-fold${r.enabled ? " card-live" : ""}`} key={r.id}>
+        <summary>
+          <div className="strat-head">
+            <h3>
+              {r.name}{" "}
+              <span className={`pill ${r.enabled ? "ok pill-live" : "muted"}`}>
+                {r.enabled ? "● ENABLED" : "disabled"}
+              </span>
+            </h3>
+            <span className="hint">
+              {r.asset_class} · {universeShort} · {r.swing_mode ? "swing" : "intraday"} · $
+              {r.sleeve_usd.toLocaleString()} sleeve
+              {(r.open_trades ?? 0) > 0 ? ` · ${r.open_trades} open` : ""}
+            </span>
+          </div>
+        </summary>
         <dl>
           <dt>Trades</dt>
           <dd>
@@ -1131,16 +1167,24 @@ export default function Strategies() {
             {r.enabled ? <IconPause /> : <IconPlay />}
             {r.enabled ? "Pause" : "Enable"}
           </button>
-          <button className="small btn-icon btn-ghost" onClick={() => setEditing(r)} title="Edit this strategy's settings">
+          <button className="small btn-icon btn-ghost" onClick={() => startEdit(r)} title="Edit this strategy's settings">
             <IconEdit />
             Edit
+          </button>
+          <button
+            className="small btn-icon btn-ghost"
+            onClick={() => requestNav({ tab: "optimizer", strategyId: r.id })}
+            title="Search better settings for this strategy (opens the Optimizer)"
+          >
+            <IconOptimize />
+            Optimize
           </button>
           <button className="small btn-icon danger" onClick={() => remove(r)} title="Delete this strategy permanently">
             <IconDelete />
             Delete
           </button>
         </div>
-      </div>
+      </details>
     );
   }
 
@@ -1148,7 +1192,7 @@ export default function Strategies() {
     <>
       <div className="toolbar">
         <h2>Strategies</h2>
-        <button className="small" onClick={() => setEditing(EMPTY)}>
+        <button className="small" onClick={() => startEdit(EMPTY)}>
           + New strategy
         </button>
       </div>
@@ -1158,19 +1202,25 @@ export default function Strategies() {
         </div>
       )}
       {editing && (
-        <Editor
-          initial={editing}
-          presets={presets}
-          baskets={baskets}
-          allStrategies={rows ?? []}
-          equity={equity}
-          onSaved={() => {
-            setEditing(null);
-            refresh();
-          }}
-          onCancel={() => setEditing(null)}
-          onBasketsChanged={refreshBaskets}
-        />
+        <div ref={editorRef}>
+          {/* key forces a fresh Editor when the TARGET changes — its form state
+              seeds from `initial` once, so without the remount, clicking Edit on
+              a different strategy silently kept showing the old one. */}
+          <Editor
+            key={editing.id ?? "new"}
+            initial={editing}
+            presets={presets}
+            baskets={baskets}
+            allStrategies={rows ?? []}
+            equity={equity}
+            onSaved={() => {
+              setEditing(null);
+              refresh();
+            }}
+            onCancel={() => setEditing(null)}
+            onBasketsChanged={refreshBaskets}
+          />
+        </div>
       )}
       {!rows ? (
         <div className="card">Loading…</div>

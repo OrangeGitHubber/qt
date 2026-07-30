@@ -13,6 +13,7 @@ import Setup from "./pages/Setup";
 import Strategies from "./pages/Strategies";
 import Watchlist from "./pages/Watchlist";
 import { IconWarn } from "./components/icons";
+import { onNav } from "./lib/nav";
 
 type Tab =
   | "dashboard"
@@ -55,6 +56,9 @@ export default function App() {
   useEffect(() => {
     refreshAuth();
   }, [refreshAuth]);
+
+  // Cross-page jumps (e.g. a strategy row's "Optimize" button) land here.
+  useEffect(() => onNav((r) => setTab(r.tab as Tab)), []);
 
   useEffect(() => {
     if (!signedIn) return;

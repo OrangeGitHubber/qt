@@ -3,6 +3,25 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## UX batch: compact strategies, sticky nav, folded settings, honest backtest universe (2026-07-30)
+
+- **Strategies pack tight.** Each strategy is now a compact folded row (name,
+  state, one-line summary); expand the one you care about for holdings, ranking,
+  last run and actions. Clicking **Edit** now scrolls you to the editor (it was
+  easy to miss at the top), switching to edit a different strategy warns that
+  unsaved changes will be lost (previously it silently did nothing — a real
+  bug), and every strategy gains an **Optimize** action that jumps straight to
+  the Optimizer with it preselected.
+- **The top tab ribbon stays visible** while you scroll.
+- **Settings cards fold** to their titles with a +/− toggle — everything starts
+  collapsed, including (especially) **Danger zone — liquidate holdings**, which
+  is now double-folded inside Broker connection.
+- **The backtest can no longer deviate from a strategy's universe.** For a
+  scanner strategy, scanner replay is simply ON with the strategy's own top-N —
+  the checkbox and the "risers per day" knob are gone (change them on the
+  strategy, not the test). The Optimizer also lost its 1-hour bar option,
+  matching the backtest.
+
 ## Zoom into any chart to see the detail (2026-07-29)
 
 Testing a long backtest — say 500 days — meant squinting at a wall of points
