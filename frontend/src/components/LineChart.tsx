@@ -16,11 +16,13 @@ export interface ChartMarker {
   seriesIndex?: number;
 }
 
-// One holding's contribution to a single day's move (qty 0 = closed that day).
+// One holding's contribution to a single day's move (qty 0 = closed that day),
+// in PERCENTAGE POINTS of the account — the same unit as the chart's y-axis, so
+// the day's holdings sum to the line's visible day-over-day move.
 export interface DayHolding {
   symbol: string;
   qty: number;
-  day_pnl: number;
+  day_pnl_pct: number;
 }
 
 /** Multi-series % chart with a hover crosshair and optional trade markers.
@@ -274,21 +276,22 @@ export default function LineChart({
             (holdings?.[labels[hover]]?.length ?? 0) > 0 &&
             (() => {
               const hs = holdings![labels[hover]];
-              const total = hs.reduce((sum, h) => sum + h.day_pnl, 0);
+              const total = hs.reduce((sum, h) => sum + h.day_pnl_pct, 0);
               return (
                 <div className="td-holdings">
                   <span className="td-day">
                     {hs.filter((h) => h.qty > 0).length} open:
                   </span>{" "}
                   {hs.map((h) => (
-                    <span key={h.symbol} className={`td-item ${h.day_pnl >= 0 ? "up" : "down"}`}>
+                    <span key={h.symbol} className={`td-item ${h.day_pnl_pct >= 0 ? "up" : "down"}`}>
                       {h.symbol}
-                      {h.qty === 0 ? " (sold)" : ""} {h.day_pnl >= 0 ? "+" : "−"}${Math.abs(h.day_pnl).toFixed(2)}
+                      {h.qty === 0 ? " (sold)" : ""} {h.day_pnl_pct >= 0 ? "+" : "−"}
+                      {Math.abs(h.day_pnl_pct).toFixed(2)}%
                     </span>
                   ))}
                   <span className="td-day">
                     {" "}
-                    → day {total >= 0 ? "+" : "−"}${Math.abs(total).toFixed(2)}
+                    → day {total >= 0 ? "+" : "−"}{Math.abs(total).toFixed(2)}%
                   </span>
                 </div>
               );

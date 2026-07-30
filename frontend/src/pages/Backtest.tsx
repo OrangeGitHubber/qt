@@ -10,7 +10,7 @@ import {
   StrategyRow,
 } from "../api";
 import InfoTip from "../components/InfoTip";
-import LineChart, { ChartMarker } from "../components/LineChart";
+import LineChart, { ChartMarker, DayHolding } from "../components/LineChart";
 import NumberField from "../components/NumberField";
 import { IconWarn } from "../components/icons";
 
@@ -224,6 +224,20 @@ export default function Backtest() {
     rows.sort((a, b) => new Date(a.at).getTime() - new Date(b.at).getTime());
     return rows;
   }, [result, compareResult, zoomRange, strategies, strategyId, compareId]);
+
+  // Holdings attribution for the chart hover, converted from dollars into
+  // PERCENTAGE POINTS of starting cash — the unit the equity line is plotted
+  // in, so a day's holdings visibly sum to the line's day-over-day move.
+  const holdingsPct = useMemo<Record<string, DayHolding[]> | undefined>(() => {
+    if (!result?.daily_positions || !result.starting_cash) return undefined;
+    const base = result.starting_cash;
+    return Object.fromEntries(
+      Object.entries(result.daily_positions).map(([day, rows]) => [
+        day,
+        rows.map((r) => ({ symbol: r.symbol, qty: r.qty, day_pnl_pct: (r.day_pnl / base) * 100 })),
+      ]),
+    );
+  }, [result]);
 
   // Flatten round-trip trades into individual buy/sell actions in time order,
   // so the log reads like the chart markers: why it bought, then why it sold.
@@ -1069,7 +1083,7 @@ export default function Backtest() {
               onZoomChange={setZoomRange}
               markers={compareResult ? compareMarkers : markers}
               noTradeReasons={compareResult ? undefined : result.no_trade_reasons}
-              holdings={compareResult ? undefined : result.daily_positions}
+              holdings={compareResult ? undefined : holdingsPct}
               series={[
                 {
                   label: compareResult ? strategies.find((s) => s.id === strategyId)?.name ?? "Strategy A" : "This strategy",
