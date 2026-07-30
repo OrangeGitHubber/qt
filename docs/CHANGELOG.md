@@ -3,6 +3,22 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Dashboard: all open positions, per strategy — plus quicker jumps (2026-07-30)
+
+- **New "Open positions — all strategies" card on the Dashboard.** Every open
+  position across every strategy in one table: owner strategy, symbol, mode,
+  quantity, entry vs current price, unrealized P&L, and held-since. This is the
+  answer to a real confusion: the "position already open for this symbol" rail
+  is **account-wide**, so the strategy holding the position is often not the
+  one that got blocked — now you can see exactly who holds what. Refreshes
+  every 30s; degrades gracefully to entry data if prices are unreachable.
+- **Engine heartbeat moved home** — it now lives in the Engine card (where the
+  mode switch is), not the Market card.
+- **The strategy editor gains "Backtest →" and "Optimize →" buttons** next to
+  Save/Cancel, jumping straight to those tabs with the strategy preselected.
+  They run the last *saved* version — the tooltips say so in case you have
+  unsaved edits open.
+
 ## Crypto "day gain" now means the same thing everywhere: rolling 24h (2026-07-30)
 
 A real inconsistency, caught by a user comparing screens: the crypto

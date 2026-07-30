@@ -2,10 +2,12 @@ import { useCallback, useEffect, useState } from "react";
 import {
   EngineState,
   getEngine,
+  getOpenPositions,
   getScoreboard,
   getStrategies,
   getStrategyPnl,
   getStrategyPnlDaily,
+  OpenPositionsResponse,
   Scoreboard,
   setEngineMode,
   StatusResponse,
@@ -94,17 +96,14 @@ export default function Dashboard({ status }: { status: StatusResponse; onRefres
               <dd>
                 <span className="pill ok">OPEN 24/7</span>
               </dd>
-              <dt>Engine heartbeat</dt>
-              <dd>
-                <span className={`pill ${hb.stale ? "warn" : "ok"}`}>{hb.label}</span>
-              </dd>
             </dl>
           ) : (
             <p>No data.</p>
           )}
         </div>
-        <EngineCard />
+        <EngineCard heartbeat={hb} />
       </div>
+      <OpenPositionsCard />
       <ScoreboardCard />
       <StrategyContributionsCard />
     </>
@@ -287,7 +286,93 @@ function StrategyContributionsCard() {
   );
 }
 
-function EngineCard() {
+// Every open position across ALL strategies, each with its owner named. The
+// "position already open for this symbol" rail is account-wide, so the holder
+// is often a different strategy than the one that got blocked — this card is
+// where you find out which. Polls like the engine card.
+function OpenPositionsCard() {
+  const [data, setData] = useState<OpenPositionsResponse | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const refresh = useCallback(() => {
+    getOpenPositions()
+      .then((d) => {
+        setData(d);
+        setErr(null);
+      })
+      .catch((e: Error) => setErr(e.message));
+  }, []);
+  useEffect(() => {
+    refresh();
+    const t = setInterval(refresh, 30_000);
+    return () => clearInterval(t);
+  }, [refresh]);
+
+  if (err) return <div className="card error">Open positions: {err}</div>;
+  if (!data) return null;
+  const pnl = data.total_unrealized_pnl;
+  return (
+    <div className="card">
+      <h3>
+        Open positions — all strategies{" "}
+        <span className="hint">
+          ({data.positions.length} open
+          {data.positions.length > 0 && (
+            <>
+              {" · "}
+              <span className={pnl >= 0 ? "up" : "down"}>
+                {pnl >= 0 ? "+" : "−"}${Math.abs(pnl).toFixed(2)} unrealized
+              </span>
+            </>
+          )}
+          )
+        </span>
+      </h3>
+      {data.positions.length === 0 ? (
+        <p className="hint">
+          Nothing is held right now. When a strategy buys, the position appears here with its owner — including the one
+          behind any "position already open for this symbol" rail block.
+        </p>
+      ) : (
+        <div className="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>Strategy</th>
+                <th>Symbol</th>
+                <th>Mode</th>
+                <th>Qty</th>
+                <th>Entry</th>
+                <th>Now</th>
+                <th>Unrealized</th>
+                <th>Held since</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.positions.map((p, i) => (
+                <tr key={i}>
+                  <td className="sym">{p.strategy_name}</td>
+                  <td className="sym">{p.symbol}</td>
+                  <td>{p.mode}</td>
+                  <td>{p.qty}</td>
+                  <td>${p.entry_price.toFixed(4)}</td>
+                  <td>{p.current_price != null ? `$${p.current_price.toFixed(4)}` : "—"}</td>
+                  <td className={p.unrealized_pnl == null ? "" : p.unrealized_pnl >= 0 ? "up" : "down"}>
+                    {p.unrealized_pnl != null
+                      ? `${p.unrealized_pnl >= 0 ? "+" : "−"}$${Math.abs(p.unrealized_pnl).toFixed(2)} (${p.unrealized_pct}%)`
+                      : "—"}
+                  </td>
+                  <td className="hint">{p.entry_at ? new Date(p.entry_at).toLocaleString() : "—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function EngineCard({ heartbeat }: { heartbeat: { stale: boolean; label: string } }) {
   const [engine, setEngine] = useState<EngineState | null>(null);
   const [note, setNote] = useState<string | null>(null);
 
@@ -337,6 +422,10 @@ function EngineCard() {
         ))}
       </div>
       <dl>
+        <dt>Heartbeat</dt>
+        <dd>
+          <span className={`pill ${heartbeat.stale ? "warn" : "ok"}`}>{heartbeat.label}</span>
+        </dd>
         <dt>Regime</dt>
         <dd>
           {engine.regime ? (

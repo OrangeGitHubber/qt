@@ -13,7 +13,7 @@ import InfoTip from "../components/InfoTip";
 import LineChart, { ChartMarker, DayHolding } from "../components/LineChart";
 import NumberField from "../components/NumberField";
 import { IconEdit, IconWarn } from "../components/icons";
-import { requestNav } from "../lib/nav";
+import { consumeNav, requestNav } from "../lib/nav";
 
 type TradeEvent = {
   at: string; // ISO timestamp — drives ordering
@@ -317,9 +317,13 @@ export default function Backtest() {
   }, [result, events]);
 
   useEffect(() => {
+    // Another page (e.g. the strategy editor's "Backtest" button) may have
+    // jumped here with a strategy in tow — preselect it.
+    const pre = consumeNav()?.strategyId ?? null;
     getStrategies().then((rows) => {
       setStrategies(rows);
-      if (rows.length && strategyId === null) setStrategyId(rows[0].id);
+      if (rows.length && strategyId === null)
+        setStrategyId(pre !== null && rows.some((r) => r.id === pre) ? pre : rows[0].id);
     });
     getBaskets().then(setBaskets).catch(() => setBaskets([]));
     // eslint-disable-next-line react-hooks/exhaustive-deps

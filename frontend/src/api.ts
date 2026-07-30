@@ -276,6 +276,35 @@ export const removeBasketItem = (id: number, symbol: string, assetClass: string)
   );
 
 export const getEngine = () => fetch("/api/engine").then((r) => handle<EngineState>(r));
+
+// Account-wide open positions with their owning strategy — the Dashboard view
+// that answers "which strategy already holds the symbol that blocked my entry".
+export interface OpenPositionRow {
+  strategy_id: number;
+  strategy_name: string;
+  symbol: string;
+  asset_class: string;
+  mode: string;
+  qty: number;
+  entry_price: number;
+  notional: number | null;
+  entry_at: string | null;
+  entry_reason: string;
+  current_price: number | null;
+  market_value: number | null;
+  unrealized_pnl: number | null;
+  unrealized_pct: number | null;
+}
+
+export interface OpenPositionsResponse {
+  positions: OpenPositionRow[];
+  total_cost: number;
+  total_value: number;
+  total_unrealized_pnl: number;
+}
+
+export const getOpenPositions = () =>
+  fetch("/api/engine/positions").then((r) => handle<OpenPositionsResponse>(r));
 export const setEngineMode = (mode: string, confirm = false) =>
   fetch("/api/engine/mode", json({ mode, confirm })).then((r) => handle<{ mode: string }>(r));
 export const setRisk = (risk: RiskConfig & { leverage_confirm?: string }) =>

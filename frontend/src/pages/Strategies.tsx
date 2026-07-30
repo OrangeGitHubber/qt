@@ -1035,6 +1035,29 @@ function Editor({
         <button type="button" className="btn-ghost" onClick={onCancel}>
           Cancel
         </button>
+        {/* Jump straight to testing this strategy. Only for SAVED strategies —
+            both pages run the last saved config, not the open form (the titles
+            say so, in case there are unsaved edits). */}
+        {typeof s.id === "number" && (
+          <>
+            <button
+              type="button"
+              className="btn-ghost"
+              onClick={() => requestNav({ tab: "backtest", strategyId: s.id })}
+              title="Backtest the last SAVED version of this strategy (unsaved edits here aren't included)"
+            >
+              Backtest →
+            </button>
+            <button
+              type="button"
+              className="btn-ghost"
+              onClick={() => requestNav({ tab: "optimizer", strategyId: s.id })}
+              title="Optimize the last SAVED version of this strategy (unsaved edits here aren't included)"
+            >
+              Optimize →
+            </button>
+          </>
+        )}
       </div>
     </form>
   );

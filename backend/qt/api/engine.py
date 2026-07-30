@@ -245,6 +245,76 @@ def _iso_utc(dt: datetime | None) -> str | None:
     return dt.isoformat()
 
 
+@router.get("/positions")
+async def open_positions(session: Session = Depends(get_session)) -> dict:
+    """Every OPEN position across ALL strategies, with best-effort live prices —
+    the account-wide answer to "which strategy holds the position that blocked
+    my entry?" (the already-open rail is account-wide, so the holder is often a
+    DIFFERENT strategy than the one that wanted in). Scoped to the current
+    broker account, like the journal; shadow positions are included and
+    labelled by their mode."""
+    from qt.api.strategies import _snapshot_price
+
+    trades = (
+        session.query(Trade)
+        .filter(Trade.status == "open", *_account_conditions(None, session))
+        .order_by(Trade.entry_at)
+        .all()
+    )
+    names = {s.id: s.name for s in session.query(Strategy).all()}
+    rows = [
+        {
+            "strategy_id": t.strategy_id,
+            "strategy_name": names.get(t.strategy_id, f"strategy #{t.strategy_id}"),
+            "symbol": t.symbol,
+            "asset_class": t.asset_class,
+            "mode": t.mode,
+            "qty": t.qty,
+            "entry_price": t.entry_price,
+            "notional": t.notional,
+            "entry_at": t.entry_at.isoformat() if t.entry_at else None,
+            "entry_reason": t.entry_reason,
+            "current_price": None,
+            "market_value": None,
+            "unrealized_pnl": None,
+            "unrealized_pct": None,
+        }
+        for t in trades
+    ]
+
+    # Live marks — best effort, one batched snapshot call per asset class.
+    if rows:
+        client = get_client(session)
+        if client is not None:
+            stock_syms = sorted({r["symbol"] for r in rows if r["asset_class"] == "stock"})
+            crypto_syms = sorted({r["symbol"] for r in rows if r["asset_class"] == "crypto"})
+            snaps: dict = {}
+            try:
+                if stock_syms:
+                    snaps.update(await client.stock_snapshots(stock_syms))
+                if crypto_syms:
+                    snaps.update(await client.crypto_snapshots(crypto_syms))
+            except Exception:  # noqa: BLE001 — never fail the view on a price hiccup
+                snaps = {}
+            for r in rows:
+                price = _snapshot_price(snaps.get(r["symbol"]) or {})
+                if price and r["entry_price"]:
+                    r["current_price"] = price
+                    r["market_value"] = round(price * r["qty"], 2)
+                    r["unrealized_pnl"] = round((price - r["entry_price"]) * r["qty"], 2)
+                    r["unrealized_pct"] = round((price / r["entry_price"] - 1) * 100, 2)
+
+    total_cost = sum((r["notional"] or 0) for r in rows)
+    total_value = sum((r["market_value"] or 0) for r in rows if r["market_value"] is not None)
+    total_pnl = sum((r["unrealized_pnl"] or 0) for r in rows if r["unrealized_pnl"] is not None)
+    return {
+        "positions": rows,
+        "total_cost": round(total_cost, 2),
+        "total_value": round(total_value, 2),
+        "total_unrealized_pnl": round(total_pnl, 2),
+    }
+
+
 @router.get("/journal")
 def journal(
     mode: str | None = None,
