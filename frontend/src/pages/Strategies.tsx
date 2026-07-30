@@ -379,6 +379,7 @@ function Editor({
 }) {
   const [s, setS] = useState<Partial<StrategyRow>>(JSON.parse(JSON.stringify(initial)));
   const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false); // guards against a double-submit mid-save
 
   // What this strategy already holds (cost basis) — the same number the sleeve
   // rail measures against. Only meaningful when editing an existing strategy;
@@ -544,16 +545,41 @@ function Editor({
     }));
   }
 
-  async function save(e: React.FormEvent) {
-    e.preventDefault();
+  /** Write the form to the server. Returns the strategy id (a NEW strategy only
+   *  gets one here), or null if it failed — in which case the error is already
+   *  on screen and the caller must not navigate away. */
+  async function persist(): Promise<number | null> {
     setError(null);
     try {
-      if (s.id) await updateStrategy(s.id, s);
-      else await createStrategy(s);
-      onSaved();
+      if (s.id) {
+        await updateStrategy(s.id, s);
+        return s.id;
+      }
+      return (await createStrategy(s)).id;
     } catch (err) {
       setError((err as Error).message);
+      return null;
     }
+  }
+
+  async function save(e: React.FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    const id = await persist();
+    setBusy(false);
+    if (id !== null) onSaved();
+  }
+
+  /** Save, THEN jump to the backtest/optimizer. Both of those read the saved
+   *  strategy from the server, so navigating first silently tested the previous
+   *  version — you'd tweak a stop, hit Backtest, and grade the old config. */
+  async function saveAndGo(tab: string) {
+    setBusy(true);
+    const id = await persist();
+    setBusy(false);
+    if (id === null) return; // stay on the form; the error is shown above
+    onSaved();
+    requestNav({ tab, strategyId: id });
   }
 
   const p = s.params!;
@@ -1064,35 +1090,36 @@ function Editor({
       )}
       {error && <div className="error">{error}</div>}
       <div className="toolbar">
-        <button>{s.id ? "Save (creates new config version)" : "Create strategy"}</button>
+        <button disabled={busy}>
+          {busy ? "Saving…" : s.id ? "Save (creates new config version)" : "Create strategy"}
+        </button>
         {/* Full-size like Save (same height/baseline), ghost so Save stays the
             one primary action in the row. */}
-        <button type="button" className="btn-ghost" onClick={onCancel}>
+        <button type="button" className="btn-ghost" onClick={onCancel} disabled={busy}>
           Cancel
         </button>
-        {/* Jump straight to testing this strategy. Only for SAVED strategies —
-            both pages run the last saved config, not the open form (the titles
-            say so, in case there are unsaved edits). */}
-        {typeof s.id === "number" && (
-          <>
-            <button
-              type="button"
-              className="btn-ghost"
-              onClick={() => requestNav({ tab: "backtest", strategyId: s.id })}
-              title="Backtest the last SAVED version of this strategy (unsaved edits here aren't included)"
-            >
-              Backtest →
-            </button>
-            <button
-              type="button"
-              className="btn-ghost"
-              onClick={() => requestNav({ tab: "optimizer", strategyId: s.id })}
-              title="Optimize the last SAVED version of this strategy (unsaved edits here aren't included)"
-            >
-              Optimize →
-            </button>
-          </>
-        )}
+        {/* These SAVE FIRST, then jump. Both destinations load the strategy from
+            the server, so navigating without saving quietly tested the previous
+            version — you'd tweak a stop, hit Backtest, and grade the old config.
+            Works for a new strategy too: saving is what creates it. */}
+        <button
+          type="button"
+          className="btn-ghost"
+          disabled={busy}
+          onClick={() => saveAndGo("backtest")}
+          title="Save this strategy, then backtest exactly what you just saved"
+        >
+          Save &amp; backtest →
+        </button>
+        <button
+          type="button"
+          className="btn-ghost"
+          disabled={busy}
+          onClick={() => saveAndGo("optimizer")}
+          title="Save this strategy, then optimize exactly what you just saved"
+        >
+          Save &amp; optimize →
+        </button>
       </div>
     </form>
   );
@@ -1115,6 +1142,17 @@ export default function Strategies() {
 
   // Switching to edit a different strategy (or starting a new one) mid-edit
   // discards the open form — say so instead of silently eating the changes.
+  // Leaving the page from a row while the editor is open would drop whatever is
+  // in the form — same silent loss the "Save & backtest" buttons now prevent, one
+  // click away. Ask first.
+  function leaveFor(tab: string, strategyId: number) {
+    if (editing) {
+      const name = editing.name || "the open strategy";
+      if (!window.confirm(`You're still editing ${name} — leave anyway? Unsaved changes will be lost.`)) return;
+    }
+    requestNav({ tab, strategyId });
+  }
+
   function startEdit(target: Partial<StrategyRow>) {
     if (editing && editing.id !== target.id) {
       const name = editing.name || "the current strategy";
@@ -1244,7 +1282,7 @@ export default function Strategies() {
           </button>
           <button
             className="small btn-icon btn-ghost"
-            onClick={() => requestNav({ tab: "optimizer", strategyId: r.id })}
+            onClick={() => leaveFor("optimizer", r.id)}
             title="Search better settings for this strategy (opens the Optimizer)"
           >
             <IconOptimize />
