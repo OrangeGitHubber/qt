@@ -3,6 +3,37 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Backtests and searches stop re-downloading the same history (2026-07-30)
+
+Every backtest and every parameter search used to pull its bars from Alpaca from
+scratch — the same year of the same symbols, again and again. On a mixed-
+resolution search that's a lot of 15-minute bars for data that hasn't changed
+since the last time you asked.
+
+The bar cache you already have (the one the scanner sweep fills — SQLite by
+default, Postgres if you've pointed `QT_BAR_CACHE_URL` at one) now sits in front
+of those fetches. It reads what's already stored, downloads only the missing
+recent edge, and saves what comes back. Re-running a search after tweaking a
+setting is now mostly free.
+
+Three rules keep it honest, and they matter more than the speed:
+
+- **A bar that hasn't finished is never stored.** Today's daily bar and the
+  15-minute slot currently ticking still have moving closing prices. The cache
+  never updates a row once written, so saving one would mean every future run
+  reading a wrong price for that bar — forever. Only definitively closed periods
+  are saved. You still *see* the live bar in your results; it just isn't kept.
+- **The cache can never break a backtest.** Not configured, database down,
+  corrupt, anything at all — it logs and quietly falls back to a normal download.
+- **A partial series is never passed off as complete.** If a symbol's cached
+  history has a hole in it, or starts later than the window you asked for, that
+  symbol's whole window is re-downloaded rather than handed to the backtester
+  with a month silently missing. Slower in that one case, never wrong.
+
+Stocks and crypto go to their own tables (they disagree about what "a day"
+means), as do daily and 15-minute bars. Scanner replay and the basket sweep were
+already cached and are untouched.
+
 ## The optimizer stops tuning your stops against a replay that can't see them (2026-07-30)
 
 Yesterday the backtest learned to run mixed resolution — 15-minute bars for the

@@ -27,7 +27,7 @@ from qt.api.market import require_client
 from qt.broker.alpaca import AlpacaClient, AlpacaError
 from qt.db import get_session
 from qt.models import Basket, BasketItem, Strategy, WatchlistItem
-from qt.services import optimizer, sweep
+from qt.services import barfetch, optimizer, sweep
 from qt.services.engine import get_risk
 
 log = logging.getLogger("qt.api.optimizer")
@@ -137,6 +137,8 @@ async def _run_search(
         if prebuilt_bars is not None:
             bars = prebuilt_bars
         else:
+            # Read-through the bar cache: only the missing recent edge is actually
+            # downloaded, and any cache trouble degrades to a plain fetch.
             _progress.phase = "downloading bars"
             window_start = datetime.now(timezone.utc) - timedelta(days=days)
             needs_warmup = _needs_warmup(strategy_dict["params"])
@@ -149,13 +151,13 @@ async def _run_search(
                 # series covers only the tested window (96 bars/symbol/day for
                 # crypto — fetching warm-up intraday too would multiply the
                 # download for bars that could never trade).
-                daily_bars = await client.historical_bars(symbols, asset_class, "1Day", start)
-                bars = await client.historical_bars(
-                    symbols, asset_class, "15Min",
+                daily_bars = await barfetch.fetch_bars(client, symbols, asset_class, "1Day", start)
+                bars = await barfetch.fetch_bars(
+                    client, symbols, asset_class, "15Min",
                     window_start.strftime("%Y-%m-%dT%H:%M:%SZ"),
                 )
             else:
-                bars = await client.historical_bars(symbols, asset_class, timeframe, start)
+                bars = await barfetch.fetch_bars(client, symbols, asset_class, timeframe, start)
             if not any(bars.get(s) for s in symbols):
                 raise ValueError("No historical bars for those symbols/timeframe.")
             # A mixed run always gates trading at the window start: its intraday

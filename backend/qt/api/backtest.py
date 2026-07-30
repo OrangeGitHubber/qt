@@ -12,7 +12,7 @@ from qt.api.market import require_client
 from qt.broker.alpaca import AlpacaClient, AlpacaError
 from qt.db import get_session
 from qt.models import BasketItem, Strategy, WatchlistItem
-from qt.services import backtest
+from qt.services import backtest, barfetch
 from qt.services.engine import get_risk
 
 router = APIRouter(prefix="/api/backtest", tags=["backtest"])
@@ -384,6 +384,9 @@ async def run(
     # bars — the finest the free feed gives — whatever the caller asked for.
     replay_timeframe = "15Min" if mixed else body.timeframe
     daily_bars: dict[str, list[dict]] | None = None
+    # Read-through the bar cache (qt.services.barfetch): the same year of history
+    # was being re-downloaded on every run. Only the missing recent edge is
+    # fetched, and any cache trouble degrades to a plain Alpaca fetch.
     try:
         if mixed:
             # Two fetches, deliberately different windows: the DAILY series reaches
@@ -391,15 +394,15 @@ async def run(
             # while the intraday series covers only the tested window — 15-minute
             # crypto bars are 96/symbol/day, so fetching warm-up intraday too would
             # multiply the download for bars that could never trade.
-            daily_bars = await client.historical_bars(
-                symbols, strategy.asset_class, "1Day", fetch_start
+            daily_bars = await barfetch.fetch_bars(
+                client, symbols, strategy.asset_class, "1Day", fetch_start
             )
-            bars = await client.historical_bars(
-                symbols, strategy.asset_class, replay_timeframe, window_start_str
+            bars = await barfetch.fetch_bars(
+                client, symbols, strategy.asset_class, replay_timeframe, window_start_str
             )
         else:
-            bars = await client.historical_bars(
-                symbols, strategy.asset_class, replay_timeframe, fetch_start
+            bars = await barfetch.fetch_bars(
+                client, symbols, strategy.asset_class, replay_timeframe, fetch_start
             )
     except AlpacaError as exc:
         raise HTTPException(status_code=502, detail=f"Bar download failed ({exc.status_code}): {exc}")
