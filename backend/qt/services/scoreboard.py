@@ -55,6 +55,45 @@ async def record_snapshot(session: Session, client: AlpacaClient) -> None:
         )
 
 
+# A day-over-day equity move this large is an ACCOUNT CHANGE, not trading. The
+# risk rails cap a real day's loss far below this, so the gap is unambiguous.
+ACCOUNT_STEP_PCT = 25.0
+
+
+def _with_untagged_history(every: list, tagged: list) -> list:
+    """Extend the account's series BACKWARDS through untagged rows that are
+    continuous in equity.
+
+    Snapshots only started carrying an account in migration 0008, so every row
+    recorded before that is untagged — including the current account's own recent
+    history. Scoping strictly by account would throw that away and show a
+    one-point chart on an account that has been running for days.
+
+    Adopting *all* untagged rows would be worse: the previous account's rows are
+    in there too, and pulling them in resurrects the very cliff this fix removed.
+    So we walk backwards from the account's first tagged day and keep going only
+    while consecutive equity is continuous — stopping dead at the step that marks
+    the switch. Read-only: nothing is restamped, so a wrong guess costs a redraw,
+    not data."""
+    if not tagged or not every:
+        return tagged
+    first = tagged[0]
+    idx = {id(r): i for i, r in enumerate(every)}.get(id(first))
+    if idx is None:
+        return tagged
+    prefix: list = []
+    later = first
+    for row in reversed(every[:idx]):
+        if row.account_id is not None:  # a DIFFERENT account's row — stop
+            break
+        prev, cur = row.bot_equity, later.bot_equity
+        if not prev or abs(cur / prev - 1) * 100 >= ACCOUNT_STEP_PCT:
+            break  # the switch
+        prefix.append(row)
+        later = row
+    return list(reversed(prefix)) + tagged
+
+
 def series(session: Session, account: str | None = None) -> dict:
     """The scoreboard, scoped to ONE broker account.
 
@@ -70,11 +109,14 @@ def series(session: Session, account: str | None = None) -> dict:
     q = session.query(BenchmarkSnapshot)
     if account == "untagged":
         q = q.filter(BenchmarkSnapshot.account_id.is_(None))
-    elif account != "all":
+        rows = q.order_by(BenchmarkSnapshot.day).all()
+    elif account == "all":
+        rows = q.order_by(BenchmarkSnapshot.day).all()
+    else:
         current = account or get_setting(session, "current_account_id")
-        if current:
-            q = q.filter(BenchmarkSnapshot.account_id == current)
-    rows = q.order_by(BenchmarkSnapshot.day).all()
+        every = q.order_by(BenchmarkSnapshot.day).all()
+        rows = [r for r in every if r.account_id == current] if current else every
+        rows = _with_untagged_history(every, rows)
     if not rows:
         return {"days": [], "bot": [], "spy": [], "btc": [], "verdict": None, "account": account}
 
