@@ -363,8 +363,25 @@ def journal(
 
 
 @router.get("/scoreboard")
-def get_scoreboard(session: Session = Depends(get_session)) -> dict:
-    return scoreboard.series(session)
+async def get_scoreboard(
+    account: str | None = None, session: Session = Depends(get_session)
+) -> dict:
+    """The honesty meter, scoped to ONE broker account (default: the current one).
+    Equity across an account switch isn't comparable — normalising over it turned
+    a balance change into a fake −80% "loss".
+
+    The stored series is snapshotted hourly, so today's point can lag. Best-effort,
+    we refresh it from the live account before serving, making the last point
+    current as of this request rather than up to an hour old."""
+    if account in (None, "", "current"):
+        client = get_client(session)
+        if client is not None:
+            try:
+                await scoreboard.record_snapshot(session, client)
+                session.commit()
+            except Exception:  # noqa: BLE001 — a stale last point beats a broken card
+                session.rollback()
+    return scoreboard.series(session, account=None if account in ("", "current") else account)
 
 
 @router.get("/strategy-pnl")

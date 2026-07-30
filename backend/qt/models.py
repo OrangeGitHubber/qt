@@ -185,4 +185,14 @@ class BenchmarkSnapshot(Base):
     bot_equity: Mapped[float] = mapped_column(Float)
     spy_close: Mapped[float | None] = mapped_column(Float, nullable=True)
     btc_close: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # The broker account this equity was measured on. Without it the scoreboard
+    # normalised every point against the first row EVER recorded, so switching
+    # accounts made the equity step read as a catastrophic loss. Nullable:
+    # pre-0008 rows are "legacy" (see the migration).
+    account_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    # The broker account this equity was measured on. Without it the scoreboard
+    # normalised every point against the first row EVER recorded, so switching
+    # accounts made the equity step read as a catastrophic loss. Nullable:
+    # pre-0008 rows are "legacy" (see the migration).
+    account_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
