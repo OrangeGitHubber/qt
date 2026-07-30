@@ -612,6 +612,42 @@ tr.log-gap td {
   font-style: italic;
 }
 
+/* "Still working" line beside a disabled Run button. A long backtest runs in the
+   background for minutes; without this the greyed-out button is the only signal,
+   and a frozen button is indistinguishable from a broken one. */
+.run-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin-left: 0.7rem;
+  font-size: 0.9rem;
+  color: var(--muted);
+  vertical-align: middle;
+}
+
+.spinner {
+  width: 0.85em;
+  height: 0.85em;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  flex: none;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Motion is decoration here — the text alone already says it's working. */
+@media (prefers-reduced-motion: reduce) {
+  .spinner {
+    animation: none;
+  }
+}
+
 /* Trade logs: short data columns (date, action, price ×qty) plus one long
    free-text column. Left to itself the browser steals width from the data
    columns to give the prose more, folding "▲ Bought" and "$558.79 ×0.4474"

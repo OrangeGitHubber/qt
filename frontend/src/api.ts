@@ -568,7 +568,16 @@ export interface OpenPosition {
  *  Callers see the same Promise<Result> as before — the waiting lives here so no
  *  page has to know a job exists.
  */
-async function runAsJob<T>(startUrl: string, body: unknown): Promise<T> {
+export interface JobProgress {
+  phase: string;
+  pct: number | null;
+}
+
+async function runAsJob<T>(
+  startUrl: string,
+  body: unknown,
+  onProgress?: (p: JobProgress) => void,
+): Promise<T> {
   const { job_id } = await fetch(startUrl, json(body)).then((r) => handle<{ job_id: string }>(r));
   // Fast enough to feel instant on a short run, slow enough not to hammer a home
   // server through a 20-minute one.
@@ -576,9 +585,12 @@ async function runAsJob<T>(startUrl: string, body: unknown): Promise<T> {
   for (;;) {
     await new Promise((r) => setTimeout(r, POLL_MS));
     const st = await fetch(`/api/backtest/job/${job_id}`).then((r) =>
-      handle<{ running: boolean; error: string | null; result: T | null }>(r),
+      handle<{ running: boolean; phase: string; pct: number | null; error: string | null; result: T | null }>(r),
     );
-    if (st.running) continue;
+    if (st.running) {
+      onProgress?.({ phase: st.phase, pct: st.pct });
+      continue;
+    }
     if (st.error) throw new Error(st.error);
     if (st.result === null) throw new Error("The backtest finished without a result — check the server log.");
     return st.result;
@@ -594,7 +606,8 @@ export const runBacktest = (body: {
   timeframe: string;
   starting_cash: number;
   spread_pct: number;
-}) => runAsJob<BacktestResult>("/api/backtest/start", body);
+}, onProgress?: (p: JobProgress) => void) =>
+  runAsJob<BacktestResult>("/api/backtest/start", body, onProgress);
 
 // Portfolio (multi-strategy) backtest: N strategies over the SAME period sharing
 // ONE account + the global rails, with a per-strategy contribution breakdown.
@@ -650,7 +663,8 @@ export const runPortfolioBacktest = (body: {
   timeframe: string;
   starting_cash: number;
   spread_pct: number;
-}) => runAsJob<PortfolioBacktestResult>("/api/backtest/portfolio/start", body);
+}, onProgress?: (p: JobProgress) => void) =>
+  runAsJob<PortfolioBacktestResult>("/api/backtest/portfolio/start", body, onProgress);
 
 // ---- Strategy optimizer (parameter search) ----
 // Searches a momentum strategy's parameter space with the SAME backtester,

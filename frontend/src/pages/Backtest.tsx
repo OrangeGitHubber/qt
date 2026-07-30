@@ -4,6 +4,7 @@ import {
   BacktestResult,
   getBaskets,
   getStrategies,
+  JobProgress,
   PortfolioBacktestResult,
   runBacktest,
   runPortfolioBacktest,
@@ -197,6 +198,7 @@ export default function Backtest() {
   // nothing moving is exactly what "it just stopped working" felt like — count
   // the seconds so a slow run is visibly a slow run, not a dead one.
   const [elapsed, setElapsed] = useState(0);
+  const [progress, setProgress] = useState<JobProgress | null>(null);
   const working = busy || portfolioBusy;
   useEffect(() => {
     if (!working) return;
@@ -206,6 +208,22 @@ export default function Backtest() {
     return () => clearInterval(t);
   }, [working]);
   const since = elapsed >= 60 ? `${Math.floor(elapsed / 60)}m ${elapsed % 60}s` : `${elapsed}s`;
+
+  // What the run is doing, beside the disabled button. The phase comes from the
+  // server; the clock is local, so it keeps ticking between polls and the line
+  // never looks stuck even while a single phase runs for minutes.
+  function RunStatus() {
+    if (!working) return null;
+    const phase = progress?.phase ?? "Starting…";
+    return (
+      <span className="run-status" role="status" aria-live="polite">
+        <span className="spinner" aria-hidden="true" />
+        {phase}
+        {progress?.pct != null && ` ${progress.pct}%`}
+        <span className="hint"> · {since}</span>
+      </span>
+    );
+  }
 
   // Place each buy/sell on the equity curve's day index. Positions still open at
   // the window end aren't in trade_list (no forced sale), but their BUYS still
@@ -451,6 +469,7 @@ export default function Backtest() {
     }
     setBusy(true);
     setError(null);
+    setProgress(null);
     setResult(null);
     setCompareResult(null);
     setZoomRange(null);
@@ -461,14 +480,19 @@ export default function Backtest() {
     const doCompare = mode === "compare" && compareStrat && compareId !== strategyId;
     try {
       const [r, cr] = await Promise.all([
-        runBacktest({
-          strategy_id: strategyId,
-          symbols: uniA.symbols,
-          scanner_replay: scannerReplay,
-          replay_top_n: replayTopN,
-          starting_cash: singleCash,
-          ...shared,
-        }),
+        runBacktest(
+          {
+            strategy_id: strategyId,
+            symbols: uniA.symbols,
+            scanner_replay: scannerReplay,
+            replay_top_n: replayTopN,
+            starting_cash: singleCash,
+            ...shared,
+          },
+          // Only the primary run drives the status line: in compare mode two
+          // near-identical runs would fight over it and make it flicker.
+          setProgress,
+        ),
         doCompare
           ? runBacktest({
               strategy_id: compareStrat.id,
@@ -536,15 +560,19 @@ export default function Backtest() {
     }
     setPortfolioBusy(true);
     setPortfolioError(null);
+    setProgress(null);
     setPortfolioResult(null);
     try {
-      const r = await runPortfolioBacktest({
-        strategy_ids: portfolioIds,
-        days,
-        timeframe: portfolioTimeframe,
-        starting_cash: portfolioCash,
-        spread_pct: spread,
-      });
+      const r = await runPortfolioBacktest(
+        {
+          strategy_ids: portfolioIds,
+          days,
+          timeframe: portfolioTimeframe,
+          starting_cash: portfolioCash,
+          spread_pct: spread,
+        },
+        setProgress,
+      );
       setPortfolioResult(r);
     } catch (err) {
       setPortfolioError((err as Error).message);
@@ -651,8 +679,9 @@ export default function Backtest() {
               )}
               {portfolioError !== null && <div className="error">{portfolioError}</div>}
               <button disabled={portfolioBusy || portfolioIds.length === 0 || portfolioMixedBars}>
-                {portfolioBusy ? `Replaying history… ${since}` : "Run portfolio"}
+                {portfolioBusy ? "Running…" : "Run portfolio"}
               </button>
+              <RunStatus />
             </form>
           </div>
 
@@ -1037,12 +1066,12 @@ export default function Backtest() {
               is indistinguishable from a broken one. Let the click through and let
               run() say why nothing happened. */}
           <button disabled={busy || (mode === "compare" && (!compareId || compareMixedBars))}>
-            {busy
-              ? `Replaying history… ${since}`
-              : mode === "compare"
-                ? "Run comparison"
-                : "Run backtest"}
+            {/* The status line beside this carries the real phase; a button that
+                insisted "Replaying history…" while the run was still downloading
+                bars would contradict it. */}
+            {busy ? "Running…" : mode === "compare" ? "Run comparison" : "Run backtest"}
           </button>
+          <RunStatus />
         </form>
       </div>
 

@@ -14,6 +14,7 @@ Honest limitations, surfaced in the UI:
 import os
 from bisect import bisect_left
 from collections import Counter
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
@@ -563,6 +564,7 @@ def run_backtest(
     sim_start: datetime | None = None,
     *,
     daily_bars_by_symbol: dict[str, list[dict]] | None = None,
+    progress: Callable[[int, int], None] | None = None,
 ) -> dict:
     """Pure simulation: strategy dict (same shape as the DB row), raw bars per
     symbol, global risk config. Returns metrics + equity curve + trades.
@@ -597,7 +599,12 @@ def run_backtest(
     intraday bar on day D reads the value derived from daily closes through D−1,
     never D's own close. A symbol with no daily bars gets None indicators for
     every bar (the entry/exit rules already treat None as "can't tell").
-    None (the default) = single-resolution replay, byte-identical to before."""
+    None (the default) = single-resolution replay, byte-identical to before.
+
+    `progress` is called as (bars_done, bars_total) every so often so a caller
+    running this in the background can say how far along it is. Purely an
+    observer — the simulation never reads it, and None (the default) keeps this
+    function exactly as pure as it was."""
     params = strategy["params"]
     swing = strategy["swing_mode"]
     sizing = strategy["sizing_usd"]
@@ -677,7 +684,13 @@ def run_backtest(
     day_flows: dict[str, float] = {}  # today's cash flows per symbol (+sell, −buy)
     day_contrib: dict[str, list[dict]] = {}
 
-    for ts in sorted(events):
+    timeline = sorted(events)
+    # Report roughly a hundred times over the run, whatever its length — often
+    # enough that the number visibly moves, rare enough to cost nothing.
+    tick_every = max(1, len(timeline) // 100)
+    for step, ts in enumerate(timeline):
+        if progress is not None and step % tick_every == 0:
+            progress(step, len(timeline))
         bars = events[ts]
         day = day_of(ts)
         if sim_start is not None and ts < sim_start:

@@ -3,6 +3,18 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## A running backtest now says what it's doing (2026-07-30)
+
+Now that a long run happens in the background, the only sign of life was a
+greyed-out button — and a frozen button looks exactly like a broken one. Beside
+it you now get a spinner and the actual phase the server is in: **"Downloading
+30 symbols of history…"**, then **"Replaying history… 47%"**, then **"Fetching
+the SPY benchmark…"**, with the elapsed time alongside. The percentage is real,
+counted off the bars actually replayed, and only appears for the replay — the
+one phase whose length is knowable in advance. The clock is kept locally, so the
+line keeps ticking between updates instead of freezing whenever one phase runs
+long.
+
 ## Long backtests no longer die at 100 seconds (2026-07-30)
 
 A 350-day backtest over 30 symbols ran for a few minutes and then failed with

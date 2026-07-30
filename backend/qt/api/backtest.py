@@ -19,6 +19,8 @@ import asyncio
 import json
 import logging
 import uuid
+from collections.abc import Callable
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 
@@ -36,6 +38,25 @@ from qt.services.engine import get_risk
 log = logging.getLogger("qt.api.backtest")
 
 router = APIRouter(prefix="/api/backtest", tags=["backtest"])
+
+# Where a running backtest says what it's up to. A ContextVar rather than an
+# argument because the handlers below are FastAPI routes: an extra parameter
+# would be read as a request field. Background jobs install a sink here; a direct
+# POST leaves it unset and _report() costs nothing. asyncio.to_thread copies the
+# context, so reports from inside the (threaded) replay arrive too.
+_reporter: ContextVar[Callable[[str, int | None], None] | None] = ContextVar("bt_reporter", default=None)
+
+
+def _report(phase: str, pct: int | None = None) -> None:
+    sink = _reporter.get()
+    if sink is not None:
+        sink(phase, pct)
+
+
+def _replay_progress(done: int, total: int) -> None:
+    """run_backtest's observer hook — bars replayed out of bars total."""
+    _report("Replaying history…", int(done * 100 / total) if total else 0)
+
 
 TIMEFRAMES = ("15Min", "1Hour", "1Day")
 
@@ -343,6 +364,7 @@ async def run_portfolio(
 
     # OFF the event loop — see the note on run()'s call. get_risk() returns a
     # plain dict, so nothing DB-bound crosses the thread boundary.
+    _report("Replaying the portfolio…")
     result = await asyncio.to_thread(
         backtest.run_portfolio_backtest,
         strategy_dicts, bars_by_strategy, get_risk(session),
@@ -433,6 +455,7 @@ async def run(
     # Read-through the bar cache (qt.services.barfetch): the same year of history
     # was being re-downloaded on every run. Only the missing recent edge is
     # fetched, and any cache trouble degrades to a plain Alpaca fetch.
+    _report(f"Downloading {len(symbols)} symbol{'' if len(symbols) == 1 else 's'} of history…")
     try:
         if mixed:
             # Two fetches, deliberately different windows: the DAILY series reaches
@@ -466,6 +489,7 @@ async def run(
     # keep each request short, so the proxy would time out anyway. A thread lets
     # the loop breathe (Python drops the GIL periodically), which is all the
     # poller needs; get_risk() is a plain dict, so nothing DB-bound crosses over.
+    _report("Replaying history…", 0)
     result = await asyncio.to_thread(
         backtest.run_backtest,
         strategy_dict, bars, get_risk(session),
@@ -475,6 +499,7 @@ async def run(
         # belt-and-braces guard: nothing before the window can ever trade.
         sim_start=window_start if (warmup or mixed) else None,
         daily_bars_by_symbol=daily_bars,
+        progress=_replay_progress,
     )
     if "error" in result:
         raise HTTPException(status_code=422, detail=result["error"])
@@ -487,6 +512,7 @@ async def run(
     result["benchmark"] = None
     result["benchmark_symbol"] = None
     if [market_symbol] != symbols:
+        _report(f"Fetching the {market_symbol} benchmark…")
         try:
             result["benchmark"] = await backtest.fetch_benchmark(
                 # Same day bucketing as the run, or the benchmark line lands a day
@@ -522,15 +548,18 @@ async def _scanner_replay(
     session days) and crypto (UTC calendar days) off their SEPARATE caches."""
     # Both off the event loop: the dataset read sweeps the whole bar cache and the
     # replay is pure CPU. See the note on run()'s call.
+    _report("Reading cached movers…")
     ds = await asyncio.to_thread(
         load_scanner_replay_dataset, strategy.asset_class, body.days, body.replay_top_n
     )
 
+    _report("Replaying history…", 0)
     result = await asyncio.to_thread(
         backtest.run_backtest,
         strategy_dict, ds.bars, get_risk(session),
         starting_cash=body.starting_cash, spread_pct=body.spread_pct,
         eligible_by_day=ds.eligible_by_day, market=ds.market,
+        progress=_replay_progress,
     )
     if "error" in result:
         raise HTTPException(status_code=422, detail=result["error"])
@@ -585,6 +614,11 @@ class BacktestJob:
     id: str
     kind: str  # "single" | "portfolio"
     running: bool = True
+    # What it is doing right now, so a multi-minute run shows a pulse rather
+    # than a frozen button. pct covers the replay only — the phase that has a
+    # knowable length.
+    phase: str = "Starting…"
+    pct: int | None = None
     started_at: str = ""
     finished_at: str | None = None
     error: str | None = None
@@ -635,6 +669,11 @@ async def _run_job(job: BacktestJob, handler, body, client: AlpacaClient) -> Non
     implementation of a backtest, and polling must not become a second one that
     can drift from it.
     """
+    def sink(phase: str, pct: int | None) -> None:
+        job.phase = phase
+        job.pct = pct
+
+    _reporter.set(sink)
     try:
         with session_scope() as session:
             job.result = await handler(body, session, client)
@@ -713,6 +752,8 @@ def backtest_job(job_id: str) -> dict:
         "job_id": job.id,
         "kind": job.kind,
         "running": job.running,
+        "phase": job.phase,
+        "pct": job.pct,
         "started_at": job.started_at,
         "finished_at": job.finished_at,
         "error": job.error,

@@ -206,3 +206,50 @@ def test_the_replay_does_not_block_the_event_loop(client, configured):
     # A blocked loop would leave this at roughly zero; a free one ticks ~50 times
     # during the 1s replay. Assert well under that to stay clear of CI jitter.
     assert beats >= 20, f"heartbeat ticked only {beats}x — the replay is blocking the event loop"
+
+
+def test_a_running_backtest_reports_what_it_is_doing(client, configured):
+    """A multi-minute run must show a pulse, or "is it working?" is unanswerable
+    — the complaint that started all of this.
+
+    Driven against the handler for the same reason as the test above (TestClient
+    kills task-spawned work), which also isolates what matters: the reporting is
+    wired end to end, from the replay loop out through the ContextVar sink that
+    /job reads. Note the replay runs in a thread — asyncio.to_thread copies the
+    context, and this fails if that ever stops being true.
+    """
+    import qt.api.backtest as api_bt
+    from qt.db import session_scope as scope
+
+    sid = client.post("/api/strategies", json=_strategy()).json()["id"]
+    body = api_bt.BacktestBody(strategy_id=sid, symbols=["NVDA"], days=30,
+                               timeframe="1Hour", starting_cash=5000, spread_pct=0)
+    seen: list[tuple[str, int | None]] = []
+
+    async def drive():
+        api_bt._reporter.set(lambda phase, pct: seen.append((phase, pct)))
+        with scope() as session:
+            return await api_bt.run(body, session, AlpacaClient("k", "s"))
+
+    with patch.object(AlpacaClient, "historical_bars",
+                      new=AsyncMock(side_effect=[{"NVDA": BARS}, {"SPY": BARS}])):
+        asyncio.run(drive())
+
+    phases = [p for p, _ in seen]
+    assert any("Downloading" in p for p in phases), phases
+    assert any("Replaying" in p for p in phases), phases
+    # From inside the threaded replay — the part that proves the context crossed.
+    assert any(p == "Replaying history…" and pct is not None for p, pct in seen), seen
+
+
+def test_reporting_is_off_for_a_direct_request(client, configured):
+    """The plain POST has nowhere to report to; _report must be a no-op there,
+    not a crash, and the pure simulator stays pure when nobody is watching."""
+    sid = client.post("/api/strategies", json=_strategy()).json()["id"]
+    with patch.object(AlpacaClient, "historical_bars",
+                      new=AsyncMock(side_effect=[{"NVDA": BARS}, {"SPY": BARS}])):
+        r = client.post("/api/backtest",
+                        json={"strategy_id": sid, "symbols": ["NVDA"], "days": 30,
+                              "timeframe": "1Hour", "starting_cash": 5000, "spread_pct": 0})
+    assert r.status_code == 200
+    assert r.json()["strategy_name"]
