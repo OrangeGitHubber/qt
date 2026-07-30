@@ -149,6 +149,9 @@ def sweep_baskets(
             "in_sample_pct": (best.get("in_sample") or {}).get("net_pnl_pct"),
             "oos_pct": oos_pct,
             "oos_trades": oos.get("trades"),
+            # Entries = closed trades + positions held to the OOS end — the honest
+            # sample size (a held winner is a data point, not a non-event).
+            "oos_entries": oos.get("entries", oos.get("trades")),
             "oos_win_rate": oos.get("win_rate"),
             "oos_max_drawdown_pct": oos.get("max_drawdown_pct"),
             "oos_window": window,
@@ -160,16 +163,15 @@ def sweep_baskets(
             "no_trade_reason": res.get("no_trade_reason"),
         })
 
-    # Rank: tested rows (a margin AND at least one out-of-sample trade) by margin,
+    # Rank: tested rows (a margin AND at least one out-of-sample ENTRY) by margin,
     # best first; untested rows sink to the bottom regardless of their numbers.
-    def sort_key(r: dict):
-        untested = r["margin_vs_spy"] is None or not (r["oos_trades"] or 0)
-        return (1 if untested else 0, -(r["margin_vs_spy"] or 0.0))
+    def untested(r: dict) -> bool:
+        return r["margin_vs_spy"] is None or not (r["oos_entries"] or 0)
 
-    rows.sort(key=sort_key)
+    rows.sort(key=lambda r: (1 if untested(r) else 0, -(r["margin_vs_spy"] or 0.0)))
     for rank, r in enumerate(rows, start=1):
         r["rank"] = rank
-        r["untested"] = r["margin_vs_spy"] is None or not (r["oos_trades"] or 0)
+        r["untested"] = untested(r)
 
     if progress:
         progress(len(baskets), len(baskets), "")

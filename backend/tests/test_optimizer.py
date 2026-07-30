@@ -145,6 +145,19 @@ def test_no_warmup_keeps_slices_disjoint_and_ungated():
     assert set(fake.sim_starts) == {None}
 
 
+def test_score_counts_held_to_end_positions_as_entries():
+    # Since the backtest stopped force-selling at the window end, a config that
+    # entered and HELD has trades == 0 — but it deployed real capital N times.
+    # The min-trades gate must count entries (closed + still open), or buy-and-
+    # hold-flavoured configs silently become unscoreable.
+    held = {"net_pnl_pct": 7.5, "trades": 1, "open_positions": [{}, {}]}
+    assert optimizer._score(held, min_trades=3) == 7.5  # 1 closed + 2 open = 3
+    thin = {"net_pnl_pct": 7.5, "trades": 1, "open_positions": []}
+    assert optimizer._score(thin, min_trades=3) is None
+    # And _metrics surfaces the same number for the UI / sweep.
+    assert optimizer._metrics(held)["entries"] == 3
+
+
 def test_combination_count_is_reported_and_matches_distinct_combos():
     result, fake = _run(iterations=15)
     # tested_combinations counts DISTINCT configs (random draws de-duped + the

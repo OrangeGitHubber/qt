@@ -33,6 +33,7 @@ def _fake_result(oos_pct: float | None, oos_trades: int) -> dict:
                        "stop_loss_pct": 3.0, "take_profit_pct": 8.0},
             "in_sample": {"net_pnl_pct": 9.9, "trades": 12},
             "out_of_sample": {"net_pnl_pct": oos_pct, "trades": oos_trades,
+                              "entries": oos_trades,  # mirrors optimizer._metrics
                               "win_rate": 50.0, "max_drawdown_pct": 2.0},
         },
         "best_draft_params": {"entry": {}, "exit": {}},
@@ -102,6 +103,34 @@ def test_baskets_without_history_are_skipped_with_a_reason():
     assert [r["basket_name"] for r in out["rows"]] == ["Real"]
     assert out["skipped"][0]["basket_name"] == "Ghost"
     assert "0 of 2" in out["skipped"][0]["reason"]
+
+
+def test_missing_spy_marks_rows_untested_but_still_ranks_them():
+    # No SPY data → no margin exists, so even a strong tested result must carry
+    # the untested flag (there is nothing honest to rank it against) — but the
+    # sweep still completes and assigns ranks rather than erroring.
+    baskets = [{"id": 1, "name": "Alpha", "symbols": ["AAA"]}]
+    fake = _fake_optimize({"AAA": _fake_result(oos_pct=12.0, oos_trades=5)})
+    out = sweep_baskets(baskets, dict(BARS), {}, min_symbols=1, optimize_fn=fake)  # no SPY key
+    assert out["spy_available"] is False
+    row = out["rows"][0]
+    assert row["spy_oos_pct"] is None and row["margin_vs_spy"] is None
+    assert row["untested"] is True and row["rank"] == 1
+
+
+def test_oos_entries_count_held_positions_as_tested():
+    # A config that entered out-of-sample and HELD to the end has 0 closed trades
+    # but real entries — that's tested, not untested (the post-forced-liquidation
+    # rule: a held winner is a data point).
+    result = _fake_result(oos_pct=9.0, oos_trades=0)
+    result["best"]["out_of_sample"]["entries"] = 3  # 0 closed + 3 still open
+    baskets = [{"id": 1, "name": "Holder", "symbols": ["AAA"]}]
+    out = sweep_baskets(
+        baskets, {**BARS, "SPY": SPY_BARS}, {}, min_symbols=1,
+        optimize_fn=_fake_optimize({"AAA": result}),
+    )
+    assert out["rows"][0]["untested"] is False
+    assert out["rows"][0]["margin_vs_spy"] == 4.0  # 9 − 5
 
 
 def test_pct_over_window_baseline_and_missing_data():

@@ -177,6 +177,16 @@ def _apply_combo(base_strategy: dict, combo: dict) -> dict:
     return {**base_strategy, "params": params}
 
 
+def _entries(res: dict | None) -> int:
+    """Entries made = closed round-trips + positions still open at the end. The
+    backtest no longer force-sells held-to-end positions into fake 'trades', so
+    THIS is the honest sample size — a config that entered five times and held
+    its winners is five data points, not zero."""
+    if not res:
+        return 0
+    return (res.get("trades") or 0) + len(res.get("open_positions") or [])
+
+
 def _metrics(res: dict | None) -> dict | None:
     """The handful of numbers the UI shows per config — pulled from a full
     run_backtest result (or None if the config produced no runnable result)."""
@@ -185,6 +195,7 @@ def _metrics(res: dict | None) -> dict | None:
     return {
         "net_pnl_pct": res.get("net_pnl_pct"),
         "trades": res.get("trades"),
+        "entries": _entries(res),
         "win_rate": res.get("win_rate"),
         "return_on_deployed_pct": res.get("return_on_deployed_pct"),
         "max_drawdown_pct": res.get("max_drawdown_pct"),
@@ -192,13 +203,14 @@ def _metrics(res: dict | None) -> dict | None:
 
 
 def _score(res: dict | None, min_trades: int) -> float | None:
-    """A config's in-sample score: its account return %, but only if it traded at
-    least `min_trades` times. Rewarding a config that fired once and got lucky is
-    exactly the overfitting trap this search exists to avoid, so thin configs
-    score None (ranked below every real one)."""
+    """A config's in-sample score: its account return %, but only if it made at
+    least `min_trades` ENTRIES (closed trades + positions held to the end — a
+    held winner is a data point, not a non-event). Rewarding a config that fired
+    once and got lucky is exactly the overfitting trap this search exists to
+    avoid, so thin configs score None (ranked below every real one)."""
     if not res or "error" in res:
         return None
-    if (res.get("trades") or 0) < min_trades:
+    if _entries(res) < min_trades:
         return None
     return res.get("net_pnl_pct")
 
@@ -405,10 +417,10 @@ def optimize(
             "Only one symbol was tested — a config that fits one ticker's history "
             "rarely generalizes. Validate across several symbols or the basket."
         )
-    if (leader["out_of_sample"] or {}).get("trades", 0) in (0, None):
+    if ((leader["out_of_sample"] or {}).get("entries") or 0) == 0:
         warnings.append(
-            "The winning config made no trades in the out-of-sample period — its "
-            "in-sample result is unconfirmed. Treat it as untested."
+            "The winning config never entered a position in the out-of-sample "
+            "period — its in-sample result is unconfirmed. Treat it as untested."
         )
 
     best_draft = _apply_combo(base_strategy, leader["combo"])["params"]

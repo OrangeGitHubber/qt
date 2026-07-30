@@ -147,7 +147,9 @@ export default function Backtest() {
   const [portfolioBusy, setPortfolioBusy] = useState(false);
   const [portfolioError, setPortfolioError] = useState<string | null>(null);
 
-  // Place each buy/sell on the equity curve's day index.
+  // Place each buy/sell on the equity curve's day index. Positions still open at
+  // the window end aren't in trade_list (no forced sale), but their BUYS still
+  // happened — mark them too, or the last entries of a run silently vanish.
   const markers = useMemo<ChartMarker[]>(() => {
     if (!result) return [];
     const dayIndex = new Map(result.equity_days.map((d, i) => [d, i]));
@@ -164,6 +166,12 @@ export default function Backtest() {
           kind: "sell",
           text: `Sold ${t.symbol} @ $${t.exit_price} → ${(t.pnl ?? 0) >= 0 ? "+" : ""}$${t.pnl?.toFixed(2)} (${t.exit_reason})`,
         });
+      }
+    }
+    for (const p of result.open_positions) {
+      const entry = dayIndex.get(p.entry_day);
+      if (entry !== undefined) {
+        out.push({ index: entry, kind: "buy", text: `Bought ${p.qty} ${p.symbol} @ $${p.entry_price} (still open)` });
       }
     }
     return out;
@@ -192,6 +200,11 @@ export default function Backtest() {
             text: `${name}: sold ${t.symbol} @ $${t.exit_price} → ${(t.pnl ?? 0) >= 0 ? "+" : ""}$${t.pnl?.toFixed(2)} (${t.exit_reason})`,
           });
       }
+      for (const p of res.open_positions) {
+        const e = dayIndex.get(p.entry_day);
+        if (e !== undefined)
+          out.push({ index: e, seriesIndex: si, kind: "buy", text: `${name}: bought ${p.qty} ${p.symbol} @ $${p.entry_price} (still open)` });
+      }
     };
     add(result, 0, aName);
     add(compareResult, 1, bName);
@@ -218,6 +231,10 @@ export default function Backtest() {
         if (t.exit_at && inWin(t.exit_day))
           rows.push({ at: t.exit_at, action: "Sold", symbol: t.symbol, price: t.exit_price, pnl: t.pnl, reason: t.exit_reason, strategy: name, strategyColor: color });
       }
+      for (const p of res.open_positions) {
+        if (inWin(p.entry_day))
+          rows.push({ at: p.entry_at, action: "Bought", symbol: p.symbol, price: p.entry_price, qty: p.qty, reason: `${p.entry_reason} — still open at test end`, strategy: name, strategyColor: color });
+      }
     };
     push(result, compareResult ? aName : undefined, SERIES_A_COLOR);
     if (compareResult) push(compareResult, bName, SERIES_B_COLOR);
@@ -241,6 +258,7 @@ export default function Backtest() {
 
   // Flatten round-trip trades into individual buy/sell actions in time order,
   // so the log reads like the chart markers: why it bought, then why it sold.
+  // Still-open positions contribute their BUY (with no matching sell).
   const events = useMemo<TradeEvent[]>(() => {
     if (!result) return [];
     const out: TradeEvent[] = [];
@@ -263,6 +281,16 @@ export default function Backtest() {
           reason: t.exit_reason,
         });
       }
+    }
+    for (const p of result.open_positions) {
+      out.push({
+        at: p.entry_at,
+        action: "Bought",
+        symbol: p.symbol,
+        price: p.entry_price,
+        qty: p.qty,
+        reason: `${p.entry_reason} — still open at test end`,
+      });
     }
     out.sort((a, b) => new Date(a.at).getTime() - new Date(b.at).getTime());
     return out;
@@ -388,6 +416,7 @@ export default function Backtest() {
   }
 
   // Portfolio trade log: every buy/sell in time order, tagged with its strategy.
+  // Still-open positions contribute their BUY (with no matching sell).
   const portfolioEvents = useMemo<(TradeEvent & { strategy: string })[]>(() => {
     if (!portfolioResult) return [];
     const out: (TradeEvent & { strategy: string })[] = [];
@@ -396,6 +425,12 @@ export default function Backtest() {
       if (t.exit_at) {
         out.push({ at: t.exit_at, action: "Sold", symbol: t.symbol, price: t.exit_price, pnl: t.pnl, reason: t.exit_reason, strategy: t.strategy_name });
       }
+    }
+    for (const p of portfolioResult.open_positions) {
+      out.push({
+        at: p.entry_at, action: "Bought", symbol: p.symbol, price: p.entry_price, qty: p.qty,
+        reason: `${p.entry_reason} — still open at test end`, strategy: p.strategy_name ?? "",
+      });
     }
     out.sort((a, b) => new Date(a.at).getTime() - new Date(b.at).getTime());
     return out;
@@ -1022,7 +1057,7 @@ export default function Backtest() {
                   <div className="compare-table">
                     <h4>
                       Head-to-head{" "}
-                      <span className="hint">(same universe, period &amp; cash — only the strategy rules differ)</span>
+                      <span className="hint">(same period &amp; bar size — each strategy on its own universe and sleeve)</span>
                     </h4>
                     <div className="table-scroll">
                       <table>

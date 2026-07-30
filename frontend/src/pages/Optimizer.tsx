@@ -483,9 +483,10 @@ export default function Optimizer() {
                 disabled={scannerReplay}
                 title={scannerReplay ? "Ignored in scanner replay — the cache decides (15-min if swept, else daily)" : undefined}
               >
+                {/* No 1-hour option, same as the backtest: 15-min is strictly the
+                    more faithful intraday simulation (the live engine ticks ~60s). */}
                 <option value="1Day">1 day (fast — recommended for a search)</option>
-                <option value="1Hour" disabled={stratWantsDaily}>1 hour (slower)</option>
-                <option value="15Min" disabled={stratWantsDaily}>15 minutes (slowest, precise)</option>
+                <option value="15Min" disabled={stratWantsDaily}>15 minutes (slower, precise)</option>
               </select>
               {stratWantsDaily && !scannerReplay && (
                 <span className="field-help warn">
@@ -596,7 +597,10 @@ export default function Optimizer() {
                 value={pct(result.best.in_sample?.net_pnl_pct)}
                 sub="search only — NOT proof"
               />
-              <Stat label="Out-of-sample trades" value={String(result.best.out_of_sample?.trades ?? "—")} />
+              <Stat
+                label="Out-of-sample entries"
+                value={String(result.best.out_of_sample?.entries ?? result.best.out_of_sample?.trades ?? "—")}
+              />
               <Stat label="Out-of-sample win rate" value={pct(result.best.out_of_sample?.win_rate)} />
               <Stat
                 label="Out-of-sample drawdown"
@@ -699,7 +703,7 @@ export default function Optimizer() {
                     {showRsiExit && <th>Sell RSI&gt;</th>}
                     <th>In-sample</th>
                     <th>Out-of-sample (real)</th>
-                    <th>OOS trades</th>
+                    <th>OOS entries</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -718,7 +722,7 @@ export default function Optimizer() {
                       <td className={(r.out_of_sample?.net_pnl_pct ?? 0) >= 0 ? "up" : "down"}>
                         {pct(r.out_of_sample?.net_pnl_pct)}
                       </td>
-                      <td>{r.out_of_sample?.trades ?? "—"}</td>
+                      <td>{r.out_of_sample?.entries ?? r.out_of_sample?.trades ?? "—"}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -797,7 +801,7 @@ export default function Optimizer() {
                     <th>SPY (same window)</th>
                     <th>Margin</th>
                     <th>vs holding the basket</th>
-                    <th>OOS trades</th>
+                    <th>OOS entries</th>
                     <th>Winning settings</th>
                     <th></th>
                   </tr>
@@ -818,7 +822,7 @@ export default function Optimizer() {
                       </td>
                       <td>{r.beat_hold == null ? "—" : r.beat_hold ? "beat it" : "lost to it"}</td>
                       <td>
-                        {r.oos_trades ?? "—"}
+                        {r.oos_entries ?? r.oos_trades ?? "—"}
                         {r.untested && <span className="hint"> (untested)</span>}
                       </td>
                       <td className="hint">

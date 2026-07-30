@@ -39,6 +39,32 @@ in-sample window — feeding the indicators. So both slices judge the strategy
 with live signals from their very first traded bar. If you optimized a MACD or
 RSI strategy before, re-run it: the out-of-sample numbers were understated.
 
+## Audit: consistency fixes after the no-forced-sale change (2026-07-30)
+
+A consistency pass over the day's features caught three seams left by the
+"positions stay open at the end" change:
+
+- **The optimizer had silently gotten harsher.** Its minimum-trades gate counted
+  only *closed* trades, so a config that entered positions and held its winners
+  to the end scored as if it never traded — and could never win the search. The
+  gate (and the out-of-sample "untested" rules in the optimizer and basket
+  sweep) now count **entries** (closed trades + positions still open), restoring
+  the original intent. Result tables show "OOS entries" accordingly.
+- **Buys that never exited had vanished from view.** Chart buy markers, the
+  trade log, the compare chart, "Trades in view", and the portfolio log were all
+  built from closed trades only — so a backtest's last few entries (still open
+  at the end) appeared nowhere except the "Still open" panel. They're back
+  everywhere, labelled "still open at test end".
+- **Stale bits:** the optimizer still offered 1-hour bars (removed, same
+  rationale as the backtest — 15-min is strictly more faithful), and the compare
+  head-to-head still claimed "same universe & cash" when each strategy runs its
+  own universe and sleeve (reworded).
+
+Plus seven new borderline-edge tests: entry on the window's final bar, spread
+cost as the entry-day attribution, same-day round-trip attribution, warm-up days
+excluded from attribution, held-to-end counting as tested (optimizer + sweep),
+and a SPY-less sweep still ranking rows as untested.
+
 ## Backtest chart: hover a day → see what was held and what it cost you (2026-07-30)
 
 When the equity line moves on a day with **no trades**, the cause was always

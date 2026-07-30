@@ -584,6 +584,9 @@ export const runPortfolioBacktest = (body: {
 export interface OptimizerMetrics {
   net_pnl_pct: number | null;
   trades: number | null;
+  // Closed trades + positions still open at the slice end — the honest sample
+  // size now that held-to-end positions aren't force-sold into fake trades.
+  entries?: number | null;
   win_rate: number | null;
   return_on_deployed_pct: number | null;
   max_drawdown_pct: number | null;
@@ -692,6 +695,8 @@ export interface SweepRow {
   in_sample_pct: number | null;
   oos_pct: number | null;
   oos_trades: number | null;
+  oos_entries?: number | null; // closed + still open at the OOS end
+
   oos_win_rate: number | null;
   oos_max_drawdown_pct: number | null;
   oos_window: OptimizerWindow;

@@ -447,6 +447,58 @@ def test_daily_positions_attribute_each_days_move():
     assert sum(c["day_pnl"] for c in dp[d3]) == -90.0
 
 
+def test_entry_on_the_final_bar_stays_open_with_zero_unrealized():
+    # Borderline: the entry signal fires on the very LAST bar of the window. The
+    # position opens, is immediately marked at its own fill (spread 0), and the
+    # run ends — zero unrealized, zero trades, one open position, flat P&L.
+    series = _daily([100.0, 104.0])
+    res = run_backtest(STRATEGY, {"TEST": series}, RISK, starting_cash=5000, spread_pct=0)
+    assert res["trades"] == 0
+    assert len(res["open_positions"]) == 1
+    assert res["open_positions"][0]["unrealized_pnl"] == 0.0
+    assert res["net_pnl"] == 0.0
+    assert res["daily_positions"]["2026-05-05"] == [
+        {"symbol": "TEST", "qty": 9, "price": 104.0, "day_pnl": 0.0}
+    ]
+
+
+def test_daily_positions_charge_the_spread_on_entry_day():
+    # With a real spread the entry-day contribution is the spread cost itself:
+    # fill = 104 × 1.005 = 104.52, marked at 104 → 9 × (104 − 104.52) = −$4.68.
+    # The flat day after contributes exactly 0 — no phantom drift.
+    series = _daily([100.0, 104.0, 104.0])
+    res = run_backtest(STRATEGY, {"TEST": series}, RISK, starting_cash=5000, spread_pct=0.5)
+    assert res["daily_positions"]["2026-05-05"][0]["day_pnl"] == -4.68
+    assert res["daily_positions"]["2026-05-06"][0]["day_pnl"] == 0.0
+
+
+def test_daily_positions_same_day_round_trip():
+    # Intraday: entered at 104 and trailing-stopped out at 102.5 the SAME day —
+    # the day's attribution is one qty-0 row carrying the full realized loss.
+    series = _spread_day([100, 100, 100], [104, 107, 110, 102.5, 102.5])
+    res = run_backtest(STRATEGY, {"TEST": series}, RISK, starting_cash=5000, spread_pct=0)
+    assert res["daily_positions"]["2026-05-05"] == [
+        {"symbol": "TEST", "qty": 0, "price": 102.5, "day_pnl": -13.5}
+    ]
+
+
+def test_daily_positions_exclude_warmup_days():
+    # With warm-up bars before sim_start, the attribution map must only contain
+    # days inside the traded window — warm-up days feed indicators, nothing else.
+    bars = _daily(_MACD_WARMUP_CLOSES)
+    sim_start = datetime.fromisoformat(
+        bars[_MACD_WINDOW_START_IDX]["t"].replace("Z", "+00:00")
+    )
+    strat = copy.deepcopy(STRATEGY)
+    strat["params"]["entry"]["min_day_gain_pct"] = 0.5
+    res = run_backtest(
+        strat, {"TEST": bars}, RISK, starting_cash=5000, spread_pct=0, sim_start=sim_start,
+    )
+    window_day = sim_start.date().isoformat()
+    assert res["daily_positions"]
+    assert all(day >= window_day for day in res["daily_positions"])
+
+
 def test_no_trade_log_reports_not_enough_funds_after_a_loss():
     # All-in sizing: $ per trade == the sleeve == starting cash. The first trade
     # loses a little, dropping equity below one full position; the no-leverage
