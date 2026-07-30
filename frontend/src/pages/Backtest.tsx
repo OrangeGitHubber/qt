@@ -43,6 +43,20 @@ function pct(v: number | null | undefined): string {
   return v != null ? `${v}%` : "—";
 }
 
+// Fill prices: cents are what matter on a $500 stock, but a sub-dollar mover or
+// a cheap coin needs the small digits or every row reads "$0.00".
+function price(v: number): string {
+  const dp = v >= 1 ? 2 : v >= 0.01 ? 4 : 6;
+  return `$${v.toFixed(dp)}`;
+}
+
+// Fractional-share quantities arrive as raw floats (0.447397). Nobody reads the
+// sixth decimal of a share count, and printing it wrapped the column.
+function qty(q: number): string {
+  const dp = q >= 100 ? 0 : q >= 1 ? 2 : 4;
+  return q.toFixed(dp).replace(/\.?0+$/, "");
+}
+
 // A strategy's backtest universe, resolved READ-ONLY from its own config — the
 // backtest tests the strategy's universe, it isn't picked here. Basket → its
 // members; custom → its symbol list; scanner → replayed risers (no fixed list);
@@ -768,11 +782,11 @@ export default function Backtest() {
                           <tr key={i}>
                             <td className="sym">{p.strategy_name}</td>
                             <td className="sym">{p.symbol}</td>
-                            <td>
-                              ${p.entry_price.toFixed(4)}
-                              <span className="hint"> ×{p.qty}</span>
+                            <td className="nowrap">
+                              {price(p.entry_price)}
+                              <span className="hint"> ×{qty(p.qty)}</span>
                             </td>
-                            <td>${p.mark_price.toFixed(4)}</td>
+                            <td className="nowrap">{price(p.mark_price)}</td>
                             <td className={p.unrealized_pnl >= 0 ? "up" : "down"}>
                               {p.unrealized_pnl >= 0 ? "+" : ""}${p.unrealized_pnl.toFixed(2)}
                             </td>
@@ -793,7 +807,7 @@ export default function Backtest() {
                   </span>
                 </h3>
                 <div className="table-scroll">
-                  <table>
+                  <table className="log-table">
                     <thead>
                       <tr>
                         <th>Date</th>
@@ -802,7 +816,7 @@ export default function Backtest() {
                         <th>Symbol</th>
                         <th>Price</th>
                         <th>P&L</th>
-                        <th>Why</th>
+                        <th className="wrap">Why</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -815,13 +829,13 @@ export default function Backtest() {
                           </td>
                           <td className="sym">{ev.symbol}</td>
                           <td>
-                            ${ev.price.toFixed(4)}
-                            {ev.qty != null && <span className="hint"> ×{ev.qty}</span>}
+                            {price(ev.price)}
+                            {ev.qty != null && <span className="hint"> ×{qty(ev.qty)}</span>}
                           </td>
                           <td className={ev.pnl == null ? "" : ev.pnl >= 0 ? "up" : "down"}>
                             {ev.pnl == null ? <span className="hint">—</span> : `$${ev.pnl.toFixed(2)}`}
                           </td>
-                          <td className="hint">{ev.reason}</td>
+                          <td className="hint wrap">{ev.reason}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -1335,11 +1349,11 @@ export default function Backtest() {
                               <td style={{ color, fontWeight: 600 }}>{name}</td>
                             )}
                             <td className="sym">{p.symbol}</td>
-                            <td>
-                              ${p.entry_price.toFixed(4)}
-                              <span className="hint"> ×{p.qty}</span>
+                            <td className="nowrap">
+                              {price(p.entry_price)}
+                              <span className="hint"> ×{qty(p.qty)}</span>
                             </td>
-                            <td>${p.mark_price.toFixed(4)}</td>
+                            <td className="nowrap">{price(p.mark_price)}</td>
                             <td className={p.unrealized_pnl >= 0 ? "up" : "down"}>
                               {p.unrealized_pnl >= 0 ? "+" : ""}${p.unrealized_pnl.toFixed(2)}
                             </td>
@@ -1368,7 +1382,7 @@ export default function Backtest() {
                   <p className="hint">No trades in this range.</p>
                 ) : (
                   <div className="table-scroll">
-                    <table>
+                    <table className="log-table">
                       <thead>
                         <tr>
                           <th>Date</th>
@@ -1377,7 +1391,7 @@ export default function Backtest() {
                           <th>Symbol</th>
                           <th>Price</th>
                           <th>P&amp;L</th>
-                          <th>Why</th>
+                          <th className="wrap">Why</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -1392,13 +1406,13 @@ export default function Backtest() {
                             </td>
                             <td className="sym">{ev.symbol}</td>
                             <td>
-                              ${ev.price.toFixed(4)}
-                              {ev.qty != null && <span className="hint"> ×{ev.qty}</span>}
+                              {price(ev.price)}
+                              {ev.qty != null && <span className="hint"> ×{qty(ev.qty)}</span>}
                             </td>
                             <td className={ev.pnl == null ? "" : ev.pnl >= 0 ? "up" : "down"}>
                               {ev.pnl == null ? <span className="hint">—</span> : `$${ev.pnl.toFixed(2)}`}
                             </td>
-                            <td className="hint">{ev.reason}</td>
+                            <td className="hint wrap">{ev.reason}</td>
                           </tr>
                         ))}
                       </tbody>
@@ -1419,7 +1433,7 @@ export default function Backtest() {
               </span>
             </h3>
             <div className="table-scroll">
-            <table>
+            <table className="log-table">
               <thead>
                 <tr>
                   <th>Date</th>
@@ -1427,7 +1441,7 @@ export default function Backtest() {
                   <th>Symbol</th>
                   <th>Price</th>
                   <th>P&L</th>
-                  <th>Why</th>
+                  <th className="wrap">Why</th>
                 </tr>
               </thead>
               <tbody>
@@ -1440,17 +1454,19 @@ export default function Backtest() {
                       </td>
                       <td className="sym">{r.ev.symbol}</td>
                       <td>
-                        ${r.ev.price.toFixed(4)}
-                        {r.ev.qty != null && <span className="hint"> ×{r.ev.qty}</span>}
+                        {price(r.ev.price)}
+                        {r.ev.qty != null && <span className="hint"> ×{qty(r.ev.qty)}</span>}
                       </td>
                       <td className={r.ev.pnl == null ? "" : r.ev.pnl >= 0 ? "up" : "down"}>
                         {r.ev.pnl == null ? <span className="hint">—</span> : `$${r.ev.pnl.toFixed(2)}`}
                       </td>
-                      <td className="hint">{r.ev.reason}</td>
+                      <td className="hint wrap">{r.ev.reason}</td>
                     </tr>
                   ) : (
                     <tr key={i} className="log-gap">
-                      <td>
+                      {/* A date RANGE is the one thing wide enough to stretch the
+                          Date column for every other row — let this one wrap. */}
+                      <td className="wrap">
                         {r.span.from_day === r.span.to_day
                           ? new Date(`${r.span.from_day}T00:00:00`).toLocaleDateString()
                           : `${new Date(`${r.span.from_day}T00:00:00`).toLocaleDateString()} – ${new Date(
@@ -1460,7 +1476,7 @@ export default function Backtest() {
                       <td colSpan={4} className="hint">
                         no entries · {r.span.days} day{r.span.days === 1 ? "" : "s"}
                       </td>
-                      <td className="hint">
+                      <td className="hint wrap">
                         {r.span.reason}
                         {r.span.reason_symbol_days && (
                           <>

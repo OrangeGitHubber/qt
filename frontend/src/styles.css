@@ -612,6 +612,30 @@ tr.log-gap td {
   font-style: italic;
 }
 
+/* Trade logs: short data columns (date, action, price ×qty) plus one long
+   free-text column. Left to itself the browser steals width from the data
+   columns to give the prose more, folding "▲ Bought" and "$558.79 ×0.4474"
+   onto second lines and doubling every row's height. So: nothing wraps except
+   the free-text column, which absorbs all the leftover width. */
+.log-table th,
+.log-table td {
+  white-space: nowrap;
+}
+
+.log-table th:last-child,
+.log-table td:last-child {
+  width: 100%;
+  /* Without a floor the browser hands the data columns their content width and
+     squeezes the prose into whatever is left — on a narrow window that's ~70px,
+     and a one-line reason stacks five lines high. Below this the table simply
+     scrolls sideways (.table-scroll), which is the lesser evil. */
+  min-width: 18rem;
+}
+
+.log-table .wrap {
+  white-space: normal;
+}
+
 .nowrap {
   white-space: nowrap;
 }
