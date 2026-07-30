@@ -3,6 +3,41 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Buttons that "did nothing" were failing with an invisible message (2026-07-30)
+
+"Save & backtest" sometimes appeared to do nothing and then worked on the next
+click; the **Run backtest** button sometimes did nothing at all. Neither was
+random. Every page shows API errors with a check that treats an **empty message
+as no error**, and the code that turned a failed request into an error could
+produce exactly that — most reliably when the app is reached through a **reverse
+proxy**, because HTTP/2 removed the text that follows a status code, leaving it
+blank. A 500, a proxy's 502, or a gateway timeout on a long backtest all arrived
+as an error with nothing to say, so the click looked ignored. Retrying "fixed"
+it only because the next request happened to succeed.
+
+Failed requests now always explain themselves: the app's own wording when it has
+some, otherwise the status code — and specific advice for the two cases you're
+most likely to hit. A **502/503/504** now says the server didn't answer in time
+and that a long backtest or sweep can outlast a proxy's default 60-second
+timeout. A **401** now says your sign-in expired and to reload. Form validation
+errors, which used to stringify to `[object Object]`, now name the field.
+
+Two related dead ends closed. If the strategy list failed to load, the failure
+was swallowed *and* left the Run button permanently greyed out — indistinguishable
+from a broken button; it now says what went wrong. And Run/Search no longer grey
+themselves out when nothing is selected — they let the click through and tell you
+to pick a strategy, because a disabled button explains nothing.
+
+## Backtest trade log: one line per trade (2026-07-30)
+
+The log's rows were folding onto two and three lines — `▲ Bought` broke after the
+arrow, and `$558.7882 ×0.447397` broke between the price and the quantity — so 63
+trades rendered about three screens taller than they needed to be. The data
+columns no longer wrap and the reason column absorbs the leftover width. Prices
+now adapt (`$558.79` for a normal stock, `$0.4382` for a sub-dollar mover) instead
+of always showing four decimals, and fractional share counts lose the digits
+nobody reads. Rows went from 89–107px to a flat 37px.
+
 ## Scoreboard: the −80% cliff was an account switch, not a loss (2026-07-30)
 
 The dashboard's honesty meter showed the bot down **−80%** overnight. It never

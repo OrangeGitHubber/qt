@@ -1088,7 +1088,7 @@ function Editor({
           daily. For a swing or rank-and-rotate strategy, turn it off; keep it only for intraday fast-mover strategies.
         </p>
       )}
-      {error && <div className="error">{error}</div>}
+      {error !== null && <div className="error">{error}</div>}
       <div className="toolbar">
         <button disabled={busy}>
           {busy ? "Saving…" : s.id ? "Save (creates new config version)" : "Create strategy"}

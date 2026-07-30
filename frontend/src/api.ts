@@ -789,17 +789,55 @@ export const startBasketSweep = (body: { days: number; iterations: number; sprea
 export const getBasketSweepStatus = () =>
   fetch("/api/optimizer/sweep/status").then((r) => handle<SweepStatus>(r));
 
-async function handle<T>(resp: Response): Promise<T> {
-  if (!resp.ok) {
-    let detail = resp.statusText;
-    try {
-      detail = (await resp.json()).detail ?? detail;
-    } catch {
-      /* not json */
-    }
-    throw new Error(detail);
+/** Build an Error whose message is NEVER empty.
+ *
+ *  An empty message is worse than a wrong one. Every page renders its error with
+ *  a truthiness check (`{error && <div…>}`), so `new Error("")` shows the user
+ *  absolutely nothing — the button just appears not to work, and clicking again
+ *  "fixes" it whenever the next request happens to succeed.
+ *
+ *  Three ways the old code produced an empty message:
+ *    - `resp.statusText` is ALWAYS "" over HTTP/2 (the spec dropped reason
+ *      phrases), which is what any reverse proxy in front of this container
+ *      serves. A 500 became a no-op click.
+ *    - A proxy's own error page is HTML, so `.json()` throws and we fell back to
+ *      that same empty statusText.
+ *    - FastAPI validation errors put an ARRAY in `detail`, which stringified to
+ *      "[object Object]".
+ */
+async function failure(resp: Response): Promise<Error> {
+  const body = await resp.text().catch(() => "");
+  let detail = "";
+  try {
+    const j = JSON.parse(body);
+    if (typeof j?.detail === "string") detail = j.detail;
+    else if (Array.isArray(j?.detail))
+      // Pydantic: [{loc: ["body", "days"], msg: "..."}] — drop the "body" prefix.
+      detail = j.detail
+        .map((d: { loc?: (string | number)[]; msg?: string }) =>
+          `${(d.loc ?? []).slice(1).join(".") || "request"}: ${d.msg ?? "invalid"}`,
+        )
+        .join("; ");
+    else if (typeof j?.error === "string") detail = j.error;
+  } catch {
+    /* not our JSON — a proxy error page, or an empty body */
   }
-  return resp.json() as Promise<T>;
+  if (detail) return new Error(detail); // the app's own wording, already user-facing
+  if (resp.status === 502 || resp.status === 503 || resp.status === 504)
+    return new Error(
+      `HTTP ${resp.status} — the server didn't answer in time. A long backtest, optimizer run or ` +
+        `bar sweep can outlast a reverse proxy's default 60-second timeout; raise it, or test a shorter period.`,
+    );
+  if (resp.status === 401 || resp.status === 403)
+    return new Error(`HTTP ${resp.status} — your sign-in expired. Reload the page to sign in again.`);
+  const fallback = resp.statusText || body.trim().slice(0, 200);
+  return new Error(`HTTP ${resp.status}${fallback ? ` — ${fallback}` : ""}`);
+}
+
+async function handle<T>(resp: Response): Promise<T> {
+  if (!resp.ok) throw await failure(resp);
+  if (resp.status === 204) return undefined as T; // no body to parse
+  return (await resp.json()) as T;
 }
 
 export function getStatus(): Promise<StatusResponse> {

@@ -223,11 +223,14 @@ export default function Optimizer() {
   useEffect(() => {
     // A strategy row's "Optimize" button jumps here with that strategy in tow.
     const pre = consumeNav()?.strategyId ?? null;
-    getStrategies().then((rows) => {
-      setStrategies(rows);
-      if (rows.length && strategyId === null)
-        setStrategyId(pre !== null && rows.some((r) => r.id === pre) ? pre : rows[0].id);
-    });
+    getStrategies()
+      .then((rows) => {
+        setStrategies(rows);
+        if (rows.length && strategyId === null)
+          setStrategyId(pre !== null && rows.some((r) => r.id === pre) ? pre : rows[0].id);
+      })
+      // Silent here meant a permanently dead Start button — say so instead.
+      .catch((e: Error) => setError(`Couldn't load your strategies: ${e.message}`));
     getBaskets().then(setBaskets).catch(() => setBaskets([]));
     // Pick up a search already in flight (e.g. after a page switch).
     getOptimizerStatus()
@@ -358,7 +361,10 @@ export default function Optimizer() {
 
   async function start(e: FormEvent) {
     e.preventDefault();
-    if (strategyId === null) return;
+    if (strategyId === null) {
+      setError("No strategy is selected — pick one above, or create one on the Strategies tab.");
+      return;
+    }
     setError(null);
     setSaveMsg(null);
     setStatus(null);
@@ -580,10 +586,10 @@ export default function Optimizer() {
             trying more settings makes a good in-sample score <em>easier to hit by luck</em>, which is exactly why the
             out-of-sample check matters.
           </p>
-          {error && <div className="error">{error}</div>}
-          <button disabled={running || strategyId === null}>
-            {running ? "Searching…" : "Run parameter search"}
-          </button>
+          {error !== null && <div className="error">{error}</div>}
+          {/* Not disabled when nothing is selected — a dead button looks broken.
+              start() explains instead. */}
+          <button disabled={running}>{running ? "Searching…" : "Run parameter search"}</button>
         </form>
       </div>
 

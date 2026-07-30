@@ -366,11 +366,15 @@ export default function Backtest() {
     // Another page (e.g. the strategy editor's "Backtest" button) may have
     // jumped here with a strategy in tow — preselect it.
     const pre = consumeNav()?.strategyId ?? null;
-    getStrategies().then((rows) => {
-      setStrategies(rows);
-      if (rows.length && strategyId === null)
-        setStrategyId(pre !== null && rows.some((r) => r.id === pre) ? pre : rows[0].id);
-    });
+    getStrategies()
+      .then((rows) => {
+        setStrategies(rows);
+        if (rows.length && strategyId === null)
+          setStrategyId(pre !== null && rows.some((r) => r.id === pre) ? pre : rows[0].id);
+      })
+      // Without this the failure was invisible AND disabling: no strategy loads,
+      // so the Run button stays disabled and clicking it does nothing at all.
+      .catch((e: Error) => setError(`Couldn't load your strategies: ${e.message}`));
     getBaskets().then(setBaskets).catch(() => setBaskets([]));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -426,7 +430,10 @@ export default function Backtest() {
 
   async function run(e: FormEvent) {
     e.preventDefault();
-    if (strategyId === null) return;
+    if (strategyId === null) {
+      setError("No strategy is selected — pick one above, or create one on the Strategies tab.");
+      return;
+    }
     setBusy(true);
     setError(null);
     setResult(null);
@@ -508,7 +515,10 @@ export default function Backtest() {
 
   async function runPortfolio(e: FormEvent) {
     e.preventDefault();
-    if (portfolioIds.length === 0) return;
+    if (portfolioIds.length === 0) {
+      setPortfolioError("Pick at least one strategy to include in the portfolio.");
+      return;
+    }
     setPortfolioBusy(true);
     setPortfolioError(null);
     setPortfolioResult(null);
@@ -624,7 +634,7 @@ export default function Backtest() {
                   single timeline; run them separately.
                 </p>
               )}
-              {portfolioError && <div className="error">{portfolioError}</div>}
+              {portfolioError !== null && <div className="error">{portfolioError}</div>}
               <button disabled={portfolioBusy || portfolioIds.length === 0 || portfolioMixedBars}>
                 {portfolioBusy ? "Replaying history…" : "Run portfolio"}
               </button>
@@ -1007,10 +1017,11 @@ export default function Backtest() {
             reconstruct the historical daily top-N ranking that the live engine does, so top-N is a live entry-selection
             feature only.
           </p>
-          {error && <div className="error">{error}</div>}
-          <button
-            disabled={busy || strategyId === null || (mode === "compare" && (!compareId || compareMixedBars))}
-          >
+          {error !== null && <div className="error">{error}</div>}
+          {/* Deliberately NOT disabled when no strategy is selected: a dead button
+              is indistinguishable from a broken one. Let the click through and let
+              run() say why nothing happened. */}
+          <button disabled={busy || (mode === "compare" && (!compareId || compareMixedBars))}>
             {busy ? "Replaying history…" : mode === "compare" ? "Run comparison" : "Run backtest"}
           </button>
         </form>
