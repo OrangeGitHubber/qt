@@ -616,11 +616,27 @@ export default function Optimizer() {
               {result.timeframe})
             </h3>
             {result.scanner_replay ? (
-              <p className="hint">
-                Tested by <strong>scanner replay</strong>: each day's top {result.replay_top_n} risers over{" "}
-                {result.days_replayed ?? "—"} days — a universe of <strong>{result.universe_size ?? result.symbols.length}</strong>{" "}
-                distinct names, using {result.replay_intraday ? "15-minute (intraday)" : "daily"} bars from the cache.
-              </p>
+              <>
+                <p className="hint">
+                  Tested by <strong>scanner replay</strong>: each day's top {result.replay_top_n} risers over{" "}
+                  {result.days_replayed ?? "—"} days — <strong>{result.universe_size ?? result.symbols.length}</strong>{" "}
+                  distinct names searched, using {result.replay_intraday ? "15-minute (intraday)" : "daily"} bars from
+                  the cache.
+                </p>
+                {(result.universe_dropped?.length ?? 0) > 0 && (
+                  <p className="hint warn">
+                    <IconWarn className="icon-inline" />{" "}
+                    <strong>
+                      {result.universe_dropped!.length} mover
+                      {result.universe_dropped!.length === 1 ? "" : "s"} couldn't be searched
+                    </strong>{" "}
+                    — no cached bars for {result.universe_dropped!.slice(0, 8).join(", ")}
+                    {result.universe_dropped!.length > 8 ? ", …" : ""}. They made a top-N list but weren't tested, so
+                    these results cover a smaller universe than the scanner actually saw. Re-run the sweep (Settings →
+                    Historical bar cache) to fill them in.
+                  </p>
+                )}
+              </>
             ) : (
               <p className="hint">
                 Tested on: <strong>{result.symbols.join(", ")}</strong>

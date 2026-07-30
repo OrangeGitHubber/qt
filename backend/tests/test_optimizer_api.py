@@ -4,6 +4,7 @@ also carries a price-triggered exit, which makes it a mixed-resolution run:
 15-minute replay, MACD/RSI still read off completed daily closes. The 422 (and
 the mixed decision) happen synchronously, before any background search starts."""
 
+import time
 from unittest.mock import AsyncMock
 
 import pytest
@@ -135,3 +136,56 @@ def test_plain_strategy_is_untouched(client, configured, monkeypatch):
     assert r.json()["mixed_resolution"] is False
     assert worker.call_args.args[5] == "15Min"
     assert worker.call_args.kwargs["mixed"] is False
+
+
+def test_scanner_replay_search_counts_only_symbols_it_can_actually_test(
+    client, configured, monkeypatch
+):
+    """The optimizer is the OTHER consumer of ScannerReplayDataset. The backtest
+    was fixed to report what it replayed; this path still passed ds.union — so a
+    mover with no cached bars was handed to the search, silently dropped, and
+    still counted in universe_size. Both consumers must agree."""
+    from datetime import datetime, timedelta, timezone
+
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from sqlalchemy.pool import StaticPool
+
+    from qt.services import barcache
+
+    eng = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    barcache.CacheBase.metadata.create_all(eng)
+    Sess = sessionmaker(bind=eng, expire_on_commit=False)
+    monkeypatch.setattr(barcache, "_engine", eng)
+    monkeypatch.setattr(barcache, "_Session", Sess)
+    d0 = (datetime.now(timezone.utc) - timedelta(days=6)).strftime("%Y-%m-%d")
+    d1 = (datetime.now(timezone.utc) - timedelta(days=5)).strftime("%Y-%m-%d")
+
+    with Sess() as s:
+        # HASBARS has daily bars; NOBARS made the mover list but has none.
+        barcache.save_daily_bars(s, "HASBARS", [
+            {"t": f"{d0}T14:00:00Z", "o": 100, "h": 100, "l": 100, "c": 100, "v": 1e6, "vw": 100},
+            {"t": f"{d1}T14:00:00Z", "o": 106, "h": 106, "l": 106, "c": 106, "v": 1e6, "vw": 106},
+        ])
+        barcache.store_movers(s, d1, [("HASBARS", 6.0, 106.0, 1e8), ("NOBARS", 6.0, 50.0, 1e8)])
+        s.commit()
+
+    sid = client.post("/api/strategies", json=_strategy()).json()["id"]
+    r = client.post("/api/optimizer", json={
+        "strategy_id": sid, "scanner_replay": True, "days": 30, "iterations": 5,
+    })
+    assert r.status_code == 200, r.text
+    body = r.json()
+    # Only the symbol that can actually be searched is handed to the search…
+    assert body["symbols"] == ["HASBARS"]
+
+    # …and the reported universe matches, with the drop named rather than hidden.
+    for _ in range(60):
+        status = client.get("/api/optimizer/status").json()
+        if not status["running"]:
+            break
+        time.sleep(0.05)
+    result = status.get("result") or {}
+    if result:  # the search completed — its counts must not overstate
+        assert result["universe_size"] == 1
+        assert result["universe_dropped"] == ["NOBARS"]

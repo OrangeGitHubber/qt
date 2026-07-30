@@ -243,12 +243,20 @@ async def start_optimize(
         prebuilt_bars = ds.bars
         eligible_by_day = ds.eligible_by_day
         timeframe = ds.timeframe  # 15Min if intraday cached, else 1Day — from the cache
-        symbols = ds.union  # the deduped set of names that made a top-N list (offline: no 25 cap)
+        # Names that made a top-N list AND actually have bars (offline: no 25 cap).
+        # Searching over ds.union would hand the optimizer symbols with no data —
+        # silently dropped downstream, exactly the way the backtest used to drop
+        # them — while every count here overstated what was really tested. The
+        # backtest was fixed to report what it REPLAYED; this is the other consumer
+        # of the same dataset and has to agree.
+        symbols = ds.replayed
         replay_extra = {
             "scanner_replay": True,
             "replay_intraday": ds.used_intraday,
             "replay_top_n": body.replay_top_n,
-            "universe_size": len(ds.union),
+            "universe_size": len(ds.replayed),  # what was TESTED, not what made a list
+            "universe_dropped": ds.dropped,
+            "intraday_covered": ds.intraday_covered,
             "days_replayed": ds.days_replayed,
         }
     else:

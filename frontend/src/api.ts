@@ -699,7 +699,9 @@ export interface OptimizerResult {
   scanner_replay?: boolean;
   replay_intraday?: boolean;
   replay_top_n?: number;
-  universe_size?: number;
+  universe_size?: number; // movers actually SEARCHED (not merely listed)
+  universe_dropped?: string[]; // movers with no bars at the chosen resolution
+  intraday_covered?: number;
   days_replayed?: number;
 }
 
