@@ -337,7 +337,13 @@ async def run_portfolio(
     try:
         for asset_class, syms in by_class.items():
             if syms:
-                bars_cache[asset_class] = await client.historical_bars(syms, asset_class, body.timeframe, start)
+                # Read-through the bar cache, like the single-strategy run. This
+                # is the HEAVIEST fetch in the app — every symbol of every picked
+                # strategy — and it was the one path still re-downloading the same
+                # history on every run.
+                bars_cache[asset_class] = await barfetch.fetch_bars(
+                    client, syms, asset_class, body.timeframe, start
+                )
     except AlpacaError as exc:
         raise HTTPException(status_code=502, detail=f"Bar download failed ({exc.status_code}): {exc}")
 

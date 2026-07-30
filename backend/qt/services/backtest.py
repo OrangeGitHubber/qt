@@ -1337,9 +1337,17 @@ async def fetch_benchmark(
     """Buy-and-hold % series for SPY (stocks) or BTC/USD (crypto), aligned to
     the backtest's day index. `market` buckets the benchmark's daily closes into
     the same day keys the backtest used (ET for a stock replay, UTC for crypto)."""
+    from qt.services import barfetch  # local: barfetch pulls in the cache layer
+
     symbol = "SPY" if asset_class == "stock" else "BTC/USD"
     day_of = _day_fn(market)
-    bars = await client.historical_bars([symbol], asset_class, "1Day", start_iso)
+    # Cached too. One symbol is cheap, but it's a year of SPY re-downloaded on
+    # every single backtest, and it's the same daily series the strategies use.
+    # Safe because a cached daily bar is re-stamped to a PRE-MARKET time (see
+    # barfetch.DAILY_STAMP), so it lands in the same day bucket as a fresh one —
+    # a benchmark line landing a day off the equity curve is exactly the kind of
+    # quiet wrongness this codebase keeps having to dig out.
+    bars = await barfetch.fetch_bars(client, [symbol], asset_class, "1Day", start_iso)
     series = bars.get(symbol) or []
     closes: dict[str, float] = {day_of(_parse_ts(b["t"])): float(b["c"]) for b in series}
     base: float | None = None

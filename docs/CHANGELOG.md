@@ -3,6 +3,29 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## The last two bar downloads that skipped the cache (2026-07-30)
+
+The local bar cache works the way it should — run a backtest once and the second
+one reads history from disk, downloading only the days that have happened since.
+Two paths were still going straight to Alpaca every time, though:
+
+- **The portfolio backtest.** It fetches every symbol of every selected
+  strategy — the heaviest download in the app — and re-downloaded all of it on
+  every run.
+- **The benchmark line.** A year of SPY, re-fetched for every single backtest,
+  even though it's the same daily history the strategies already cache.
+
+Both now read through the cache like everything else. The benchmark needed the
+most care: cached daily bars are re-stamped when they're read back, so the risk
+wasn't a slow run, it was the benchmark line landing a day off the equity curve.
+There's now a test that the cached benchmark is identical to a freshly
+downloaded one, and tests that a repeat backtest — single or portfolio —
+downloads *nothing*.
+
+Unchanged, deliberately: the live engine, the scanner and the watchlist always
+fetch fresh. The cache never stores a bar whose period is still open, because a
+half-finished price saved once would be served as fact forever.
+
 ## A running backtest now says what it's doing (2026-07-30)
 
 Now that a long run happens in the background, the only sign of life was a
