@@ -3,6 +3,24 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Every buy now records where it ranked (2026-07-31)
+
+A journal entry read *"up 2.17% today, MACD bullish; all rails passed"* whether
+the bot had bought the strongest name in the basket or the twenty-fourth one —
+the last thing standing after everything above it was already held or failed the
+rules. Those are very different trades and they looked identical.
+
+Buys, blocked entries and skipped candidates now say **where the symbol placed**:
+*"up 2.17% today, MACD bullish, ranked #24 of 25 by momentum today; all rails
+passed"*. The strategy's last-run table gains a **Rank** column showing the same
+thing for every candidate it looked at.
+
+This is worth reading when a strategy that allows only a few positions keeps
+buying from the tail of its own list. The engine already takes candidates
+strictly best-first, so a low rank isn't the bot ignoring the leaders — it means
+every stronger name was already held or didn't pass the entry rules. Now you can
+see which.
+
 ## Strategy contributions: unrealized P&L column (2026-07-31)
 
 The table showed each strategy's **realized** profit and a bare count of open

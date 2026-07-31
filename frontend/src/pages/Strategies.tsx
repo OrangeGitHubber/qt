@@ -258,6 +258,10 @@ function LastRunView({ strategyId }: { strategyId: number }) {
                 <thead>
                   <tr>
                     <th>Symbol</th>
+                    {/* Where each name placed in the ranking. The engine buys
+                        strictly best-first, so a buy far down the list means
+                        everything above it was already held or failed a rule. */}
+                    <th>Rank</th>
                     <th>Day</th>
                     <th>Decision</th>
                     <th className="why">Why</th>
@@ -267,6 +271,9 @@ function LastRunView({ strategyId }: { strategyId: number }) {
                   {data.candidates.map((c, i) => (
                     <tr key={i}>
                       <td>{c.symbol}</td>
+                      <td className="hint">
+                        {c.rank == null ? "—" : `#${c.rank}${c.rank_of ? ` / ${c.rank_of}` : ""}`}
+                      </td>
                       <td className={c.change_pct >= 0 ? "up" : "down"}>
                         {c.change_pct >= 0 ? "+" : ""}
                         {c.change_pct}%

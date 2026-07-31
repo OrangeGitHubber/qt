@@ -78,6 +78,16 @@ class Candidate:
     # Wilder's 14-day RSI from COMPLETED daily closes. Only set when a strategy
     # opts into an RSI entry band; otherwise None and ignored.
     rsi: float | None = None
+    # Where this symbol placed in its strategy's ranking THIS cycle (1 = best),
+    # and how many were ranked. None on an unranked universe (the scanner is
+    # already ordered by the scan itself, and a plain watchlist has no order).
+    #
+    # Recorded because "bought AVGO, up 2.17%, MACD bullish" doesn't tell you
+    # whether it was the strongest name in the basket or the last one standing
+    # after everything above it was already held or failed the entry rules. Those
+    # are very different trades and the journal read identically for both.
+    rank: int | None = None
+    rank_of: int | None = None
 
 
 @dataclass
@@ -947,11 +957,14 @@ async def _consider_entries(
                     "price": cand.price,
                     "change_pct": cand.change_pct,
                     "macd_bullish": cand.macd_bullish,
+                    "rank": cand.rank,
+                    "rank_of": cand.rank_of,
                     "decision": "",
                     "reason": "",
                 }
+                rank_note = _rank_note(strategy, cand)
                 if not entry_ok:
-                    row["decision"], row["reason"] = "skipped", entry_reason
+                    row["decision"], row["reason"] = "skipped", f"{entry_reason}{rank_note}"
                     trace["candidates"].append(row)
                     continue
 
@@ -982,19 +995,20 @@ async def _consider_entries(
                             mode=mode, symbol=cand.symbol, asset_class=cand.asset_class,
                             account_id=get_setting(session, "current_account_id"),
                             qty=0, notional=0, status="rejected",
-                            entry_reason=f"wanted to buy ({entry_reason}) but {rails_reason}",
+                            entry_reason=f"wanted to buy ({entry_reason}{rank_note}) but {rails_reason}",
                         )
                     )
                     continue
 
-                row["decision"], row["reason"] = "bought", f"{entry_reason}; {rails_reason}"
+                bought_reason = f"{entry_reason}{rank_note}; {rails_reason}"
+                row["decision"], row["reason"] = "bought", bought_reason
                 trace["candidates"].append(row)
 
                 from qt.services import execution
 
                 await execution.open_trade(
                     session, client, strategy, version_id, mode, cand,
-                    f"{entry_reason}; {rails_reason}",
+                    bought_reason,
                     sizing_usd=entry_sizing,
                 )
 
@@ -1313,6 +1327,22 @@ async def _pool_metrics(
     return metrics, price_map, vwap_map
 
 
+def _rank_note(strategy: Strategy, cand: Candidate) -> str:
+    """", ranked #4 of 25 by momentum today" — or "" on an unranked universe.
+
+    Without this the journal said "up 2.17% today, MACD bullish" whether the buy
+    was the strongest name in the basket or the twenty-fourth. The engine takes
+    candidates strictly best-first, so a low rank means everything above it was
+    already held or failed the rules — worth knowing when a strategy that allows
+    4 positions keeps ending up in the tail of its own list.
+    """
+    if cand.rank is None:
+        return ""
+    metric = (strategy.rank_by or "").replace("_", " ") or "rank"
+    of = f" of {cand.rank_of}" if cand.rank_of else ""
+    return f", ranked #{cand.rank}{of} by {metric}"
+
+
 async def _ranked_candidates(
     client: AlpacaClient, asset_class: str, symbols: list[str], rank_by: str, top_n: int
 ) -> list[Candidate]:
@@ -1326,8 +1356,13 @@ async def _ranked_candidates(
     if not symbols:
         return []
     metrics, price_map, vwap_map = await _pool_metrics(client, asset_class, symbols, rank_by)
+    ranked = ranking.rank_symbols(metrics, rank_by, top_n)
     candidates: list[Candidate] = []
-    for sym, _value in ranking.rank_symbols(metrics, rank_by, top_n):
+    # rank_symbols returns best-first, and the entry loop walks this list in
+    # order — so the strongest name gets first refusal on the sleeve. Stamping
+    # the position here is what lets the journal say WHERE in the list a buy came
+    # from; a symbol with no price is skipped but must not renumber the rest.
+    for position, (sym, _value) in enumerate(ranked, start=1):
         price = price_map.get(sym)
         if not price:
             continue
@@ -1338,6 +1373,8 @@ async def _ranked_candidates(
                 price=price,
                 change_pct=metrics[sym]["momentum_today"] or 0.0,
                 vwap=vwap_map.get(sym),
+                rank=position,
+                rank_of=len(ranked),
             )
         )
     return candidates

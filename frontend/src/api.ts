@@ -212,6 +212,11 @@ export interface LastRunCandidate {
   price: number;
   change_pct: number;
   macd_bullish: boolean | null;
+  // Where it placed in the strategy's ranking this cycle (1 = best). null on an
+  // unranked universe. The engine takes candidates strictly best-first, so a
+  // high number means everything above it was held or failed the rules.
+  rank: number | null;
+  rank_of: number | null;
   decision: string; // bought | skipped | blocked
   reason: string;
 }

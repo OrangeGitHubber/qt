@@ -78,3 +78,66 @@ def test_rs_vs_spy_can_be_negative_and_drops_missing():
     # A trails SPY (negative but present → ranked); C has no value → dropped.
     m = _metrics(A=(0, 0, 0, -1.5), B=(0, 0, 0, -0.5), C=(0, 0, 0, None))
     assert [s for s, _ in rank_symbols(m, "rs_vs_spy", 5)] == ["B", "A"]
+
+
+# ---------------------------------------------------------------------------
+# Rank provenance on the trade.
+#
+# "up 2.17% today, MACD bullish" read identically whether the buy was the
+# strongest name in the basket or the twenty-fourth one — the last thing left
+# after everything above it was already held or failed the rules. Those are
+# different trades. The rank now travels with the candidate into the journal.
+# ---------------------------------------------------------------------------
+
+import asyncio  # noqa: E402
+from unittest.mock import AsyncMock, patch  # noqa: E402
+
+from qt.models import Strategy  # noqa: E402
+from qt.services import engine  # noqa: E402
+
+
+def _ranked(symbols_to_change: dict[str, float]):
+    """Run _ranked_candidates over a pool with known momentum, mocking the
+    snapshot layer so only the ranking + stamping is under test."""
+    metrics = {s: {"momentum_today": v} for s, v in symbols_to_change.items()}
+    prices = {s: 100.0 for s in symbols_to_change}
+    with patch.object(engine, "_pool_metrics", new=AsyncMock(return_value=(metrics, prices, {}))):
+        return asyncio.run(
+            engine._ranked_candidates(
+                None, "stock", list(symbols_to_change), "momentum_today", len(symbols_to_change)
+            )
+        )
+
+
+def test_candidates_are_stamped_best_first():
+    cands = _ranked({"AAA": 1.0, "BBB": 9.0, "CCC": 5.0})
+    assert [(c.symbol, c.rank) for c in cands] == [("BBB", 1), ("CCC", 2), ("AAA", 3)]
+    assert {c.rank_of for c in cands} == {3}
+
+
+def test_an_unpriced_symbol_does_not_renumber_the_rest():
+    """A symbol dropped for want of a price must not promote everything below it
+    — the rank has to mean its place in the RANKING, not its index in whatever
+    survived."""
+    metrics = {s: {"momentum_today": v} for s, v in {"AAA": 9.0, "BBB": 5.0, "CCC": 1.0}.items()}
+    prices = {"AAA": 100.0, "CCC": 100.0}  # BBB (rank 2) has no price
+    with patch.object(engine, "_pool_metrics", new=AsyncMock(return_value=(metrics, prices, {}))):
+        cands = asyncio.run(
+            engine._ranked_candidates(None, "stock", ["AAA", "BBB", "CCC"], "momentum_today", 3)
+        )
+    assert [(c.symbol, c.rank) for c in cands] == [("AAA", 1), ("CCC", 3)]
+
+
+def test_the_rank_note_names_the_position_and_the_metric():
+    s = Strategy(name="IT", asset_class="stock", params="{}", rank_by="momentum_today", top_n=25)
+    cand = engine.Candidate(symbol="AVGO", asset_class="stock", price=397.8, change_pct=2.17,
+                            rank=24, rank_of=25)
+    assert engine._rank_note(s, cand) == ", ranked #24 of 25 by momentum today"
+
+
+def test_an_unranked_universe_adds_nothing():
+    """A scanner strategy has no top-N to place a symbol in — the reason string
+    must be left exactly as it was."""
+    s = Strategy(name="Scan", asset_class="stock", params="{}", rank_by="momentum_today", top_n=10)
+    cand = engine.Candidate(symbol="AVGO", asset_class="stock", price=397.8, change_pct=2.17)
+    assert engine._rank_note(s, cand) == ""
