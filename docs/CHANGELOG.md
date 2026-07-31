@@ -3,6 +3,28 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Server errors now identify themselves (2026-07-31)
+
+"HTTP 500 — Internal Server Error" is what FastAPI says when something breaks
+unexpectedly. It's true and completely useless: the actual error is in the
+container log, mixed in with everything else, with nothing to search for.
+
+Every unexpected 500 now carries a short reference:
+
+> Something went wrong on the server (ref a3f9c2). The full error is in the
+> container log — search it for 'a3f9c2'.
+
+The same reference is written next to the full traceback in the log, so one
+occurrence can be tracked down with a single search instead of guesswork. The
+internal message itself is deliberately *not* shown in the browser — the
+reference is for correlating, not for shipping stack traces to the UI.
+
+One specific case is now separated out. SQLite allows only one writer at a time,
+so a save that lands while the trading engine's minute tick or a sweep is writing
+can be refused. That's **transient** — it works on retry — but it arrived as the
+same anonymous 500 as a real bug. It now says so plainly, including that nothing
+was saved, so you're not left wondering whether the edit half-applied.
+
 ## The basket sweep now reports progress like a backtest (2026-07-31)
 
 The sweep drew a progress bar but sat behind a button that just said

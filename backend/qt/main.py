@@ -1,12 +1,14 @@
 import logging
 import os
+import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from fastapi import Depends, FastAPI
-from fastapi.responses import FileResponse
+from fastapi import Depends, FastAPI, Request
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from sqlalchemy.exc import OperationalError
 
 from qt import __version__
 from qt.api import (
@@ -244,6 +246,44 @@ app.include_router(baskets.router, dependencies=[Depends(require_user)])
 app.include_router(barcache_api.router, dependencies=[Depends(require_user)])
 app.include_router(optimizer_api.router, dependencies=[Depends(require_user)])
 app.include_router(about.router, dependencies=[Depends(require_user)])
+
+
+@app.exception_handler(OperationalError)
+async def _db_busy(request: Request, exc: OperationalError) -> JSONResponse:
+    """SQLite serialises writers. The engine tick, a sweep and a save can collide,
+    and past the busy timeout SQLite gives up with "database is locked" — which
+    reached the browser as a bare 500 that said nothing and looked permanent. It
+    is neither: it's transient and retrying works."""
+    if "locked" in str(exc.orig or exc).lower():
+        log.warning("database busy on %s %s", request.method, request.url.path)
+        return JSONResponse(
+            status_code=503,
+            content={
+                "detail": "The database was busy (a background job was writing to it). "
+                          "Nothing was saved — try again in a moment."
+            },
+        )
+    return await _unhandled(request, exc)
+
+
+@app.exception_handler(Exception)
+async def _unhandled(request: Request, exc: Exception) -> JSONResponse:
+    """Give every 500 a reference the log can be searched by.
+
+    FastAPI's default answer is the bare string "Internal Server Error", so a
+    user reporting one hands you no way to find the traceback among everything
+    else the container logged. The reference costs six characters and turns
+    "sometimes I get a 500" into one grep.
+    """
+    ref = uuid.uuid4().hex[:6]
+    log.exception("unhandled error [ref %s] on %s %s", ref, request.method, request.url.path)
+    return JSONResponse(
+        status_code=500,
+        content={
+            "detail": f"Something went wrong on the server (ref {ref}). "
+                      f"The full error is in the container log — search it for '{ref}'."
+        },
+    )
 
 
 def _static_dir() -> Path | None:
