@@ -334,14 +334,24 @@ export default function PriceChart({
           if (m.index < viewStart || m.index > viewEnd) return null;
           const cx = x(m.index);
           const cy = price.y(m.price);
-          const c = m.kind === "buy" ? "var(--ok)" : "var(--err)";
-          const tri =
-            m.kind === "buy"
-              ? `${cx},${cy - 9} ${cx - 6},${cy + 2} ${cx + 6},${cy + 2}` // up triangle above the point
-              : `${cx},${cy + 9} ${cx - 6},${cy - 2} ${cx + 6},${cy - 2}`; // down triangle below
+          // Shape and placement carry buy vs sell — filled up-triangle above the
+          // point, hollow down-triangle below. Not colour: green and red mean
+          // profit and loss everywhere else, and a marker has no result to
+          // report (a buy hasn't got one yet). Same rule as LineChart, so the
+          // two charts can't teach the reader different vocabularies.
+          const buy = m.kind === "buy";
+          const tri = buy
+            ? `${cx},${cy - 9} ${cx - 6},${cy + 2} ${cx + 6},${cy + 2}` // up triangle above the point
+            : `${cx},${cy + 9} ${cx - 6},${cy - 2} ${cx + 6},${cy - 2}`; // down triangle below
           return (
             <g key={i}>
-              <polygon points={tri} fill={c} stroke="var(--bg)" strokeWidth="1" />
+              <polygon
+                points={tri}
+                fill={buy ? "var(--accent)" : "none"}
+                stroke={buy ? "var(--bg)" : "var(--accent)"}
+                strokeWidth="1.5"
+                strokeLinejoin="round"
+              />
               <title>{m.label}</title>
             </g>
           );

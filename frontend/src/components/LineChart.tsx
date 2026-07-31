@@ -235,10 +235,18 @@ export default function LineChart({
           <path key={s.label} d={path(s.values)} fill="none" stroke={s.color} strokeWidth="2" />
         ))}
 
-        {/* trade markers ride their own series line (default the first) */}
+        {/* Trade markers ride their own series line (default the first).
+            Buy vs sell is carried by SHAPE and PLACEMENT — triangle pointing up
+            above the line, pointing down below it — never by colour. Green and
+            red mean profit and loss everywhere else here, and a marker can't
+            honestly claim either: a buy has no result yet, and a day holding
+            several buys and sells has no single outcome to colour. Colour is
+            spent on WHICH LINE the trade belongs to instead, which is the thing
+            you actually can't otherwise tell in compare mode. */}
         {marks.map((m, i) => {
           if (m.index < viewStart || m.index > viewEnd) return null;
-          const v = series[m.seriesIndex ?? 0]?.values[m.index];
+          const s = series[m.seriesIndex ?? 0];
+          const v = s?.values[m.index];
           if (v == null) return null;
           const cx = model.x(m.index);
           const cy = model.y(v);
@@ -246,7 +254,16 @@ export default function LineChart({
           const d = up
             ? `M${cx},${cy - 9} l4,7 l-8,0 Z`
             : `M${cx},${cy + 9} l4,-7 l-8,0 Z`;
-          return <path key={`${m.kind}-${m.index}-${i}`} d={d} fill={up ? "var(--ok)" : "var(--err)"} />;
+          return (
+            <path
+              key={`${m.kind}-${m.index}-${i}`}
+              d={d}
+              fill={up ? s.color : "none"}
+              stroke={s.color}
+              strokeWidth="1.5"
+              strokeLinejoin="round"
+            />
+          );
         })}
 
         {hover !== null && hover >= viewStart && hover <= viewEnd && (
@@ -361,8 +378,14 @@ export default function LineChart({
         ))}
         {marks.length > 0 && (
           <>
-            <span><span className="marker-key up">▲</span> bought</span>
-            <span><span className="marker-key down">▼</span> sold</span>
+            {/* Match the plot: filled up-triangle = bought, hollow down-triangle
+                = sold, both in the line's own colour. */}
+            <span>
+              <span className="marker-key">▲</span> bought
+            </span>
+            <span>
+              <span className="marker-key">▽</span> sold
+            </span>
           </>
         )}
       </div>

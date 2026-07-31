@@ -3,6 +3,23 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Chart markers stop pretending to be profit and loss (2026-07-31)
+
+The buy and sell triangles on every chart were green and red — the same two
+colours that mean *gain* and *loss* everywhere else in the app. A green triangle
+looked like a good trade and a red one like a bad one, when all they ever meant
+was "bought here" and "sold here". A buy has no result to report yet, and a day
+holding several buys and sells has no single outcome to colour.
+
+Buy versus sell is now carried by **shape and position**: a filled triangle
+pointing up, above the line, is a buy; a hollow triangle pointing down, below the
+line, is a sell. Colour now says **which line the trade belongs to** — which is
+the thing you genuinely couldn't tell before when comparing two strategies on one
+chart.
+
+Applied to both the performance chart and the symbol price chart, so the two
+don't teach different vocabularies.
+
 ## Every trade reason now shows what it was measured against (2026-07-31)
 
 The exit reasons had drifted into different styles. Some told you everything —
