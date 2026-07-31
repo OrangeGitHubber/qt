@@ -3,6 +3,32 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## The chart hover panel now says what each thing is (2026-07-31)
+
+A busy day ran everything together into one unlabelled stream — twenty buys and
+sells behind bare arrows, followed by "3 strategies:" and some percentages, with
+nothing saying which was which or what the percentages measured.
+
+It now reads as sections:
+
+```
+2026-07-30
+▲ Bought 13   ACN @ $165.15   ADA/USD @ $0.16   C @ $130.06   …
+▼ Sold 7      ACN @ $164.52 −$0.95   AON @ $362.03 −$18.70   …
+─────────────────────────────────────────────
+Day −0.28%    realized, by strategy:  Banking Sector −0.19%   …
+```
+
+Buys and sells get their own labelled row with a count. The day's move leads its
+own line, separated by a rule, so trades and contributors can't be mistaken for
+each other — and the label finally says what those numbers are: **realized**
+P&L per strategy, which is why they don't always add up to the day's move (open
+positions move the line too, and aren't realized until they're sold).
+
+One thing that was quietly backwards: a sell was always printed red, because it
+was a sell. A profitable exit therefore looked like a loss. Sells are now
+coloured by what they made.
+
 ## Every buy now records where it ranked (2026-07-31)
 
 A journal entry read *"up 2.17% today, MACD bullish; all rails passed"* whether

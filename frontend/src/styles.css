@@ -1930,8 +1930,39 @@ details.strat-fold > summary .strat-head .hint {
 }
 
 /* Second line of the hover panel: the day's holdings + their contributions. */
+/* One labelled row per group (date / bought / sold / day). Each starts with a
+   bold caption so a busy day reads as sections instead of a wall of glyphs. */
+.chart-trade-detail .td-line {
+  margin-top: 0.2rem;
+}
+
+.chart-trade-detail .td-line:first-child {
+  margin-top: 0;
+}
+
 .chart-trade-detail .td-holdings {
-  margin-top: 0.25rem;
+  margin-top: 0.45rem;
+  padding-top: 0.4rem;
+  border-top: 1px solid var(--border);
+}
+
+/* The caption that opens a row: "▲ Bought 13", "Day −0.28%". */
+.chart-trade-detail .td-kind {
+  font-weight: 600;
+  margin-right: 0.6rem;
+}
+
+.chart-trade-detail .td-kind.up {
+  color: var(--ok);
+}
+
+.chart-trade-detail .td-kind.down {
+  color: var(--err);
+}
+
+.chart-trade-detail .td-from {
+  color: var(--muted);
+  margin-right: 0.5rem;
 }
 
 .chart-trade-detail .td-day {

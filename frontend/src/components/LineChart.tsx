@@ -14,6 +14,10 @@ export interface ChartMarker {
   // Comparison charts put strategy B's trades on series 1 so each strategy's
   // markers sit on its own equity line.
   seriesIndex?: number;
+  // Colour for this entry in the detail panel. Defaults to the kind (buys green,
+  // sells red) — but a sell is red only because it's a sell, and a PROFITABLE
+  // sell printed in red reads as a loss. Callers that know the outcome pass it.
+  tone?: "up" | "down";
 }
 
 // One holding's contribution to a single day's move (qty 0 = closed that day),
@@ -285,14 +289,29 @@ export default function LineChart({
               {noTradeReasons?.[labels[hover]] ? ` ${noTradeReasons[labels[hover]]}` : ""}
             </span>
           ) : (
+            // Buys and sells on their OWN labelled rows. Interleaved behind bare
+            // ▲/▼ glyphs, a busy day read as one undifferentiated wall and you
+            // couldn't tell trades from the day's contributors below.
             <>
-              <span className="td-day">{labels[hover]}:</span>{" "}
-              {hoverMarkers.map((m, i) => (
-                <span key={i} className={`td-item ${m.kind === "buy" ? "up" : "down"}`}>
-                  {m.kind === "buy" ? "▲ " : "▼ "}
-                  {m.text}
-                </span>
-              ))}
+              <div className="td-line">
+                <span className="td-day">{labels[hover]}</span>
+              </div>
+              {(["buy", "sell"] as const).map((kind) => {
+                const of = hoverMarkers.filter((m) => m.kind === kind);
+                if (!of.length) return null;
+                return (
+                  <div className="td-line" key={kind}>
+                    <span className={`td-kind ${kind === "buy" ? "up" : "down"}`}>
+                      {kind === "buy" ? `▲ Bought ${of.length}` : `▼ Sold ${of.length}`}
+                    </span>
+                    {of.map((m, i) => (
+                      <span key={i} className={`td-item ${m.tone ?? (kind === "buy" ? "up" : "down")}`}>
+                        {m.text}
+                      </span>
+                    ))}
+                  </div>
+                );
+              })}
             </>
           )}
           {/* What was HELD that day and what each holding did to the equity —
@@ -302,11 +321,18 @@ export default function LineChart({
             (() => {
               const hs = holdings![labels[hover]];
               const total = hs.reduce((sum, h) => sum + h.day_pnl_pct, 0);
+              // Lead with the day's move — that's the thing being explained —
+              // then what accounts for it. The old order buried the total at the
+              // end of the list it belonged to, behind a bare "3 strategies:"
+              // that didn't say what the numbers next to them were.
               return (
-                <div className="td-holdings">
-                  <span className="td-day">
-                    {holdingsLabel ? hs.length : hs.filter((h) => h.qty > 0).length}{" "}
-                    {holdingsLabel ?? "open"}:
+                <div className="td-line td-holdings">
+                  <span className={`td-kind ${total >= 0 ? "up" : "down"}`}>
+                    Day {total >= 0 ? "+" : "−"}
+                    {Math.abs(total).toFixed(2)}%
+                  </span>
+                  <span className="td-from">
+                    {holdingsLabel ?? `from ${hs.filter((h) => h.qty > 0).length} open position(s)`}:
                   </span>{" "}
                   {hs.map((h) => (
                     <span key={h.symbol} className={`td-item ${h.day_pnl_pct >= 0 ? "up" : "down"}`}>
@@ -315,10 +341,6 @@ export default function LineChart({
                       {Math.abs(h.day_pnl_pct).toFixed(2)}%
                     </span>
                   ))}
-                  <span className="td-day">
-                    {" "}
-                    → day {total >= 0 ? "+" : "−"}{Math.abs(total).toFixed(2)}%
-                  </span>
                 </div>
               );
             })()}

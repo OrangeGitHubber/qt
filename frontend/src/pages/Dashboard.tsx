@@ -532,7 +532,13 @@ function ScoreboardCard() {
       for (const t of board.trades![day] ?? []) {
         const price = t.price != null ? ` @ $${t.price.toFixed(2)}` : "";
         const pnl = t.pnl != null ? ` ${t.pnl >= 0 ? "+" : "−"}$${Math.abs(t.pnl).toFixed(2)}` : "";
-        out.push({ index, kind: t.kind, text: `${t.symbol}${price}${pnl}` });
+        out.push({
+          index,
+          kind: t.kind,
+          text: `${t.symbol}${price}${pnl}`,
+          // Colour a sell by what it MADE, not by the fact that it was a sell.
+          tone: t.pnl == null ? undefined : t.pnl >= 0 ? "up" : "down",
+        });
       }
     });
     return out;
@@ -570,7 +576,10 @@ function ScoreboardCard() {
           ]}
           markers={boardMarkers}
           holdings={attribution}
-          holdingsLabel="strategies"
+          // Says what the numbers ARE. "3 strategies:" left you to guess whether
+          // they were trades, holdings, or contributions — and they're realized
+          // only, which is why they don't always sum to the day's move.
+          holdingsLabel="realized, by strategy"
         />
       )}
       {board && (
