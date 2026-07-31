@@ -13,6 +13,7 @@ import {
 import InfoTip from "../components/InfoTip";
 import LineChart, { ChartMarker, DayHolding } from "../components/LineChart";
 import NumberField from "../components/NumberField";
+import RunStatus from "../components/RunStatus";
 import { IconEdit, IconWarn } from "../components/icons";
 import { consumeNav, requestNav } from "../lib/nav";
 
@@ -193,37 +194,10 @@ export default function Backtest() {
   const [portfolioBusy, setPortfolioBusy] = useState(false);
   const [portfolioError, setPortfolioError] = useState<string | null>(null);
 
-  // A long replay now runs as a background job the browser polls, so it can
-  // legitimately take minutes. A button frozen on "Replaying history…" with
-  // nothing moving is exactly what "it just stopped working" felt like — count
-  // the seconds so a slow run is visibly a slow run, not a dead one.
-  const [elapsed, setElapsed] = useState(0);
+  // What the run is doing, beside the disabled button. The phase comes from the
+  // server; the clock ticks locally so the line never looks stuck between polls.
   const [progress, setProgress] = useState<JobProgress | null>(null);
   const working = busy || portfolioBusy;
-  useEffect(() => {
-    if (!working) return;
-    setElapsed(0);
-    const started = Date.now();
-    const t = setInterval(() => setElapsed(Math.round((Date.now() - started) / 1000)), 1000);
-    return () => clearInterval(t);
-  }, [working]);
-  const since = elapsed >= 60 ? `${Math.floor(elapsed / 60)}m ${elapsed % 60}s` : `${elapsed}s`;
-
-  // What the run is doing, beside the disabled button. The phase comes from the
-  // server; the clock is local, so it keeps ticking between polls and the line
-  // never looks stuck even while a single phase runs for minutes.
-  function RunStatus() {
-    if (!working) return null;
-    const phase = progress?.phase ?? "Starting…";
-    return (
-      <span className="run-status" role="status" aria-live="polite">
-        <span className="spinner" aria-hidden="true" />
-        {phase}
-        {progress?.pct != null && ` ${progress.pct}%`}
-        <span className="hint"> · {since}</span>
-      </span>
-    );
-  }
 
   // Place each buy/sell on the equity curve's day index. Positions still open at
   // the window end aren't in trade_list (no forced sale), but their BUYS still
@@ -681,7 +655,7 @@ export default function Backtest() {
               <button disabled={portfolioBusy || portfolioIds.length === 0 || portfolioMixedBars}>
                 {portfolioBusy ? "Running…" : "Run portfolio"}
               </button>
-              <RunStatus />
+              <RunStatus running={working} phase={progress?.phase} pct={progress?.pct} />
             </form>
           </div>
 
@@ -1071,7 +1045,7 @@ export default function Backtest() {
                 bars would contradict it. */}
             {busy ? "Running…" : mode === "compare" ? "Run comparison" : "Run backtest"}
           </button>
-          <RunStatus />
+          <RunStatus running={working} phase={progress?.phase} pct={progress?.pct} />
         </form>
       </div>
 

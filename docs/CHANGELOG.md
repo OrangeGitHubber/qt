@@ -3,6 +3,22 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## The basket sweep now reports progress like a backtest (2026-07-31)
+
+The sweep drew a progress bar but sat behind a button that just said
+"Sweeping…", while a backtest showed a spinner, the phase it was in and a
+running clock. Three long jobs, three different answers to "is this still
+working?".
+
+All three now use the same status line — spinner, the phase the server reports,
+a percentage where one is knowable, and elapsed time. The sweep says which
+basket it's on out of how many; the parameter search says how many combinations
+it has tried.
+
+The clock reads from the **server's** start time rather than the browser's, so
+reloading the page in the middle of a ten-minute sweep no longer restarts it at
+zero.
+
 ## Chart markers stop pretending to be profit and loss (2026-07-31)
 
 The buy and sell triangles on every chart were green and red — the same two

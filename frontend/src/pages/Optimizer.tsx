@@ -19,6 +19,7 @@ import InfoTip from "../components/InfoTip";
 import NumberField from "../components/NumberField";
 import SymbolPicker from "../components/SymbolPicker";
 import { IconWarn } from "../components/icons";
+import RunStatus from "../components/RunStatus";
 import { consumeNav } from "../lib/nav";
 
 // Human labels for the four searched knobs (keys match the backend PARAM_SPACE).
@@ -424,6 +425,25 @@ export default function Optimizer() {
   const progressPct =
     status && status.combos_total > 0 ? Math.min(100, Math.round((status.combos_done / status.combos_total) * 100)) : 0;
 
+  // One phrase describing where each job is, shared by the status strip beside
+  // the button and the fuller line in the card below it — so the two can't
+  // disagree about what's happening.
+  const searchPhase = !status
+    ? null
+    : status.phase === "downloading bars"
+      ? "Downloading historical bars…"
+      : `Searching ${status.combos_done} of ${status.combos_total} combinations…`;
+  const sweepPct =
+    sweepStatus && sweepStatus.baskets_total > 0
+      ? Math.round((sweepStatus.baskets_done / sweepStatus.baskets_total) * 100)
+      : 0;
+  const sweepPhase = !sweepStatus
+    ? null
+    : sweepStatus.phase === "downloading bars"
+      ? "Downloading daily bars for every basket…"
+      : `Basket ${Math.min(sweepStatus.baskets_done + 1, sweepStatus.baskets_total)} of ${sweepStatus.baskets_total}` +
+        (sweepStatus.current_basket ? ` — ${sweepStatus.current_basket}` : "");
+
   const hb = result?.hold_benchmark_comparison;
 
   return (
@@ -590,6 +610,12 @@ export default function Optimizer() {
           {/* Not disabled when nothing is selected — a dead button looks broken.
               start() explains instead. */}
           <button disabled={running}>{running ? "Searching…" : "Run parameter search"}</button>
+          <RunStatus
+            running={running}
+            phase={searchPhase}
+            pct={status?.phase === "downloading bars" ? null : progressPct}
+            startedAt={status?.started_at}
+          />
         </form>
       </div>
 
@@ -858,13 +884,18 @@ export default function Optimizer() {
         <button type="button" disabled={sweepRunning || running} onClick={runSweep}>
           {sweepRunning ? "Sweeping…" : "Sweep all baskets"}
         </button>
+        {/* started_at comes from the SERVER, so the clock survives a page reload
+            mid-sweep instead of restarting at zero on a job that's been running
+            for ten minutes. */}
+        <RunStatus
+          running={sweepRunning}
+          phase={sweepPhase}
+          pct={sweepStatus?.phase === "downloading bars" ? null : sweepPct}
+          startedAt={sweepStatus?.started_at}
+        />
         {sweepRunning && sweepStatus && (
           <>
-            <p className="hint">
-              {sweepStatus.phase === "downloading bars"
-                ? "Downloading daily bars for every basket (one batched pull)…"
-                : `Searching basket ${Math.min(sweepStatus.baskets_done + 1, sweepStatus.baskets_total)} of ${sweepStatus.baskets_total}${sweepStatus.current_basket ? ` — ${sweepStatus.current_basket}` : ""}…`}
-            </p>
+            <p className="hint">{sweepPhase}</p>
             <div className="progress-track" aria-label="sweep progress">
               <div
                 className="progress-fill"
