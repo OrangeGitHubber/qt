@@ -31,7 +31,7 @@ export interface DayHolding {
 export default function LineChart({
   labels,
   series,
-  markers = [],
+  markers,
   noTradeReasons,
   holdings,
   holdingsLabel,
@@ -53,6 +53,12 @@ export default function LineChart({
   // range), so the parent can show a trade log scoped to what's on screen.
   onZoomChange?: (range: [number, number] | null) => void;
 }) {
+  // A caller that passes no markers has NOT told us there were no trades — it
+  // has told us nothing about trades. Conflating the two made the scoreboard,
+  // which never passed any, announce "no trades this day" on every single day.
+  const hasTradeData = markers !== undefined;
+  const marks = markers ?? [];
+
   // `hover` is sticky: once you've moved over a day it stays selected after the
   // cursor leaves, so a value can be read without it blanking the instant you
   // reach for it. It only resets when new data arrives.
@@ -156,7 +162,7 @@ export default function LineChart({
     }
   }
 
-  const hoverMarkers = hover !== null ? markers.filter((m) => m.index === hover) : [];
+  const hoverMarkers = hover !== null ? marks.filter((m) => m.index === hover) : [];
 
   return (
     <div className="pricechart">
@@ -172,7 +178,17 @@ export default function LineChart({
           deliberately NOT here; it lives below the chart so it can wrap and be
           read in full without pushing these numbers (or the chart) around. */}
       <div className="chart-readout" aria-label="Chart readout">
-        <div className="cr-date">{hover === null ? "Hover the chart for values" : labels[hover]}</div>
+        {/* Every line is rebased to zero on the window's FIRST day, so the same
+            calendar date reads differently in a 150-day run and a 500-day one —
+            +0% at the start of one, +22% partway through the other. Naming the
+            baseline stops two runs being read against each other as if the
+            numbers shared an origin. */}
+        <div className="cr-date">
+          {hover === null ? "Hover the chart for values" : labels[hover]}
+          {hover !== null && labels.length > 1 && (
+            <span className="cr-since"> since {labels[0]}</span>
+          )}
+        </div>
         <div className="cr-series" style={{ gridTemplateColumns: `repeat(${series.length}, minmax(0, 1fr))` }}>
           {series.map((s) => {
             const v = hover === null ? null : s.values[hover];
@@ -216,7 +232,7 @@ export default function LineChart({
         ))}
 
         {/* trade markers ride their own series line (default the first) */}
-        {markers.map((m, i) => {
+        {marks.map((m, i) => {
           if (m.index < viewStart || m.index > viewEnd) return null;
           const v = series[m.seriesIndex ?? 0]?.values[m.index];
           if (v == null) return null;
@@ -254,13 +270,18 @@ export default function LineChart({
       {/* Trade detail for the hovered day. Below the chart, so it can wrap to as
           many lines as the day's trades need and be read in FULL — its growth
           pushes the legend down, never the chart. */}
-      {(markers.length > 0 || holdings) && (
+      {(hasTradeData || holdings) && (
         <div className="chart-trade-detail">
           {hover === null ? (
-            <span className="cr-trade-empty">Hover a day to see the trades made that day.</span>
+            <span className="cr-trade-empty">
+              {hasTradeData ? "Hover a day to see the trades made that day." : "Hover a day for detail."}
+            </span>
           ) : hoverMarkers.length === 0 ? (
             <span className="cr-trade-empty">
-              {labels[hover]}: no trades this day.
+              {/* Only claim there were no trades when we were actually given the
+                  day's trades to look at. */}
+              {labels[hover]}
+              {hasTradeData ? ": no trades this day." : ":"}
               {noTradeReasons?.[labels[hover]] ? ` ${noTradeReasons[labels[hover]]}` : ""}
             </span>
           ) : (
@@ -310,7 +331,7 @@ export default function LineChart({
             <span className="swatch" style={{ background: s.color }} /> {s.label}
           </span>
         ))}
-        {markers.length > 0 && (
+        {marks.length > 0 && (
           <>
             <span><span className="marker-key up">▲</span> bought</span>
             <span><span className="marker-key down">▼</span> sold</span>

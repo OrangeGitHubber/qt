@@ -3,6 +3,38 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## The scoreboard said "no trades this day" every single day (2026-07-31)
+
+Hovering any day on the dashboard scoreboard reported **no trades that day** —
+including days the bot plainly traded. It wasn't reading the trades and getting
+them wrong. It had never been given any trades at all: the chart component
+treats "no trades supplied" and "no trades happened" as the same thing, so a
+caller that passed nothing got a confident denial on every date.
+
+Two fixes, because either alone leaves a trap:
+
+- The scoreboard now sends the day's actual **buys and sells**, so hovering
+  shows what was bought or sold and for how much. They're matched to days on the
+  server, using the same UTC day the equity points use — done in the browser, an
+  evening trade would slide onto the neighbouring day and be blamed for the wrong
+  move. They're scoped to the same broker account as the line, and shadow-mode
+  trades are excluded, since those never touched this equity.
+- The chart no longer claims anything about trades it wasn't given. "No trades
+  this day" now means exactly that, and appears only when the day's trades were
+  actually checked.
+
+## Charts now name the date they're measured from (2026-07-31)
+
+Every line on a backtest chart is rebased to zero on the **first day of the
+window you tested**, so the same calendar date reads +0% in a 150-day run and
++22% in a 500-day one. Both are right; they have different starting lines. The
+hover now says **"since <start date>"** next to the date, so two runs of
+different lengths can't be silently read against each other.
+
+Worth knowing when comparing runs: percentages measured from a common base don't
+subtract. If SPY shows +22.36% on one date and +30.07% later, the return between
+them is not 7.71 points — it's (1.3007 ÷ 1.2236 − 1) = **6.30%**.
+
 ## The last two bar downloads that skipped the cache (2026-07-30)
 
 The local bar cache works the way it should — run a backtest once and the second

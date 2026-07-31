@@ -151,6 +151,16 @@ export interface JournalRow {
   config_version_id: number | null;
 }
 
+export interface ScoreboardTrade {
+  kind: "buy" | "sell";
+  symbol: string;
+  strategy: string;
+  qty: number;
+  price: number | null;
+  pnl: number | null; // sells only
+  reason: string;
+}
+
 export interface Scoreboard {
   days: string[];
   bot: (number | null)[];
@@ -159,6 +169,9 @@ export interface Scoreboard {
   verdict: string | null;
   account?: string | null; // the broker account this series is scoped to
   base_equity?: number; // equity every point is measured against ($ → % points)
+  // {day -> that day's buys and sells}, same UTC day key as `days` and scoped to
+  // the same account. The chart had none of this and still claimed "no trades".
+  trades?: Record<string, ScoreboardTrade[]>;
 }
 
 const json = (body: unknown): RequestInit => ({

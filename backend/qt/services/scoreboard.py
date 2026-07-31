@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from sqlalchemy.orm import Session
 
 from qt.broker.alpaca import AlpacaClient
-from qt.models import BenchmarkSnapshot
+from qt.models import BenchmarkSnapshot, Strategy, Trade
 from qt.settings_service import get_setting
 
 
@@ -94,6 +94,58 @@ def _with_untagged_history(every: list, tagged: list) -> list:
     return list(reversed(prefix)) + tagged
 
 
+def _trades_by_day(session: Session, days: list[str], account: str | None) -> dict[str, list[dict]]:
+    """What the bot actually did on each day of the scoreboard's window.
+
+    Keyed by the SAME UTC day as BenchmarkSnapshot.day, and computed here rather
+    than in the browser so the two can't drift: a local-time conversion would put
+    an evening trade on the wrong day and quietly mis-attribute it.
+
+    Scoped to the same account as the equity line for the same reason the line is
+    — another account's trades under this account's curve would be fiction. Shadow
+    trades are excluded: they never touched the equity being plotted.
+    """
+    if not days:
+        return {}
+    names = dict(session.query(Strategy.id, Strategy.name).all())
+    rows = (
+        session.query(Trade)
+        .filter(Trade.mode != "shadow", Trade.status != "rejected")
+        .filter((Trade.entry_at.isnot(None)) | (Trade.exit_at.isnot(None)))
+        .all()
+    )
+    window = set(days)
+    out: dict[str, list[dict]] = {}
+
+    def add(at: datetime | None, trade: Trade, kind: str) -> None:
+        if at is None:
+            return
+        # Naive stamps are stored UTC; treat them as such rather than as local.
+        day = (at if at.tzinfo else at.replace(tzinfo=timezone.utc)).astimezone(timezone.utc).strftime("%Y-%m-%d")
+        if day not in window:
+            return
+        out.setdefault(day, []).append({
+            "kind": kind,
+            "symbol": trade.symbol,
+            "strategy": names.get(trade.strategy_id, ""),
+            "qty": trade.qty,
+            "price": trade.entry_price if kind == "buy" else trade.exit_price,
+            "pnl": None if kind == "buy" else trade.pnl,
+            "reason": trade.entry_reason if kind == "buy" else trade.exit_reason,
+        })
+
+    for t in rows:
+        # Legacy rows carry no account. Include them rather than hide real trades:
+        # the equity line does the same (see _with_untagged_history).
+        if account and t.account_id and t.account_id != account:
+            continue
+        add(t.entry_at, t, "buy")
+        add(t.exit_at, t, "sell")
+    for day in out:
+        out[day].sort(key=lambda r: (r["kind"] != "buy", r["symbol"]))
+    return out
+
+
 def series(session: Session, account: str | None = None) -> dict:
     """The scoreboard, scoped to ONE broker account.
 
@@ -118,7 +170,7 @@ def series(session: Session, account: str | None = None) -> dict:
         rows = [r for r in every if r.account_id == current] if current else every
         rows = _with_untagged_history(every, rows)
     if not rows:
-        return {"days": [], "bot": [], "spy": [], "btc": [], "verdict": None, "account": account}
+        return {"days": [], "bot": [], "spy": [], "btc": [], "trades": {}, "verdict": None, "account": account}
 
     base = rows[0]
 
@@ -135,6 +187,10 @@ def series(session: Session, account: str | None = None) -> dict:
         "spy": [pct(r.spy_close, base.spy_close) for r in rows],
         "btc": [pct(r.btc_close, base.btc_close) for r in rows],
         "account": base.account_id,
+        # Buys and sells per day. Without these the chart had NO trade data at
+        # all, yet still printed "no trades this day" on every day it was hovered
+        # — a confident statement about something it couldn't see.
+        "trades": _trades_by_day(session, [r.day for r in rows], base.account_id),
         # The equity every point is measured against. Exposed so the UI can turn
         # a strategy's DOLLAR P&L into the same percentage points the chart plots
         # — otherwise per-strategy attribution can't be compared to the line.

@@ -21,6 +21,11 @@ def _seed(rows: list[tuple[str, float, float, str | None]]) -> None:
             s.add(BenchmarkSnapshot(day=day, bot_equity=equity, spy_close=spy, account_id=acct))
 
 
+def set_setting_account(acct: str) -> None:
+    with session_scope() as s:
+        set_setting(s, "current_account_id", acct)
+
+
 def test_account_switch_no_longer_reads_as_a_crash(client):
     # OLD account sat at $100k. NEW account starts at $20k — a 5x smaller
     # balance, not a loss. Unscoped, the last point would be (20000/100000-1)
@@ -114,3 +119,103 @@ def test_untagged_history_stops_at_a_different_tagged_account(client):
         set_setting(s, "current_account_id", "NEW")
     body = client.get("/api/engine/scoreboard").json()
     assert body["days"] == ["2026-07-28", "2026-07-29"]  # stopped before OLD
+
+
+# ---------------------------------------------------------------------------
+# Trades per day.
+#
+# The scoreboard chart was given NO trade data at all, yet the hover panel still
+# printed "no trades this day" — on every day, including days the bot traded.
+# The series now carries the day's buys and sells so the claim is answerable.
+# ---------------------------------------------------------------------------
+
+from datetime import datetime, timezone  # noqa: E402
+
+from qt.models import Strategy, Trade  # noqa: E402
+
+
+def _seed_trade(**kw) -> None:
+    with session_scope() as s:
+        strat = s.query(Strategy).filter(Strategy.name == "T").one_or_none()
+        if strat is None:
+            strat = Strategy(
+                name="T", asset_class="stock", universe="custom", preset="custom",
+                params="{}", symbols="[]",
+            )
+            s.add(strat)
+            s.flush()
+        s.add(Trade(strategy_id=strat.id, asset_class="stock", **kw))
+
+
+def _clear_trades() -> None:
+    with session_scope() as s:
+        s.query(Trade).delete()
+
+
+def test_a_day_with_trades_reports_them(client):
+    _clear_trades()
+    _seed([("2026-07-29", 10_000.0, 500.0, "A"), ("2026-07-30", 10_100.0, 505.0, "A")])
+    set_setting_account("A")
+    _seed_trade(
+        mode="paper", status="closed", account_id="A", symbol="AAPL", qty=3,
+        entry_price=100.0, exit_price=110.0, pnl=30.0,
+        entry_at=datetime(2026, 7, 29, 15, 0, tzinfo=timezone.utc),
+        exit_at=datetime(2026, 7, 30, 18, 30, tzinfo=timezone.utc),
+    )
+    with session_scope() as s:
+        out = scoreboard.series(s)
+    assert [t["kind"] for t in out["trades"]["2026-07-29"]] == ["buy"]
+    sell = out["trades"]["2026-07-30"][0]
+    assert sell["kind"] == "sell" and sell["symbol"] == "AAPL" and sell["pnl"] == 30.0
+
+
+def test_a_late_evening_trade_lands_on_the_right_day(client):
+    """The day key must match BenchmarkSnapshot's UTC day. Computed in the
+    browser instead, a 23:30Z trade would slide a day in most timezones and be
+    attributed to the wrong equity step."""
+    _clear_trades()
+    _seed([("2026-07-29", 10_000.0, 500.0, "A"), ("2026-07-30", 10_100.0, 505.0, "A")])
+    set_setting_account("A")
+    _seed_trade(
+        mode="paper", status="open", account_id="A", symbol="MSFT", qty=1, entry_price=400.0,
+        entry_at=datetime(2026, 7, 30, 23, 30, tzinfo=timezone.utc),
+    )
+    with session_scope() as s:
+        out = scoreboard.series(s)
+    assert "2026-07-30" in out["trades"]
+    assert "2026-07-31" not in out["trades"]
+
+
+def test_another_accounts_trades_stay_off_this_line(client):
+    """The equity line is account-scoped; its trades must be too, or the chart
+    explains this account's moves with another account's trades."""
+    _clear_trades()
+    _seed([("2026-07-30", 10_000.0, 500.0, "A")])
+    set_setting_account("A")
+    _seed_trade(mode="paper", status="open", account_id="B", symbol="NVDA", qty=1,
+                entry_price=100.0, entry_at=datetime(2026, 7, 30, 15, 0, tzinfo=timezone.utc))
+    with session_scope() as s:
+        out = scoreboard.series(s)
+    assert out["trades"] == {}
+
+
+def test_shadow_trades_are_not_claimed_as_real(client):
+    """Shadow mode places no orders, so it never moved this equity line."""
+    _clear_trades()
+    _seed([("2026-07-30", 10_000.0, 500.0, "A")])
+    set_setting_account("A")
+    _seed_trade(mode="shadow", status="open", account_id="A", symbol="TSLA", qty=1,
+                entry_price=100.0, entry_at=datetime(2026, 7, 30, 15, 0, tzinfo=timezone.utc))
+    with session_scope() as s:
+        out = scoreboard.series(s)
+    assert out["trades"] == {}
+
+
+def test_a_genuinely_quiet_day_reports_no_trades(client):
+    """The flip side: 'no trades' must still be sayable when it's true."""
+    _clear_trades()
+    _seed([("2026-07-30", 10_000.0, 500.0, "A")])
+    set_setting_account("A")
+    with session_scope() as s:
+        out = scoreboard.series(s)
+    assert out["trades"] == {}

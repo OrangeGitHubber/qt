@@ -17,7 +17,7 @@ import {
 import { requestNav } from "../lib/nav";
 import AccountSelect from "../components/AccountSelect";
 import InfoTip from "../components/InfoTip";
-import LineChart, { DayHolding } from "../components/LineChart";
+import LineChart, { ChartMarker, DayHolding } from "../components/LineChart";
 import StackedPnlBars, { PnlSeries } from "../components/StackedPnlBars";
 import { IconWarn } from "../components/icons";
 
@@ -484,6 +484,22 @@ function ScoreboardCard() {
   // line" is directly comparable to the line itself. Realized only: a position
   // that merely moved in value isn't attributed until it's closed, so the parts
   // won't always sum to the day's step — said plainly under the chart.
+  // The day's actual buys and sells, from the server (same UTC day key as the
+  // equity points, same account). Undefined until the board loads — the chart
+  // treats "no data" and "no trades" as different things, so it must not be [].
+  const boardMarkers = useMemo<ChartMarker[] | undefined>(() => {
+    if (!board?.trades) return undefined;
+    const out: ChartMarker[] = [];
+    board.days.forEach((day, index) => {
+      for (const t of board.trades![day] ?? []) {
+        const price = t.price != null ? ` @ $${t.price.toFixed(2)}` : "";
+        const pnl = t.pnl != null ? ` ${t.pnl >= 0 ? "+" : "−"}$${Math.abs(t.pnl).toFixed(2)}` : "";
+        out.push({ index, kind: t.kind, text: `${t.symbol}${price}${pnl}` });
+      }
+    });
+    return out;
+  }, [board]);
+
   const attribution = useMemo<Record<string, DayHolding[]> | undefined>(() => {
     if (!daily || !board?.base_equity) return undefined;
     const base = board.base_equity;
@@ -514,6 +530,7 @@ function ScoreboardCard() {
             { label: "Buy & hold SPY", color: "var(--ok)", values: board.spy },
             { label: "Buy & hold BTC", color: "var(--warn)", values: board.btc },
           ]}
+          markers={boardMarkers}
           holdings={attribution}
           holdingsLabel="strategies"
         />

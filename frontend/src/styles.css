@@ -1806,6 +1806,15 @@ button.linklike {
   text-overflow: ellipsis;
 }
 
+/* The baseline every percentage is measured from — secondary to the hovered
+   date, but always visible, because two runs over different windows are only
+   comparable once you know each one's origin. */
+.cr-since {
+  color: var(--muted);
+  font-weight: 400;
+  font-size: 0.85em;
+}
+
 /* One equal-width column per series (columns set inline). Equal fractions of a
    fixed-width box never move, so a value changing length can't shift a sibling. */
 .cr-series {
