@@ -1946,8 +1946,12 @@ details.strat-fold > summary .strat-head .hint {
   border-top: 1px solid var(--border);
 }
 
-/* The caption that opens a row: "▲ Bought 13", "Day −0.28%". */
+/* The caption that opens a row: "▲ Bought 13", "Day −0.28%". Neutral by
+   default — in this app green and red mean profit and loss, so spending them on
+   a section heading reads as a result that isn't there. The .up/.down variants
+   are for captions that ARE a number, like the day's move. */
 .chart-trade-detail .td-kind {
+  color: var(--text);
   font-weight: 600;
   margin-right: 0.6rem;
 }

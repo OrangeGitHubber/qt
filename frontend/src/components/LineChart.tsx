@@ -301,11 +301,17 @@ export default function LineChart({
                 if (!of.length) return null;
                 return (
                   <div className="td-line" key={kind}>
-                    <span className={`td-kind ${kind === "buy" ? "up" : "down"}`}>
+                    {/* A plain label, so it stays plain. Green/red mean profit
+                        and loss everywhere else in this app, and "Bought 13" is
+                        neither — the arrow already carries the direction. */}
+                    <span className="td-kind">
                       {kind === "buy" ? `▲ Bought ${of.length}` : `▼ Sold ${of.length}`}
                     </span>
+                    {/* Same principle: a BUY has no profit or loss yet, so it
+                        gets no colour. Sells are tinted by what they made (or by
+                        kind, for callers that don't supply an outcome). */}
                     {of.map((m, i) => (
-                      <span key={i} className={`td-item ${m.tone ?? (kind === "buy" ? "up" : "down")}`}>
+                      <span key={i} className={`td-item ${m.tone ?? (kind === "buy" ? "" : "down")}`}>
                         {m.text}
                       </span>
                     ))}
