@@ -228,3 +228,168 @@ def test_strategy_pnl_daily_window_cutoff_and_all_time(client):
         s.query(Trade).delete()
         s.query(Strategy).delete()
         set_setting(s, "engine_mode", "off")
+
+
+# ---------------------------------------------------------------------------
+# Unrealized P&L per strategy: the open positions marked to live quotes.
+#
+# The rule these pin: a missing mark is NOT a zero mark. A quote hiccup that
+# silently reports $0.00 looks exactly like a position sitting at break-even,
+# and that is a wrong number presented as a right one.
+# ---------------------------------------------------------------------------
+
+
+def _seed_open_and_closed(client):
+    from datetime import datetime, timezone
+
+    from qt import security
+    from qt.broker.alpaca import SECRET_KEY_ID, SECRET_KEY_SECRET
+    from qt.models import Strategy, Trade
+
+    with session_scope() as s:
+        # Without keys get_client() returns None and NOTHING can be priced — the
+        # marking path under test would never run.
+        security.set_secret(s, SECRET_KEY_ID, "k")
+        security.set_secret(s, SECRET_KEY_SECRET, "s")
+        set_setting(s, "engine_mode", "paper")
+        s.query(Trade).delete()
+        s.query(Strategy).delete()
+        a = Strategy(name="Alpha", asset_class="stock", params="{}")
+        b = Strategy(name="Beta", asset_class="stock", params="{}")
+        s.add_all([a, b])
+        s.flush()
+        now = datetime.now(timezone.utc)
+        s.add_all([
+            Trade(strategy_id=a.id, mode="paper", symbol="X", asset_class="stock",
+                  status="closed", qty=1, notional=100, pnl=40.0, exit_at=now),
+            # Alpha holds 2 NVDA bought at 100 → +$40 if NVDA marks at 120.
+            Trade(strategy_id=a.id, mode="paper", symbol="NVDA", asset_class="stock",
+                  status="open", qty=2, notional=200, entry_price=100.0, entry_at=now),
+            # Beta holds 1 MSFT bought at 400 → −$50 if MSFT marks at 350.
+            Trade(strategy_id=b.id, mode="paper", symbol="MSFT", asset_class="stock",
+                  status="open", qty=1, notional=400, entry_price=400.0, entry_at=now),
+        ])
+        s.commit()
+        return a.id, b.id
+
+
+def _cleanup():
+    from qt import security
+    from qt.broker.alpaca import SECRET_KEY_ID, SECRET_KEY_SECRET
+    from qt.models import Strategy, Trade
+
+    with session_scope() as s:
+        s.query(Trade).delete()
+        s.query(Strategy).delete()
+        set_setting(s, "engine_mode", "off")
+        security.delete_secret(s, SECRET_KEY_ID)
+        security.delete_secret(s, SECRET_KEY_SECRET)
+
+
+def test_unrealized_marks_each_strategys_open_positions(client):
+    from unittest.mock import AsyncMock, patch
+
+    from qt.broker.alpaca import AlpacaClient
+
+    _seed_open_and_closed(client)
+    snaps = {
+        "NVDA": {"latestTrade": {"p": 120.0}},
+        "MSFT": {"latestTrade": {"p": 350.0}},
+    }
+    with patch.object(AlpacaClient, "stock_snapshots", new=AsyncMock(return_value=snaps)):
+        body = client.get("/api/engine/strategy-pnl").json()
+    by = {r["name"]: r for r in body["strategies"]}
+    assert by["Alpha"]["unrealized_pnl"] == 40.0    # (120-100) x 2
+    assert by["Beta"]["unrealized_pnl"] == -50.0    # (350-400) x 1
+    assert body["unrealized_total"] == -10.0
+    assert body["unpriced_positions"] == 0
+    # Realized is untouched and still separate — never folded into one number.
+    assert by["Alpha"]["realized_pnl"] == 40.0 and body["realized_total"] == 40.0
+    _cleanup()
+
+
+def test_a_position_with_no_price_is_unknown_not_zero(client):
+    """The one that matters. If the quote call fails, unrealized must read as
+    UNKNOWN — reporting $0.00 would be indistinguishable from break-even."""
+    from unittest.mock import AsyncMock, patch
+
+    from qt.broker.alpaca import AlpacaClient
+
+    _seed_open_and_closed(client)
+    with patch.object(AlpacaClient, "stock_snapshots", new=AsyncMock(side_effect=RuntimeError("quotes down"))):
+        body = client.get("/api/engine/strategy-pnl").json()
+    by = {r["name"]: r for r in body["strategies"]}
+    assert by["Alpha"]["unrealized_pnl"] is None
+    assert by["Beta"]["unrealized_pnl"] is None
+    assert by["Alpha"]["unpriced_positions"] == 1
+    assert body["unpriced_positions"] == 2
+    _cleanup()
+
+
+def test_a_strategy_holding_nothing_is_flat_not_unknown(client):
+    """The flip side: no open positions genuinely IS $0.00 unrealized, and must
+    not be dressed up as missing data."""
+    from unittest.mock import AsyncMock, patch
+
+    from qt.broker.alpaca import AlpacaClient
+
+    _seed_open_and_closed(client)
+    with session_scope() as s:
+        from qt.models import Trade
+
+        s.query(Trade).filter(Trade.status == "open").delete()
+        s.commit()
+    with patch.object(AlpacaClient, "stock_snapshots", new=AsyncMock(return_value={})):
+        body = client.get("/api/engine/strategy-pnl").json()
+    by = {r["name"]: r for r in body["strategies"]}
+    assert by["Alpha"]["unrealized_pnl"] == 0.0
+    assert by["Alpha"]["open_positions"] == 0
+    assert body["unrealized_total"] == 0.0
+    _cleanup()
+
+
+def test_a_partial_mark_is_reported_as_partial(client):
+    """One symbol priced, one not: the total is a floor and says so, rather than
+    quietly under-reporting."""
+    from unittest.mock import AsyncMock, patch
+
+    from qt.broker.alpaca import AlpacaClient
+
+    _seed_open_and_closed(client)
+    with patch.object(AlpacaClient, "stock_snapshots",
+                      new=AsyncMock(return_value={"NVDA": {"latestTrade": {"p": 120.0}}})):
+        body = client.get("/api/engine/strategy-pnl").json()
+    by = {r["name"]: r for r in body["strategies"]}
+    assert by["Alpha"]["unrealized_pnl"] == 40.0
+    assert by["Beta"]["unrealized_pnl"] is None and by["Beta"]["unpriced_positions"] == 1
+    assert body["unpriced_positions"] == 1
+    _cleanup()
+
+
+def test_shadow_positions_are_not_marked_into_paper_totals(client):
+    """Unrealized follows the active mode, exactly like realized does."""
+    from datetime import datetime, timezone
+    from unittest.mock import AsyncMock, patch
+
+    from qt import security
+    from qt.broker.alpaca import SECRET_KEY_ID, SECRET_KEY_SECRET, AlpacaClient
+    from qt.models import Strategy, Trade
+
+    with session_scope() as s:
+        security.set_secret(s, SECRET_KEY_ID, "k")
+        security.set_secret(s, SECRET_KEY_SECRET, "s")
+        set_setting(s, "engine_mode", "paper")
+        s.query(Trade).delete()
+        s.query(Strategy).delete()
+        a = Strategy(name="Alpha", asset_class="stock", params="{}")
+        s.add(a)
+        s.flush()
+        s.add(Trade(strategy_id=a.id, mode="shadow", symbol="NVDA", asset_class="stock",
+                    status="open", qty=2, notional=200, entry_price=100.0,
+                    entry_at=datetime.now(timezone.utc)))
+        s.commit()
+    with patch.object(AlpacaClient, "stock_snapshots",
+                      new=AsyncMock(return_value={"NVDA": {"latestTrade": {"p": 120.0}}})):
+        body = client.get("/api/engine/strategy-pnl").json()
+    assert body["unrealized_total"] == 0.0
+    _cleanup()

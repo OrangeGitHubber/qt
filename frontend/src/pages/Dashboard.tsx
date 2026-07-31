@@ -198,13 +198,25 @@ function StrategyContributionsCard() {
     <div className="card">
       <div className="card-head">
         <h3>
-          Strategy contributions <span className="hint">(realized · {totals.mode} mode)</span>
+          Strategy contributions <span className="hint">({totals.mode} mode)</span>
         </h3>
         <AccountSelect value={account} onChange={setAccount} />
       </div>
       <p className="hint">
-        Each strategy's realized (locked-in) profit or loss — the exact split behind the single scoreboard line, and it
-        sums to the account's realized total. Open positions are shown as a count, not yet marked to market.
+        Each strategy's <strong>realized</strong> (locked-in) profit or loss — the exact split behind the single
+        scoreboard line, and it sums to the account's realized total. <strong>Unrealized</strong> is what the open
+        positions are worth right now at live prices; it moves with the market and isn't yours until you sell, so the
+        two are kept apart rather than added together.
+        {totals.unpriced_positions > 0 && (
+          <>
+            {" "}
+            <span className="warn-text">
+              {totals.unpriced_positions} open position
+              {totals.unpriced_positions === 1 ? " has" : "s have"} no live price right now, so the unrealized figures
+              marked <strong>*</strong> are partial.
+            </span>
+          </>
+        )}
       </p>
       {totals.strategies.length === 0 ? (
         <p className="hint">
@@ -218,6 +230,9 @@ function StrategyContributionsCard() {
               <tr>
                 <th>Strategy</th>
                 <th>Realized P&amp;L</th>
+                <th>
+                  Unrealized P&amp;L <InfoTip k="unrealized_pnl" />
+                </th>
                 <th>Trades</th>
                 <th>Win rate</th>
                 <th>Open</th>
@@ -230,6 +245,23 @@ function StrategyContributionsCard() {
                     <span className="swatch" style={{ background: colorFor(s.strategy_id) }} /> {s.name}
                   </td>
                   <td className={s.realized_pnl >= 0 ? "up" : "down"}>{signed(s.realized_pnl)}</td>
+                  {/* null = holding something we couldn't get a price for. That is
+                      not break-even, so it must not render as $0.00. */}
+                  <td className={s.unrealized_pnl == null ? "" : s.unrealized_pnl >= 0 ? "up" : "down"}>
+                    {s.unrealized_pnl == null ? (
+                      <span className="hint" title="No live price for the open position(s) right now">
+                        —
+                      </span>
+                    ) : (
+                      signed(s.unrealized_pnl)
+                    )}
+                    {s.unpriced_positions > 0 && s.unrealized_pnl != null && (
+                      <span className="hint" title={`${s.unpriced_positions} open position(s) had no live price — this is a partial figure`}>
+                        {" "}
+                        *
+                      </span>
+                    )}
+                  </td>
                   <td>{s.trades}</td>
                   <td>{s.win_rate == null ? "—" : `${Math.round(s.win_rate * 100)}%`}</td>
                   <td>{s.open_positions || "—"}</td>
@@ -244,6 +276,12 @@ function StrategyContributionsCard() {
                   style={{ borderTop: "2px solid var(--border)", fontWeight: 700 }}
                 >
                   {signed(totals.realized_total)}
+                </td>
+                <td
+                  className={totals.unrealized_total >= 0 ? "up" : "down"}
+                  style={{ borderTop: "2px solid var(--border)", fontWeight: 700 }}
+                >
+                  {signed(totals.unrealized_total)}
                 </td>
                 <td colSpan={3} style={{ borderTop: "2px solid var(--border)" }}></td>
               </tr>

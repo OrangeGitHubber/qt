@@ -384,13 +384,60 @@ async def get_scoreboard(
     return scoreboard.series(session, account=None if account in ("", "current") else account)
 
 
+async def _unrealized_by_strategy(
+    session: Session, mode: str, acct: list
+) -> tuple[dict[int, float], dict[int, int]]:
+    """Mark each strategy's OPEN positions to market.
+
+    Returns ({strategy_id: unrealized $}, {strategy_id: positions we could NOT
+    price}). The second half matters: a quote hiccup or a symbol the snapshot
+    doesn't cover would otherwise silently shrink the total, and a number that is
+    quietly missing a position reads exactly like one that isn't. The caller
+    surfaces the count rather than pretending the sum is complete.
+    """
+    from qt.api.strategies import _snapshot_price
+
+    trades = (
+        session.query(Trade)
+        .filter(Trade.status == "open", Trade.mode == mode, *acct)
+        .all()
+    )
+    if not trades:
+        return {}, {}
+    unpriced: dict[int, int] = {}
+    pnl: dict[int, float] = {}
+    client = get_client(session)
+    snaps: dict = {}
+    if client is not None:
+        stock_syms = sorted({t.symbol for t in trades if t.asset_class == "stock"})
+        crypto_syms = sorted({t.symbol for t in trades if t.asset_class == "crypto"})
+        try:
+            if stock_syms:
+                snaps.update(await client.stock_snapshots(stock_syms))
+            if crypto_syms:
+                snaps.update(await client.crypto_snapshots(crypto_syms))
+        except Exception:  # noqa: BLE001 — a price hiccup must not break the table
+            snaps = {}
+    for t in trades:
+        price = _snapshot_price(snaps.get(t.symbol) or {})
+        if price and t.entry_price:
+            pnl[t.strategy_id] = pnl.get(t.strategy_id, 0.0) + (price - t.entry_price) * t.qty
+        else:
+            unpriced[t.strategy_id] = unpriced.get(t.strategy_id, 0) + 1
+    return {k: round(v, 2) for k, v in pnl.items()}, unpriced
+
+
 @router.get("/strategy-pnl")
-def strategy_pnl(account: str | None = None, session: Session = Depends(get_session)) -> dict:
-    """Per-strategy REALIZED P&L in the active mode — the exact, additive
-    breakdown the aggregate scoreboard hides. Realized only (locked-in, sums to
-    the account's realized P&L); open positions are shown as a count. Unrealized
-    marks would need live quotes and aren't included here. Scoped to the current
-    account by default (pass account=all / a specific id / untagged)."""
+async def strategy_pnl(account: str | None = None, session: Session = Depends(get_session)) -> dict:
+    """Per-strategy P&L in the active mode — the exact breakdown the aggregate
+    scoreboard hides.
+
+    REALIZED is locked in and sums to the account's realized P&L. UNREALIZED
+    marks the open positions to live quotes, so it moves with the market and is
+    only as good as this instant's prices — the two are reported separately and
+    never added together for you, because one is money you have and the other is
+    money you might. Scoped to the current account by default (pass account=all /
+    a specific id / untagged)."""
     mode = get_mode(session)
     acct = _account_conditions(account, session)
     win = func.sum(case((Trade.pnl > 0, 1), else_=0))
@@ -408,8 +455,20 @@ def strategy_pnl(account: str | None = None, session: Session = Depends(get_sess
         .all()
     )
     names = dict(session.query(Strategy.id, Strategy.name).all())
+    unreal, unpriced = await _unrealized_by_strategy(session, mode, acct)
 
     def row(sid, realized, trades, wins):
+        held = int(open_by.pop(sid, 0))
+        missing = unpriced.get(sid, 0)
+        # Nothing held is genuinely $0.00 of unrealized. Something held that we
+        # couldn't price is UNKNOWN — those are different facts and the UI shows
+        # them differently ("$0.00" vs "—").
+        if not held:
+            unrealized: float | None = 0.0
+        elif sid in unreal:
+            unrealized = unreal[sid]
+        else:
+            unrealized = None
         return {
             "strategy_id": sid,
             "name": names.get(sid, f"#{sid} (deleted)"),
@@ -417,7 +476,9 @@ def strategy_pnl(account: str | None = None, session: Session = Depends(get_sess
             "trades": int(trades or 0),
             "wins": int(wins or 0),
             "win_rate": round(wins / trades, 4) if trades else None,
-            "open_positions": int(open_by.pop(sid, 0)),
+            "open_positions": held,
+            "unrealized_pnl": unrealized,
+            "unpriced_positions": missing,
         }
 
     strategies = [row(sid, r, t, w) for sid, r, t, w in rows]
@@ -425,7 +486,16 @@ def strategy_pnl(account: str | None = None, session: Session = Depends(get_sess
     strategies += [row(sid, 0.0, 0, 0) for sid in list(open_by)]
     strategies.sort(key=lambda s: s["realized_pnl"], reverse=True)
     realized_total = round(sum(s["realized_pnl"] for s in strategies), 2)
-    return {"mode": mode, "realized_total": realized_total, "strategies": strategies}
+    unrealized_total = round(sum(v for v in unreal.values()), 2)
+    return {
+        "mode": mode,
+        "realized_total": realized_total,
+        "unrealized_total": unrealized_total,
+        # How many open positions carry no live mark, account-wide. Non-zero means
+        # unrealized_total is a floor, not the whole picture — said so in the UI.
+        "unpriced_positions": sum(unpriced.values()),
+        "strategies": strategies,
+    }
 
 
 @router.get("/strategy-pnl-daily")

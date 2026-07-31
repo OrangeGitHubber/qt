@@ -3,6 +3,23 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Strategy contributions: unrealized P&L column (2026-07-31)
+
+The table showed each strategy's **realized** profit and a bare count of open
+positions. It now also shows **unrealized P&L** — what those open positions are
+up or down right now, marked to live prices.
+
+The two are shown side by side and never added together, because they aren't the
+same kind of money: realized is locked in, unrealized moves with every tick and
+isn't yours until you sell.
+
+One distinction the column is careful about: **a missing price is not a
+break-even price.** If a quote can't be fetched, that strategy shows "—" rather
+than "$0.00" — the two look identical on screen but mean opposite things. A
+strategy holding nothing genuinely shows $0.00. If only some positions could be
+priced, the figure is marked with an asterisk and a note says the total is a
+floor, not the whole picture.
+
 ## The scoreboard said "no trades this day" every single day (2026-07-31)
 
 Hovering any day on the dashboard scoreboard reported **no trades that day** —

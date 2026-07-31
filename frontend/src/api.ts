@@ -369,6 +369,12 @@ export const getAccounts = () => fetch("/api/engine/accounts").then((r) => handl
 export interface StrategyPnl {
   mode: string;
   realized_total: number;
+  // Open positions marked to live quotes. Separate from realized on purpose —
+  // one is money you have, the other is money you might.
+  unrealized_total: number;
+  // Open positions with no live mark, account-wide. Non-zero means the
+  // unrealized figures are a floor, not the whole picture.
+  unpriced_positions: number;
   strategies: {
     strategy_id: number;
     name: string;
@@ -377,6 +383,10 @@ export interface StrategyPnl {
     wins: number;
     win_rate: number | null;
     open_positions: number;
+    // 0 = nothing held. null = holding something we couldn't price — not the
+    // same fact, and not shown the same way.
+    unrealized_pnl: number | null;
+    unpriced_positions: number;
   }[];
 }
 export interface StrategyPnlDaily {

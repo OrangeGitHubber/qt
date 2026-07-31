@@ -14,6 +14,12 @@ export interface GlossaryEntry {
 export type InfoKey = keyof typeof GLOSSARY;
 
 export const GLOSSARY: Record<string, GlossaryEntry> = {
+  unrealized_pnl: {
+    term: "Unrealized P&L",
+    explain:
+      "What your open positions are up or down right now, marked at live prices. It is a paper figure: it moves every tick and only becomes real when you sell. Kept separate from realized P&L for that reason, never added to it.",
+    url: "https://www.investopedia.com/terms/u/unrealizedgain.asp",
+  },
   trailing_stop: {
     term: "Trailing stop",
     explain:
