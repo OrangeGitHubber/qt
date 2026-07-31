@@ -133,7 +133,7 @@ export default function Journal() {
                               : ""
                         }
                       >
-                        {e.action === "Bought" ? "▲ Bought" : e.action === "Sold" ? "▼ Sold" : "⊘ Rejected"}
+                        {e.action}
                       </td>
                       <td>{money(e.price)}</td>
                       <td className={e.pnl == null ? "" : e.pnl >= 0 ? "up" : "down"}>

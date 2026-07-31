@@ -53,7 +53,11 @@ function price(v: number): string {
 }
 
 // Colour for the Action cell. A BUY has no result yet, so it stays neutral; a
-// SELL is tinted by what it made. Colouring by buy/sell instead — green for every
+// SELL is tinted by what it made.
+//
+// No arrow beside it: the cell already says the word "Bought" or "Sold", so the
+// glyph repeated the label and nothing else. (The chart markers keep their
+// triangles — there the shape IS the only thing carrying the meaning.) Colouring by buy/sell instead — green for every
 // buy, red for every sell — spent the profit/loss vocabulary on a category and
 // printed every profitable exit as if it were a loss.
 function actionTone(action: string, pnl: number | null | undefined): string {
@@ -862,7 +866,7 @@ export default function Backtest() {
                           <td>{new Date(ev.at).toLocaleDateString()}</td>
                           <td className="hint">{ev.strategy}</td>
                           <td className={actionTone(ev.action, ev.pnl)}>
-                            {ev.action === "Bought" ? "▲ Bought" : "▼ Sold"}
+                            {ev.action}
                           </td>
                           <td className="sym">{ev.symbol}</td>
                           <td>
@@ -1444,7 +1448,7 @@ export default function Backtest() {
                               <td style={{ color: ev.strategyColor, fontWeight: 600 }}>{ev.strategy}</td>
                             )}
                             <td className={actionTone(ev.action, ev.pnl)}>
-                              {ev.action === "Bought" ? "▲ Bought" : "▼ Sold"}
+                              {ev.action}
                             </td>
                             <td className="sym">{ev.symbol}</td>
                             <td>
@@ -1492,7 +1496,7 @@ export default function Backtest() {
                     <tr key={i}>
                       <td>{new Date(r.ev.at).toLocaleDateString()}</td>
                       <td className={actionTone(r.ev.action, r.ev.pnl)}>
-                        {r.ev.action === "Bought" ? "▲ Bought" : "▼ Sold"}
+                        {r.ev.action}
                       </td>
                       <td className="sym">{r.ev.symbol}</td>
                       <td>
