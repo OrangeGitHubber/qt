@@ -3,6 +3,20 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Trade tables: the same colour rule as the charts (2026-07-31)
+
+The charts stopped using green and red for buy-versus-sell, but the trade tables
+hadn't caught up — every **Bought** was green and every **Sold** was red, so an
+exit that made $12.32 was printed in the same colour as one that lost $1.83, with
+the correct figure sitting right beside it in the P&L column.
+
+Now, in both the backtest trade log and the live journal:
+
+- **Bought** is neutral. A buy has no result yet.
+- **Sold** takes the colour of what it made — so the Action and the P&L always
+  agree.
+- **Rejected** keeps its warning colour. That one *is* a status, not an outcome.
+
 ## Server errors now identify themselves (2026-07-31)
 
 "HTTP 500 — Internal Server Error" is what FastAPI says when something breaks

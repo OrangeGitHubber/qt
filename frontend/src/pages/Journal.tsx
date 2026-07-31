@@ -118,7 +118,21 @@ export default function Journal() {
                       </td>
                       <td>{r.strategy}</td>
                       <td className="sym">{r.symbol}</td>
-                      <td className={e.action === "Bought" ? "up" : e.action === "Sold" ? "down" : "warn-text"}>
+                      {/* A buy has no result yet, so it stays neutral; a sell is
+                          tinted by what it made. Rejected keeps its warning
+                          colour — that IS a status, not an outcome. Colouring by
+                          buy/sell printed every profitable exit in loss-red. */}
+                      <td
+                        className={
+                          e.action === "Rejected"
+                            ? "warn-text"
+                            : e.action === "Sold" && e.pnl != null
+                              ? e.pnl >= 0
+                                ? "up"
+                                : "down"
+                              : ""
+                        }
+                      >
                         {e.action === "Bought" ? "▲ Bought" : e.action === "Sold" ? "▼ Sold" : "⊘ Rejected"}
                       </td>
                       <td>{money(e.price)}</td>

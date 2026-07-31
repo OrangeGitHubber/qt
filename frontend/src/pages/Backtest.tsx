@@ -52,6 +52,15 @@ function price(v: number): string {
   return `$${v.toFixed(dp)}`;
 }
 
+// Colour for the Action cell. A BUY has no result yet, so it stays neutral; a
+// SELL is tinted by what it made. Colouring by buy/sell instead — green for every
+// buy, red for every sell — spent the profit/loss vocabulary on a category and
+// printed every profitable exit as if it were a loss.
+function actionTone(action: string, pnl: number | null | undefined): string {
+  if (action !== "Sold" || pnl == null) return "";
+  return pnl >= 0 ? "up" : "down";
+}
+
 // Fractional-share quantities arrive as raw floats (0.447397). Nobody reads the
 // sixth decimal of a share count, and printing it wrapped the column.
 function qty(q: number): string {
@@ -852,7 +861,7 @@ export default function Backtest() {
                         <tr key={i}>
                           <td>{new Date(ev.at).toLocaleDateString()}</td>
                           <td className="hint">{ev.strategy}</td>
-                          <td className={ev.action === "Bought" ? "up" : "down"}>
+                          <td className={actionTone(ev.action, ev.pnl)}>
                             {ev.action === "Bought" ? "▲ Bought" : "▼ Sold"}
                           </td>
                           <td className="sym">{ev.symbol}</td>
@@ -1434,7 +1443,7 @@ export default function Backtest() {
                             {compareResult && (
                               <td style={{ color: ev.strategyColor, fontWeight: 600 }}>{ev.strategy}</td>
                             )}
-                            <td className={ev.action === "Bought" ? "up" : "down"}>
+                            <td className={actionTone(ev.action, ev.pnl)}>
                               {ev.action === "Bought" ? "▲ Bought" : "▼ Sold"}
                             </td>
                             <td className="sym">{ev.symbol}</td>
@@ -1482,7 +1491,7 @@ export default function Backtest() {
                   r.kind === "trade" ? (
                     <tr key={i}>
                       <td>{new Date(r.ev.at).toLocaleDateString()}</td>
-                      <td className={r.ev.action === "Bought" ? "up" : "down"}>
+                      <td className={actionTone(r.ev.action, r.ev.pnl)}>
                         {r.ev.action === "Bought" ? "▲ Bought" : "▼ Sold"}
                       </td>
                       <td className="sym">{r.ev.symbol}</td>
