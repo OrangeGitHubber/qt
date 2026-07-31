@@ -327,7 +327,7 @@ def test_exit_macd_bearish_triggers_exit():
     should, reason = evaluate_exit(
         p, True, 100.0, YESTERDAY, 105.0, 104.5, None, NOW, False, macd_bullish=False
     )
-    assert should and reason == "MACD turned bearish"
+    assert should and reason.startswith("MACD turned bearish")
 
 
 def test_exit_macd_bullish_or_unknown_does_not_exit():

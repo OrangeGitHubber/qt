@@ -108,25 +108,33 @@ class RailContext:
     daily_loss_usd: float = 0.0
 
 
+def _money(v: float) -> str:
+    """A price with enough decimals to mean something: cents on an ordinary
+    stock, more on a sub-dollar mover or a cheap coin. Raw floats printed to four
+    places ("818.6700") read as noise and hid the dollar sign entirely."""
+    dp = 2 if abs(v) >= 1 else 4 if abs(v) >= 0.01 else 6
+    return f"${v:,.{dp}f}"
+
+
 def evaluate_entry(params: dict, candidate: Candidate, now_et: datetime) -> tuple[bool, str]:
     entry = params.get("entry", {})
     min_gain = entry.get("min_day_gain_pct", 0)
     if candidate.change_pct < min_gain:
-        return False, f"day gain {candidate.change_pct:.2f}% < required {min_gain}%"
+        return False, f"day gain {candidate.change_pct:.2f}% < required {min_gain:g}%"
     max_gain = entry.get("max_day_gain_pct", 0)
     if max_gain and candidate.change_pct > max_gain:
-        return False, f"day gain {candidate.change_pct:.2f}% > max {max_gain}% (too extended to chase)"
+        return False, f"day gain {candidate.change_pct:.2f}% > max {max_gain:g}% (too extended to chase)"
     min_price = entry.get("min_price", 0)
     if min_price and candidate.price < min_price:
-        return False, f"price ${candidate.price:.2f} < min ${min_price:g}"
+        return False, f"price {_money(candidate.price)} < min {_money(min_price)}"
     max_price = entry.get("max_price", 0)
     if max_price and candidate.price > max_price:
-        return False, f"price ${candidate.price:.2f} > max ${max_price:g}"
+        return False, f"price {_money(candidate.price)} > max {_money(max_price)}"
     if entry.get("require_above_vwap"):
         if candidate.vwap is None:
             return False, "VWAP unavailable — rule requires price above VWAP"
         if candidate.price <= candidate.vwap:
-            return False, f"price {candidate.price:.4f} not above VWAP {candidate.vwap:.4f}"
+            return False, f"price {_money(candidate.price)} not above VWAP {_money(candidate.vwap)}"
     start, end = entry.get("entry_window_start"), entry.get("entry_window_end")
     if start and end:
         hhmm = now_et.strftime("%H:%M")
@@ -149,11 +157,20 @@ def evaluate_entry(params: dict, candidate: Candidate, now_et: datetime) -> tupl
             return False, f"RSI {candidate.rsi:.0f} < min {rsi_min:g}"
         if rsi_max and candidate.rsi > rsi_max:
             return False, f"RSI {candidate.rsi:.0f} > max {rsi_max:g} (overbought)"
-    return True, f"up {candidate.change_pct:.2f}% today" + (
-        f", above VWAP" if entry.get("require_above_vwap") else ""
-    ) + (", MACD bullish" if entry.get("require_macd_bullish") else "") + (
-        f", RSI {candidate.rsi:.0f}" if (rsi_min or rsi_max) and candidate.rsi is not None else ""
-    )
+    # Every clause names the actual reading AND the bar it cleared, so a buy that
+    # scraped in reads differently from one that sailed past — the rejection
+    # reasons have always done this; the acceptance reason didn't.
+    parts = [f"up {candidate.change_pct:.2f}% today" + (f" (min {min_gain:g}%)" if min_gain else "")]
+    if entry.get("require_above_vwap") and candidate.vwap is not None:
+        parts.append(f"above VWAP {_money(candidate.vwap)}")
+    elif entry.get("require_above_vwap"):
+        parts.append("above VWAP")
+    if entry.get("require_macd_bullish"):
+        parts.append("MACD bullish")
+    if (rsi_min or rsi_max) and candidate.rsi is not None:
+        band = f" (band {rsi_min:g}-{rsi_max:g})" if rsi_min and rsi_max else ""
+        parts.append(f"RSI {candidate.rsi:.0f}{band}")
+    return True, ", ".join(parts)
 
 
 def check_rails(strategy_cfg: dict, sizing_usd: float, ctx: RailContext) -> tuple[bool, str]:
@@ -273,13 +290,18 @@ def evaluate_exit(
                 f"ATR stop-loss: {worst_from_entry:.2f}% ≤ -{effective_stop:.2f}% "
                 f"({atr_stop_mult:g}× ATR {atr_pct:.2f}%)"
             ))
-        return _trigger(level, f"stop-loss: {worst_from_entry:.2f}% ≤ -{stop_loss}%")
+        return _trigger(level, f"stop-loss: {worst_from_entry:.2f}% ≤ -{stop_loss:g}%")
 
     trailing = exit_rules.get("trailing_stop_pct", 0)
     if trailing and drop_from_high >= trailing and low > entry_price * (1 - effective_stop / 100):
+        stop_level = high_water * (1 - trailing / 100)
+        # Was: "trailing stop: 8.54% off high 818.6700" — the drop, and nothing
+        # to measure it against. Every other exit names actual vs threshold; this
+        # one left you to remember your own setting and do the arithmetic.
         return _trigger(
-            high_water * (1 - trailing / 100),
-            f"trailing stop: {drop_from_high:.2f}% off high {high_water:.4f}",
+            stop_level,
+            f"trailing stop: {drop_from_high:.2f}% ≥ {trailing:g}% off high "
+            f"{_money(high_water)} (stop {_money(stop_level)})",
         )
 
     # Max holding time is a HARD ceiling, so it sits with the stops ABOVE the
@@ -291,7 +313,7 @@ def evaluate_exit(
     if max_hold:
         held_hours = (now_utc - entry_at).total_seconds() / 3600
         if held_hours >= max_hold:
-            return True, f"max holding period: {held_hours:.1f}h ≥ {max_hold}h"
+            return True, f"max holding period: {held_hours:.1f}h ≥ {max_hold:g}h"
 
     # Swing = don't take the soft exits on the entry day. Stocks only: crypto has
     # no session, so there is no "entry day" to be patient through.
@@ -304,16 +326,16 @@ def evaluate_exit(
     if take_profit and best_from_entry >= take_profit:
         return _trigger(
             entry_price * (1 + take_profit / 100),
-            f"take-profit: +{best_from_entry:.2f}% ≥ {take_profit}%",
+            f"take-profit: +{best_from_entry:.2f}% ≥ {take_profit:g}%",
         )
 
     if exit_rules.get("exit_below_vwap") and vwap is not None and price < vwap:
-        return True, f"price {price:.4f} fell below VWAP {vwap:.4f}"
+        return True, f"price {_money(price)} fell below VWAP {_money(vwap)}"
 
     # Optional daily-MACD exit: only act on a CONFIRMED bearish cross (False).
     # None means we can't tell right now — never force an exit on that.
     if exit_rules.get("exit_on_macd_bearish") and macd_bullish is False:
-        return True, "MACD turned bearish"
+        return True, "MACD turned bearish — daily line crossed below its signal"
 
     # Optional RSI overbought exit: take profit on froth. 0 = off; None RSI (not
     # enough history / fetch blip) never forces an exit.
@@ -330,7 +352,7 @@ def evaluate_exit(
         return True, "market regime bearish — SPY below its 200-day average"
 
     if exit_rules.get("flatten_before_close") and market_closes_soon:
-        return True, "flatten before market close"
+        return True, "flatten before market close — no overnight exposure"
 
     return False, ""
 

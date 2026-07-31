@@ -3,6 +3,33 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Every trade reason now shows what it was measured against (2026-07-31)
+
+The exit reasons had drifted into different styles. Some told you everything —
+*"ATR stop-loss: -5.42% ≤ -5.16% (1.5× ATR 3.44%)"* — and some told you half:
+*"trailing stop: 8.54% off high 818.6700"* named the drop but not the setting it
+breached, leaving you to remember your own configuration and do the arithmetic.
+
+They now share one shape — **what happened, the bar it crossed, and where that
+bar came from**:
+
+| before | after |
+| --- | --- |
+| `trailing stop: 8.54% off high 818.6700` | `trailing stop: 8.54% ≥ 6% off high $818.67 (stop $769.55)` |
+| `price 123.4567 fell below VWAP 124.0000` | `price $123.46 fell below VWAP $124.00` |
+| `MACD turned bearish` | `MACD turned bearish — daily line crossed below its signal` |
+| `flatten before market close` | `flatten before market close — no overnight exposure` |
+| `up 5.95% today, MACD bullish` | `up 5.95% today (min 3%), MACD bullish` |
+
+Prices are formatted as money throughout, with enough decimals to stay honest on
+a sub-dollar mover — `$0.4382`, not `$0.44` and not `0.4382`. Thresholds print
+consistently too, so you no longer see `-5.0%` in one reason and `6%` in the
+next for the same kind of setting.
+
+This lands everywhere at once: the live journal, Slack alerts, the backtest trade
+log and the optimizer all read from the same two functions that decide the
+trades, so there is no second copy to drift.
+
 ## The stop-loss box now tells you when it isn't the stop (2026-07-31)
 
 If the **ATR stop** is switched on, it *replaces* the fixed stop-loss — the hard

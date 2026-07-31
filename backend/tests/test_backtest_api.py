@@ -222,7 +222,7 @@ def test_scanner_replay_prefers_intraday_bars_when_cached(client, configured, mo
     assert body["replay_intraday"] is True
     assert body["timeframe"] == "15Min"
     assert body["trades"] == 1
-    assert body["trade_list"][0]["exit_reason"] == "flatten before market close"
+    assert body["trade_list"][0]["exit_reason"].startswith("flatten before market close")
 
 
 def test_scanner_replay_heals_a_cache_missing_the_intraday_table(client, configured, monkeypatch):

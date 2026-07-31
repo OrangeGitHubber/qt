@@ -112,7 +112,9 @@ def test_flatten_before_close_fires_on_last_intraday_bar():
     result = run_backtest(strat, {"TEST": series}, RISK, starting_cash=5000, spread_pct=0)
     assert result["trades"] == 1
     trade = result["trade_list"][0]
-    assert trade["exit_reason"] == "flatten before market close"
+    # Match the RULE, not its wording — an exact-string assertion turns any
+    # copy edit into a red build without a behaviour change behind it.
+    assert trade["exit_reason"].startswith("flatten before market close")
     assert trade["entry_price"] == 104 and trade["exit_price"] == 106  # exits on the day's last bar
 
 
@@ -143,7 +145,7 @@ def test_flatten_before_close_on_daily_bars_still_enters():
     result = run_backtest(strat, {"TEST": series}, RISK, starting_cash=5000, spread_pct=0)
     assert result["diagnosis"]["bars_evaluated"] > 0   # bars WERE evaluated
     assert result["trades"] == 1                        # entered day2…
-    assert result["trade_list"][0]["exit_reason"] == "flatten before market close"  # …flattened day3
+    assert result["trade_list"][0]["exit_reason"].startswith("flatten before market close")  # …flattened day3
 
 
 def test_stop_loss_and_costs():
