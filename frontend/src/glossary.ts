@@ -29,7 +29,7 @@ export const GLOSSARY: Record<string, GlossaryEntry> = {
   stop_loss: {
     term: "Stop-loss",
     explain:
-      "A hard floor: if the price drops X% below what you paid, sell immediately. Your maximum planned loss per trade. QT requires one on every strategy.",
+      "A hard floor: if the price drops X% below what you paid, sell immediately. Your maximum planned loss per trade. QT requires one on every strategy. If the ATR stop is switched on it REPLACES this figure — the stop then follows the symbol's own volatility, and this percentage is kept only as the fallback for when ATR can't be worked out.",
     url: "https://www.investopedia.com/terms/s/stop-lossorder.asp",
   },
   take_profit: {
@@ -304,7 +304,7 @@ export const GLOSSARY: Record<string, GlossaryEntry> = {
   atr_stop: {
     term: "ATR stop (× ATR)",
     explain:
-      "Sets the stop at a multiple of this symbol's Average True Range — its typical daily move — instead of a fixed %. A volatile stock gets a wider stop, a calm one a tighter stop, so ordinary daily wiggle doesn't shake you out. It's recomputed each bar, so it breathes with the symbol's volatility. 0 = off (use the fixed stop-loss above).",
+      "Sets the stop at a multiple of this symbol's Average True Range — its typical daily move — instead of a fixed %. A volatile stock gets a wider stop, a calm one a tighter stop, so ordinary daily wiggle doesn't shake you out. It's recomputed each bar, so it breathes with the symbol's volatility. While it is on it OVERRIDES the fixed stop-loss (which stays as the fallback if ATR can't be computed); the trailing stop is unaffected and still applies. 0 = off.",
     url: "https://www.investopedia.com/terms/a/atr.asp",
   },
   atr_risk: {

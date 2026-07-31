@@ -3,6 +3,26 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## The stop-loss box now tells you when it isn't the stop (2026-07-31)
+
+If the **ATR stop** is switched on, it *replaces* the fixed stop-loss — the hard
+stop becomes the multiplier times each symbol's own daily ATR, recalculated
+every tick. That has always been how the engine works, but the editor showed a
+stop-loss box with a number in it that wasn't the rule being enforced, and the
+ATR knob that overrode it sits inside a collapsed **Advanced** section. So a
+strategy could read "stop 2%" while actually stopping out at 6%.
+
+With the ATR stop on, the stop-loss field is now greyed out and relabelled
+*"replaced by the ATR stop"*, with a note under it spelling out the real level,
+worked through with examples (at 1.5× ATR, a symbol moving 1% a day stops out
+near 1.5%; one moving 4% a day, near 6%). It also says the two things people ask
+next: the fixed percentage stays as the **fallback** for when ATR can't be
+computed, so a position is never left without a stop; and the **trailing stop is
+unaffected** — the two are independent and whichever fires first sells.
+
+The strategy list had the same problem in miniature, summarising a strategy as
+"trail 6% · stop 2%" when ATR was governing. It now reads "stop 1.5×ATR".
+
 ## The chart hover panel now says what each thing is (2026-07-31)
 
 A busy day ran everything together into one unlabelled stream — twenty buys and

@@ -593,6 +593,11 @@ function Editor({
   // Market orders have no limit price, so the marketable-limit slippage buffers
   // (entry + exit) don't apply — grey them out when market mode is on.
   const marketMode = !!p.execution?.market_orders;
+  // The ATR stop REPLACES the fixed stop-loss (see evaluate_exit): the hard stop
+  // becomes stop_mult x the symbol's own daily ATR%. Easy to miss, because the
+  // ATR knob lives in a collapsed Advanced section while the stop-loss sits in
+  // plain sight — so the field you're reading isn't the rule that's running.
+  const atrStopOn = Number(p.atr?.stop_mult || 0) > 0;
   // The MACD period fields appear only when at least one MACD toggle is on.
   const macdOn = !!(p.entry.require_macd_bullish || p.exit.exit_on_macd_bearish);
   const macd = p.macd ?? { fast: 12, slow: 26, signal: 9 };
@@ -871,15 +876,35 @@ function Editor({
             <NumberField step="0.1" min="0.5" value={p.exit.trailing_stop_pct}
               onChange={(n) => setExit("trailing_stop_pct", n)} />
           </Param>
-          <Param label="Stop-loss (%) — required" tip="stop_loss">
+          <Param
+            label={atrStopOn ? "Stop-loss (%) — replaced by the ATR stop" : "Stop-loss (%) — required"}
+            tip="stop_loss"
+          >
             <NumberField step="0.1" min="0.1" value={p.exit.stop_loss_pct}
-              onChange={(n) => setExit("stop_loss_pct", n)} />
+              onChange={(n) => setExit("stop_loss_pct", n)} disabled={atrStopOn} />
           </Param>
           <Param label="Take-profit (%, 0 = off)" tip="take_profit">
             <NumberField step="0.1" min="0" value={p.exit.take_profit_pct}
               onChange={(n) => setExit("take_profit_pct", n)} />
           </Param>
         </div>
+        {atrStopOn && (
+          <p className="field-help">
+            <strong>Your hard stop is {Number(p.atr?.stop_mult)}x ATR, not {p.exit.stop_loss_pct}%.</strong> With the
+            ATR stop switched on (Advanced &rarr; volatility stops &amp; sizing), the stop level is{" "}
+            {Number(p.atr?.stop_mult)} x each symbol's own <strong>daily ATR</strong>, recalculated every tick — so it
+            sits wider on a volatile name and tighter on a calm one. A symbol moving 1% a day would stop out around{" "}
+            {(Number(p.atr?.stop_mult) * 1).toFixed(1)}%; one moving 4% a day, around{" "}
+            {(Number(p.atr?.stop_mult) * 4).toFixed(1)}%.
+            <br />
+            The fixed {p.exit.stop_loss_pct}% above is kept as the <strong>fallback</strong>, used only when ATR can't
+            be worked out (not enough history, or a data blip) — a position is never left without a stop. To go back to
+            a plain percentage, set the ATR stop to 0.
+            <br />
+            Your <strong>trailing stop stays active either way</strong> — the two are independent, and whichever
+            triggers first sells.
+          </p>
+        )}
 
         <details className="adv">
           <summary>Advanced exit options</summary>
@@ -1259,7 +1284,10 @@ export default function Strategies() {
           </dd>
           <dt>Exit</dt>
           <dd>
-            trail {r.params.exit.trailing_stop_pct}% · stop {r.params.exit.stop_loss_pct}%
+            trail {r.params.exit.trailing_stop_pct}% · stop{" "}
+            {Number(r.params.atr?.stop_mult || 0) > 0
+              ? `${Number(r.params.atr!.stop_mult)}×ATR`
+              : `${r.params.exit.stop_loss_pct}%`}
             {r.params.exit.take_profit_pct ? ` · target ${r.params.exit.take_profit_pct}%` : ""}
           </dd>
           <dt>Sizing</dt>
