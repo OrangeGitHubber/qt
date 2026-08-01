@@ -17,6 +17,7 @@ import {
 } from "../api";
 import { requestNav } from "../lib/nav";
 import AccountSelect from "../components/AccountSelect";
+import ColumnPicker, { useColumnPrefs } from "../components/ColumnPicker";
 import InfoTip from "../components/InfoTip";
 import LineChart, { ChartMarker, DayHolding } from "../components/LineChart";
 import StackedPnlBars, { PnlSeries } from "../components/StackedPnlBars";
@@ -329,10 +330,30 @@ function StrategyContributionsCard() {
 // "position already open for this symbol" rail is account-wide, so the holder
 // is often a different strategy than the one that got blocked — this card is
 // where you find out which. Polls like the engine card.
+// Optional columns for the open-positions table. Cost and value are already
+// computed server-side (notional / market_value) — they were simply never shown,
+// so "how much is actually in this position" meant multiplying qty by entry in
+// your head.
+type PosCol = "cost" | "value" | "mode" | "qty" | "entry" | "now" | "held";
+const POSITION_COLUMNS: { key: PosCol; label: string }[] = [
+  { key: "mode", label: "Mode" },
+  { key: "qty", label: "Qty" },
+  { key: "entry", label: "Entry price" },
+  { key: "now", label: "Price now" },
+  { key: "cost", label: "Cost (what you put in)" },
+  { key: "value", label: "Value (what it's worth)" },
+  { key: "held", label: "Held since" },
+];
+const POSITION_COLS_KEY = "qt.dashboard.positionColumns";
+
 function OpenPositionsCard() {
   const [data, setData] = useState<OpenPositionsResponse | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [closing, setClosing] = useState<number | null>(null);
+  const [cols, toggleCol] = useColumnPrefs<PosCol>(
+    POSITION_COLS_KEY,
+    POSITION_COLUMNS.map((c) => c.key),
+  );
   const refresh = useCallback(() => {
     getOpenPositions()
       .then((d) => {
@@ -408,18 +429,24 @@ function OpenPositionsCard() {
           behind any "position already open for this symbol" rail block.
         </p>
       ) : (
+        <>
+        <div className="cols-bar">
+          <ColumnPicker columns={POSITION_COLUMNS} visible={cols} onToggle={toggleCol} />
+        </div>
         <div className="table-scroll">
           <table>
             <thead>
               <tr>
                 <th>Strategy</th>
                 <th>Symbol</th>
-                <th>Mode</th>
-                <th>Qty</th>
-                <th>Entry</th>
-                <th>Now</th>
+                {cols.has("mode") && <th>Mode</th>}
+                {cols.has("qty") && <th>Qty</th>}
+                {cols.has("entry") && <th>Entry</th>}
+                {cols.has("now") && <th>Now</th>}
+                {cols.has("cost") && <th>Cost</th>}
+                {cols.has("value") && <th>Value</th>}
                 <th>Unrealized</th>
-                <th>Held since</th>
+                {cols.has("held") && <th>Held since</th>}
                 <th></th>
               </tr>
             </thead>
@@ -428,16 +455,26 @@ function OpenPositionsCard() {
                 <tr key={i}>
                   <td className="sym">{p.strategy_name}</td>
                   <td className="sym">{p.symbol}</td>
-                  <td>{p.mode}</td>
-                  <td>{p.qty}</td>
-                  <td>${p.entry_price.toFixed(4)}</td>
-                  <td>{p.current_price != null ? `$${p.current_price.toFixed(4)}` : "—"}</td>
+                  {cols.has("mode") && <td>{p.mode}</td>}
+                  {cols.has("qty") && <td>{p.qty}</td>}
+                  {cols.has("entry") && <td>${p.entry_price.toFixed(4)}</td>}
+                  {cols.has("now") && (
+                    <td>{p.current_price != null ? `$${p.current_price.toFixed(4)}` : "—"}</td>
+                  )}
+                  {cols.has("cost") && (
+                    <td>{p.notional != null ? `$${p.notional.toFixed(2)}` : "—"}</td>
+                  )}
+                  {cols.has("value") && (
+                    <td>{p.market_value != null ? `$${p.market_value.toFixed(2)}` : "—"}</td>
+                  )}
                   <td className={p.unrealized_pnl == null ? "" : p.unrealized_pnl >= 0 ? "up" : "down"}>
                     {p.unrealized_pnl != null
                       ? `${p.unrealized_pnl >= 0 ? "+" : "−"}$${Math.abs(p.unrealized_pnl).toFixed(2)} (${p.unrealized_pct}%)`
                       : "—"}
                   </td>
-                  <td className="hint">{p.entry_at ? new Date(p.entry_at).toLocaleString() : "—"}</td>
+                  {cols.has("held") && (
+                    <td className="hint">{p.entry_at ? new Date(p.entry_at).toLocaleString() : "—"}</td>
+                  )}
                   <td>
                     <button
                       type="button"
@@ -454,6 +491,7 @@ function OpenPositionsCard() {
             </tbody>
           </table>
         </div>
+        </>
       )}
     </details>
   );

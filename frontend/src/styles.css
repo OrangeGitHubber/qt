@@ -254,6 +254,13 @@ textarea:focus {
   border-color: transparent;
 }
 
+/* Right-aligned strip holding a table's Columns menu. */
+.cols-bar {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 0.4rem;
+}
+
 .notes-field {
   margin-top: 1.25rem;
 }

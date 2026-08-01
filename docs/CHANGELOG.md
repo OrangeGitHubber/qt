@@ -3,6 +3,25 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Cost and value columns, and a column picker (2026-08-01)
+
+"How much is actually in this position?" meant multiplying quantity by entry
+price in your head. Both tables now show it directly.
+
+**Open positions** gains **Cost** (what you put in) and **Value** (what it's
+worth now) — both were already being calculated on the server and simply never
+displayed.
+
+**The trade journal** gains **Cost** (what went in) and **Proceeds** (what came
+back). A sell's P&L is the difference between the two; seeing both sides shows
+the size of the bet, not just its outcome. A rejected row leaves them blank
+rather than showing $0.00 — nothing was spent, and a zero would read as a free
+trade.
+
+Both tables get the same **Columns ▾** menu the watchlist has, remembered per
+browser, so you can hide what you don't want. The watchlist now shares that
+implementation rather than keeping its own copy.
+
 ## The scanner now says what it filtered out, and why (2026-08-01)
 
 The scanner explained itself only when the list came back **empty**. A short list

@@ -1,5 +1,6 @@
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { getJournal, JournalRow } from "../api";
+import ColumnPicker, { useColumnPrefs } from "../components/ColumnPicker";
 import AccountSelect from "../components/AccountSelect";
 
 function money(v: number | null) {
@@ -17,6 +18,22 @@ function when(iso: string | null) {
 type Action = "Bought" | "Sold" | "Rejected";
 type JEvent = { key: string; at: string; action: Action; price: number | null; pnl: number | null; trade: JournalRow };
 
+// Optional journal columns. "Cost" is what went IN (qty x entry) and "Proceeds"
+// what came back OUT (qty x exit) — both derived from data the journal already
+// carries, so no extra fetch. A sell row's P&L is the difference between them;
+// showing the two sides makes the size of the bet visible, not just its outcome.
+type JCol = "cost" | "proceeds" | "qty" | "mode" | "strategy" | "status";
+const JOURNAL_COLUMNS: { key: JCol; label: string }[] = [
+  { key: "mode", label: "Mode" },
+  { key: "strategy", label: "Strategy" },
+  { key: "qty", label: "Qty" },
+  { key: "cost", label: "Cost (what went in)" },
+  { key: "proceeds", label: "Proceeds (what came back)" },
+  { key: "status", label: "Status" },
+];
+const JOURNAL_COLS_KEY = "qt.journal.columns";
+const JOURNAL_DEFAULT_COLS: JCol[] = ["mode", "strategy", "cost", "status"];
+
 export default function Journal() {
   const [rows, setRows] = useState<JournalRow[] | null>(null);
   const [mode, setMode] = useState<string>("");
@@ -24,6 +41,11 @@ export default function Journal() {
   const [assetClass, setAssetClass] = useState<"" | "stock" | "crypto">("");
   const [account, setAccount] = useState<string>("");
   const [expanded, setExpanded] = useState<string | null>(null);
+  const [cols, toggleCol] = useColumnPrefs<JCol>(
+    JOURNAL_COLS_KEY,
+    JOURNAL_COLUMNS.map((c) => c.key),
+    JOURNAL_DEFAULT_COLS,
+  );
 
   const refresh = useCallback(() => {
     getJournal(mode || undefined, status || undefined, assetClass || undefined, account || undefined).then(setRows);
@@ -55,6 +77,7 @@ export default function Journal() {
     <>
       <div className="toolbar">
         <h2>Trade journal</h2>
+        <ColumnPicker columns={JOURNAL_COLUMNS} visible={cols} onToggle={toggleCol} />
         <div className="seg" role="group" aria-label="Filter by outcome">
           {(["", "trades", "rejected"] as const).map((s) => (
             <button key={s || "all"} className={status === s ? "active" : ""} onClick={() => setStatus(s)}>
@@ -94,13 +117,16 @@ export default function Journal() {
               <tr>
                 <th>Time</th>
                 <th></th>
-                <th>Mode</th>
-                <th>Strategy</th>
+                {cols.has("mode") && <th>Mode</th>}
+                {cols.has("strategy") && <th>Strategy</th>}
                 <th>Symbol</th>
                 <th>Action</th>
+                {cols.has("qty") && <th>Qty</th>}
                 <th>Price</th>
+                {cols.has("cost") && <th>Cost</th>}
+                {cols.has("proceeds") && <th>Proceeds</th>}
                 <th>P&L</th>
-                <th>Status</th>
+                {cols.has("status") && <th>Status</th>}
               </tr>
             </thead>
             <tbody>
@@ -113,10 +139,12 @@ export default function Journal() {
                     <tr className="clickable" onClick={() => setExpanded(expanded === e.key ? null : e.key)}>
                       <td className="hint nowrap">{when(e.at)}</td>
                       <td>{expanded === e.key ? "▾" : "▸"}</td>
-                      <td>
-                        <span className={`pill ${r.mode === "shadow" ? "muted" : "ok"}`}>{r.mode}</span>
-                      </td>
-                      <td>{r.strategy}</td>
+                      {cols.has("mode") && (
+                        <td>
+                          <span className={`pill ${r.mode === "shadow" ? "muted" : "ok"}`}>{r.mode}</span>
+                        </td>
+                      )}
+                      {cols.has("strategy") && <td>{r.strategy}</td>}
                       <td className="sym">{r.symbol}</td>
                       {/* A buy has no result yet, so it stays neutral; a sell is
                           tinted by what it made. Rejected keeps its warning
@@ -135,19 +163,42 @@ export default function Journal() {
                       >
                         {e.action}
                       </td>
+                      {cols.has("qty") && <td>{r.qty || "—"}</td>}
                       <td>{money(e.price)}</td>
+                      {/* Cost is what you put in; proceeds is what came back.
+                          A rejected row never bought, so both are blank rather
+                          than $0.00 — nothing was spent, and zero would read as
+                          a free trade. */}
+                      {cols.has("cost") && (
+                        <td>
+                          {r.status === "rejected" || !r.entry_price || !r.qty
+                            ? "—"
+                            : `$${(r.entry_price * r.qty).toFixed(2)}`}
+                        </td>
+                      )}
+                      {cols.has("proceeds") && (
+                        <td>
+                          {r.exit_price && r.qty ? `$${(r.exit_price * r.qty).toFixed(2)}` : "—"}
+                        </td>
+                      )}
                       <td className={e.pnl == null ? "" : e.pnl >= 0 ? "up" : "down"}>
                         {e.pnl == null ? "—" : `$${e.pnl.toFixed(2)}`}
                       </td>
-                      <td>
-                        <span className={`pill ${r.status === "open" ? "ok" : r.status === "rejected" ? "warn" : "muted"}`}>
-                          {r.status}
-                        </span>
-                      </td>
+                      {cols.has("status") && (
+                        <td>
+                          <span className={`pill ${r.status === "open" ? "ok" : r.status === "rejected" ? "warn" : "muted"}`}>
+                            {r.status}
+                          </span>
+                        </td>
+                      )}
                     </tr>
                     {expanded === e.key && (
                       <tr>
-                        <td colSpan={9} className="detail">
+                        {/* Spans whatever is on screen. Six columns are always present
+                            (time, chevron, symbol, action, price, P&L) plus the
+                            optional ones — a fixed 9 broke the moment columns
+                            became configurable. */}
+                        <td colSpan={6 + cols.size} className="detail">
                           {e.action === "Sold" ? (
                             <>
                               <p>

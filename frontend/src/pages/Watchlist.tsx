@@ -4,6 +4,7 @@ import type { InfoKey } from "../glossary";
 import InfoTip from "../components/InfoTip";
 import Sparkline from "../components/Sparkline";
 import SymbolDetail from "../components/SymbolDetail";
+import ColumnPicker, { useColumnPrefs } from "../components/ColumnPicker";
 import SymbolPicker from "../components/SymbolPicker";
 
 const pct = (v: number | null) => (v == null ? "—" : `${v >= 0 ? "+" : ""}${v}%`);
@@ -76,28 +77,13 @@ const OPTIONAL_COLUMNS: OptCol[] = [
   },
 ];
 const COLS_STORAGE_KEY = "qt.watchlist.columns";
-const DEFAULT_COLS: ColKey[] = OPTIONAL_COLUMNS.map((c) => c.key); // all shown by default
-
-function loadCols(): Set<ColKey> {
-  try {
-    const raw = localStorage.getItem(COLS_STORAGE_KEY);
-    if (raw) {
-      const keys = (JSON.parse(raw) as string[]).filter((k) =>
-        OPTIONAL_COLUMNS.some((c) => c.key === k),
-      ) as ColKey[];
-      return new Set(keys);
-    }
-  } catch {
-    /* corrupt/unavailable storage: fall through to defaults */
-  }
-  return new Set(DEFAULT_COLS);
-}
+const ALL_COLS = OPTIONAL_COLUMNS.map((c) => c.key);
 
 export default function Watchlist() {
   const [rows, setRows] = useState<WatchlistRow[] | null>(null);
   const [errors, setErrors] = useState<string[]>([]);
   const [note, setNote] = useState<string | null>(null);
-  const [visibleCols, setVisibleCols] = useState<Set<ColKey>>(loadCols);
+  const [visibleCols, toggleCol] = useColumnPrefs<ColKey>(COLS_STORAGE_KEY, ALL_COLS);
   const [detail, setDetail] = useState<WatchlistRow | null>(null);
   const [filter, setFilter] = useState<"all" | "stock" | "crypto">("all");
   const [sortKey, setSortKey] = useState<SortKey>("symbol");
@@ -109,24 +95,6 @@ export default function Watchlist() {
       setSortKey(k);
       setSortDir(STRING_KEYS.includes(k) ? "asc" : "desc"); // numbers default high→low
     }
-  }
-
-  // Persist the column choice so it sticks across reloads (per browser).
-  useEffect(() => {
-    try {
-      localStorage.setItem(COLS_STORAGE_KEY, JSON.stringify([...visibleCols]));
-    } catch {
-      /* storage unavailable (private mode, etc.) — the session state still works */
-    }
-  }, [visibleCols]);
-
-  function toggleCol(k: ColKey) {
-    setVisibleCols((cur) => {
-      const next = new Set(cur);
-      if (next.has(k)) next.delete(k);
-      else next.add(k);
-      return next;
-    });
   }
 
   const shownCols = OPTIONAL_COLUMNS.filter((c) => visibleCols.has(c.key));
@@ -209,23 +177,7 @@ export default function Watchlist() {
             </button>
           ))}
         </div>
-        <details className="cols-menu">
-          <summary className="small btn-ghost" title="Choose which columns to show">
-            Columns
-          </summary>
-          <div className="cols-popover" role="group" aria-label="Choose columns">
-            {OPTIONAL_COLUMNS.map((c) => (
-              <label key={c.key} className="check">
-                <input
-                  type="checkbox"
-                  checked={visibleCols.has(c.key)}
-                  onChange={() => toggleCol(c.key)}
-                />
-                {c.label}
-              </label>
-            ))}
-          </div>
-        </details>
+        <ColumnPicker columns={OPTIONAL_COLUMNS} visible={visibleCols} onToggle={toggleCol} />
       </div>
       {detail && (
         <SymbolDetail symbol={detail.symbol} assetClass={detail.asset_class} onClose={() => setDetail(null)} />
