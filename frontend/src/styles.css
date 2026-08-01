@@ -258,6 +258,18 @@ textarea:focus {
   margin-top: 1.25rem;
 }
 
+/* The editor's primary button holds its width while the label changes to
+   "Saving…". Without a floor the row re-flows mid-click and every button beside
+   it slides left — the motion reads as a glitch, right when you're watching to
+   see whether the click registered. */
+.toolbar > button:first-child {
+  min-width: 10rem;
+}
+
+.save-note {
+  margin: 0.9rem 0 0;
+}
+
 /* A saved note shown on the expanded strategy row — preserves the line breaks
    you typed instead of running it all together. */
 .strat-notes {

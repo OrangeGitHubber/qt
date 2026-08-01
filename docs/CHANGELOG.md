@@ -3,6 +3,26 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## The Save button says what it does (2026-08-01)
+
+It read **"Save (creates new config version)"** on every edit — including one
+where you'd only typed a note, which creates no version at all. It was also the
+reason the row jumped: when the label became "Saving…" the button shrank by a
+third and every button beside it slid left, right at the moment you're watching
+to see whether the click registered.
+
+The button now says **Save** (or **Create strategy**), and the consequence moved
+to a line above it that updates as you type:
+
+- *Saving creates a new config version. Trades already made keep pointing at v7,
+  so past results stay honest.*
+- *Only your notes changed — no new config version.*
+- *No changes yet.*
+
+Which is more useful than the old label ever was: you can see whether you've
+actually changed a setting before you commit to it. The button also holds its
+width, so nothing moves while it saves.
+
 ## Notes on a strategy (2026-08-01)
 
 Every strategy now has a freeform notes box: what you were testing, what a

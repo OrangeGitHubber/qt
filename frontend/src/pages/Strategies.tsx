@@ -1,4 +1,4 @@
-import { ReactNode, useCallback, useEffect, useRef, useState } from "react";
+import { ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Basket,
   createStrategy,
@@ -590,6 +590,34 @@ function Editor({
     requestNav({ tab, strategyId: id });
   }
 
+  // What's actually changed since this editor opened. Drives both the button
+  // label and the line above it: a button that promises "creates new config
+  // version" while you've only typed a note is telling you something untrue.
+  //
+  // Keys sorted before comparing — a spread can reorder them, and a reorder is
+  // not an edit.
+  const changed = useMemo(() => {
+    const stable = (v: unknown): unknown => {
+      if (Array.isArray(v)) return v.map(stable);
+      if (v && typeof v === "object") {
+        return Object.fromEntries(
+          Object.keys(v as object).sort().map((k) => [k, stable((v as Record<string, unknown>)[k])]),
+        );
+      }
+      return v;
+    };
+    // `enabled` is toggled from the list, not here; version/open_trades are the
+    // server's. None of them are edits to the config.
+    const config = (x: Partial<StrategyRow>) => {
+      const { notes: _n, version: _v, open_trades: _o, enabled: _e, ...rest } = x;
+      return JSON.stringify(stable(rest));
+    };
+    return {
+      config: config(s) !== config(initial),
+      notes: (s.notes ?? "") !== (initial.notes ?? ""),
+    };
+  }, [s, initial]);
+
   const p = s.params!;
   // Market orders have no limit price, so the marketable-limit slippage buffers
   // (entry + exit) don't apply — grey them out when market mode is on.
@@ -1138,10 +1166,21 @@ function Editor({
         </span>
       </label>
       {error !== null && <div className="error">{error}</div>}
+      {/* The consequence lives here, not in the button. A button should say what
+          it DOES; "Save (creates new config version)" was a sentence wearing a
+          button, and its length is what made the row jump when it became
+          "Saving…". This line updates as you type, so you know before clicking. */}
+      {s.id != null && (
+        <p className="hint save-note">
+          {changed.config
+            ? `Saving creates a new config version. Trades already made keep pointing at v${s.version ?? "?"}, so past results stay honest.`
+            : changed.notes
+              ? "Only your notes changed — no new config version."
+              : "No changes yet."}
+        </p>
+      )}
       <div className="toolbar">
-        <button disabled={busy}>
-          {busy ? "Saving…" : s.id ? "Save (creates new config version)" : "Create strategy"}
-        </button>
+        <button disabled={busy}>{busy ? "Saving…" : s.id ? "Save" : "Create strategy"}</button>
         {/* Full-size like Save (same height/baseline), ghost so Save stays the
             one primary action in the row. */}
         <button type="button" className="btn-ghost" onClick={onCancel} disabled={busy}>
