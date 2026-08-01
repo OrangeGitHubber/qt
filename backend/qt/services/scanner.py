@@ -85,18 +85,31 @@ def _normalize(stored: dict[str, Any]) -> dict[str, Any]:
     return cfg
 
 
-def _passes(f: dict, exclude_symbols: list, price: float, change_pct: float, dollar_volume: float, symbol: str) -> bool:
+def _reject_reason(
+    f: dict, exclude_symbols: list, price: float, change_pct: float, dollar_volume: float, symbol: str
+) -> str | None:
+    """Which filter rejected this symbol, or None if it passed.
+
+    A reason rather than a bool because the panel needs to explain a SHORT list,
+    not just an empty one. Three rows with no explanation reads as "the scanner
+    is broken"; "28 below your $0.50 min price" reads as a setting you chose.
+    Phrased as the user's own setting — every one of these is a number they
+    typed."""
     if symbol.upper() in (s.upper() for s in exclude_symbols):
-        return False
+        return "on your exclude list"
     if price < f["min_price"]:
-        return False
+        return f"below your ${f['min_price']:g} min price"
     if f["max_price"] and price > f["max_price"]:
-        return False
+        return f"above your ${f['max_price']:g} max price"
     if change_pct < f["min_change_pct"]:
-        return False
+        return f"below your {f['min_change_pct']:g}% min gain"
     if dollar_volume < f["min_dollar_volume"]:
-        return False
-    return True
+        return f"below your ${f['min_dollar_volume']:,.0f} min $ volume"
+    return None
+
+
+def _passes(f: dict, exclude_symbols: list, price: float, change_pct: float, dollar_volume: float, symbol: str) -> bool:
+    return _reject_reason(f, exclude_symbols, price, change_pct, dollar_volume, symbol) is None
 
 
 def _bar_dollar_volume(bar: dict) -> float:
@@ -152,7 +165,10 @@ def rolling_24h(bars: list[dict]) -> tuple[float, float, float] | None:
 
 
 def _meta(
-    scanned: int, best: tuple[str, float, float, float] | None, passed: int = 0
+    scanned: int,
+    best: tuple[str, float, float, float] | None,
+    passed: int = 0,
+    rejected: dict[str, int] | None = None,
 ) -> dict[str, Any]:
     """Diagnostics so the panel can explain itself: how many symbols had usable
     data, the strongest mover seen (before filtering) with its price and $
@@ -166,6 +182,10 @@ def _meta(
     return {
         "scanned": scanned,
         "passed": passed,
+        # {reason: how many}. Answers "why isn't my mover here?" for ANY symbol,
+        # which is otherwise only answerable by reading the filter values back
+        # against each price by hand.
+        "rejected": dict(sorted((rejected or {}).items(), key=lambda kv: -kv[1])),
         "best_symbol": best[0] if best else None,
         "best_change_pct": round(best[1], 2) if best else None,
         "best_price": round(best[2], 4) if best else None,
@@ -180,6 +200,7 @@ async def scan_stocks(client: AlpacaClient, cfg: dict, market_open: bool) -> tup
     symbols = [g["symbol"] for g in gainers]
     snapshots = await client.stock_snapshots(symbols)
 
+    rejected: dict[str, int] = {}
     rows = []
     best: tuple[str, float, float, float] | None = None
     for gainer in gainers:
@@ -190,7 +211,10 @@ async def scan_stocks(client: AlpacaClient, cfg: dict, market_open: bool) -> tup
         dollar_volume = _stock_session_volume(snapshot, market_open)
         if best is None or change_pct > best[1]:
             best = (symbol, change_pct, price, dollar_volume)
-        if _passes(f, cfg["exclude_symbols"], price, change_pct, dollar_volume, symbol):
+        reason = _reject_reason(f, cfg["exclude_symbols"], price, change_pct, dollar_volume, symbol)
+        if reason is not None:
+            rejected[reason] = rejected.get(reason, 0) + 1
+        else:
             rows.append(
                 {
                     "symbol": symbol,
@@ -201,7 +225,7 @@ async def scan_stocks(client: AlpacaClient, cfg: dict, market_open: bool) -> tup
                 }
             )
     rows.sort(key=lambda r: r["change_pct"], reverse=True)
-    return rows[: cfg["top_n"]], _meta(len(gainers), best, passed=len(rows))
+    return rows[: cfg["top_n"]], _meta(len(gainers), best, passed=len(rows), rejected=rejected)
 
 
 async def crypto_rolling_stats(
@@ -236,6 +260,7 @@ async def scan_crypto(client: AlpacaClient, cfg: dict) -> tuple[list[dict], dict
 
     rows = []
     scanned = 0
+    rejected: dict[str, int] = {}
     best: tuple[str, float, float, float] | None = None
     for symbol in usd_pairs:
         stats = stats_by_symbol.get(symbol)
@@ -245,7 +270,10 @@ async def scan_crypto(client: AlpacaClient, cfg: dict) -> tuple[list[dict], dict
         price, change_pct, dollar_volume = stats
         if best is None or change_pct > best[1]:
             best = (symbol, change_pct, price, dollar_volume)
-        if _passes(f, cfg["exclude_symbols"], price, change_pct, dollar_volume, symbol):
+        reason = _reject_reason(f, cfg["exclude_symbols"], price, change_pct, dollar_volume, symbol)
+        if reason is not None:
+            rejected[reason] = rejected.get(reason, 0) + 1
+        else:
             rows.append(
                 {
                     "symbol": symbol,
@@ -256,7 +284,7 @@ async def scan_crypto(client: AlpacaClient, cfg: dict) -> tuple[list[dict], dict
                 }
             )
     rows.sort(key=lambda r: r["change_pct"], reverse=True)
-    return rows[: cfg["top_n"]], _meta(scanned, best, passed=len(rows))
+    return rows[: cfg["top_n"]], _meta(scanned, best, passed=len(rows), rejected=rejected)
 
 
 async def scan(session: Session, client: AlpacaClient) -> dict[str, Any]:

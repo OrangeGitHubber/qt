@@ -132,6 +132,18 @@ function MoversTable({
           the rest moved less and are below the cut. Raise “rows shown” in Filters to see further down.
         </p>
       )}
+      {/* A SHORT list needs explaining as much as an empty one: three rows with
+          no note reads as a broken scanner, when it's usually one of your own
+          floors doing exactly what you set it to. */}
+      {Object.keys(meta?.rejected ?? {}).length > 0 && (
+        <p className="hint">
+          Filtered out{" "}
+          {Object.entries(meta!.rejected!)
+            .map(([reason, n]) => `${n} ${reason}`)
+            .join(" · ")}
+          .
+        </p>
+      )}
     </div>
   );
 }

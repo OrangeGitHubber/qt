@@ -131,3 +131,48 @@ def test_the_scanner_reports_how_many_it_cut(monkeypatch):
     assert meta["scanned"] == 15
     # The cut is by size of move, so the weakest movers are the ones missing.
     assert rows[0]["symbol"] == "C14/USD" and rows[-1]["symbol"] == "C5/USD"
+
+
+def test_the_scanner_names_which_filter_rejected_what():
+    """Werner's case, reproduced. ADA at $0.1734 vanished from a 3-row crypto
+    list with a $0.50 min price set. Nothing was broken — but the panel gave no
+    way to reach that conclusion, and a short list reads as a broken scanner."""
+    import asyncio
+    from unittest.mock import AsyncMock, patch
+
+    from qt.broker.alpaca import AlpacaClient
+    from qt.services import scanner
+
+    # His actual numbers: three coins over $0.50, ADA and DOGE well under it.
+    stats = {
+        "DOT/USD": (0.7789, 2.58, 1_000.0),
+        "USDT/USD": (0.9989, 0.04, 1_000.0),
+        "USDC/USD": (0.9998, 0.03, 18_000.0),
+        "ADA/USD": (0.1734, 3.23, 50_000.0),
+        "DOGE/USD": (0.07, 4.10, 90_000.0),
+    }
+    pairs = [{"symbol": s} for s in stats]
+    cfg = scanner.DEFAULT_CONFIG | {"top_n": 10}
+    cfg["crypto"] = dict(cfg["crypto"]) | {"min_price": 0.5, "min_change_pct": 0.0, "min_dollar_volume": 1000}
+
+    with patch.object(AlpacaClient, "crypto_assets", new=AsyncMock(return_value=pairs)), \
+         patch.object(scanner, "crypto_rolling_stats", new=AsyncMock(return_value=stats)):
+        rows, meta = asyncio.run(scanner.scan_crypto(AlpacaClient("k", "s"), cfg))
+
+    assert {r["symbol"] for r in rows} == {"DOT/USD", "USDT/USD", "USDC/USD"}
+    # The two biggest movers are missing, and the panel can now say why.
+    assert meta["rejected"] == {"below your $0.5 min price": 2}
+
+
+def test_a_rejection_reason_names_the_setting_that_caused_it():
+    """Each reason has to be traceable to a field in Filters — 'excluded' alone
+    would send you hunting through four numbers to find which one."""
+    from qt.services import scanner
+
+    f = {"min_price": 1.0, "max_price": 100.0, "min_change_pct": 2.0, "min_dollar_volume": 5000}
+    assert "min price" in scanner._reject_reason(f, [], 0.5, 9.0, 9e6, "X")
+    assert "max price" in scanner._reject_reason(f, [], 500.0, 9.0, 9e6, "X")
+    assert "min gain" in scanner._reject_reason(f, [], 50.0, 0.5, 9e6, "X")
+    assert "min $ volume" in scanner._reject_reason(f, [], 50.0, 9.0, 10.0, "X")
+    assert "exclude list" in scanner._reject_reason(f, ["X"], 50.0, 9.0, 9e6, "X")
+    assert scanner._reject_reason(f, [], 50.0, 9.0, 9e6, "X") is None

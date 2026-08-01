@@ -993,6 +993,10 @@ export interface ScannerMeta {
   // How many cleared the filters, BEFORE the list was cut to top_n. Greater than
   // the rows shown means real movers are hidden below the cut.
   passed?: number;
+  // {reason: count} — which of YOUR filters rejected how many symbols. The
+  // answer to "why isn't my mover in here?" for any symbol, not just the
+  // strongest one.
+  rejected?: Record<string, number>;
   best_symbol: string | null;
   best_change_pct: number | null;
   best_price: number | null;
