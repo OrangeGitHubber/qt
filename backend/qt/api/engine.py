@@ -1,5 +1,6 @@
 """Engine control endpoints: mode ladder, risk rails, journal, scoreboard."""
 
+import logging
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -15,6 +16,8 @@ from qt.services import regime, scoreboard
 from qt.services.calendar import et_day
 from qt.services.engine import ENGINE_MODES, get_mode, get_risk
 from qt.settings_service import get_setting, set_setting
+
+log = logging.getLogger("qt.api.engine")
 
 router = APIRouter(prefix="/api/engine", tags=["engine"])
 
@@ -265,6 +268,9 @@ async def open_positions(session: Session = Depends(get_session)) -> dict:
     names = {s.id: s.name for s in session.query(Strategy).all()}
     rows = [
         {
+            # The row's identity. Force-exit targets ONE trade, not a symbol —
+            # another strategy may hold the same name and hasn't asked to be out.
+            "trade_id": t.id,
             "strategy_id": t.strategy_id,
             "strategy_name": names.get(t.strategy_id, f"strategy #{t.strategy_id}"),
             "symbol": t.symbol,
@@ -314,6 +320,67 @@ async def open_positions(session: Session = Depends(get_session)) -> dict:
         "total_value": round(total_value, 2),
         "total_unrealized_pnl": round(total_pnl, 2),
     }
+
+
+@router.post("/positions/{trade_id}/close")
+async def force_close_position(trade_id: int, session: Session = Depends(get_session)) -> dict:
+    """Sell one open position NOW, at market, regardless of its strategy's rules.
+
+    The manual override: you've decided to be out and don't want to wait for a
+    stop to be touched. Deliberately a MARKET order — the escalating marketable
+    limit the engine normally uses is there to protect the price on a routine
+    exit, and it can sit unfilled. "Force exit" that might not fill would be a
+    button that lies.
+
+    Scoped to ONE trade, not the symbol: another strategy may hold the same name
+    and has not asked to be closed.
+    """
+    trade = session.get(Trade, trade_id)
+    if trade is None:
+        raise HTTPException(status_code=404, detail="Position not found.")
+    if trade.status != "open":
+        raise HTTPException(status_code=409, detail=f"That position is already {trade.status}.")
+
+    if trade.mode == "shadow":
+        # Shadow never placed an order, so there is nothing at the broker to sell.
+        # Close the journal row so the paper trail matches what you decided.
+        trade.status = "closed"
+        trade.exit_at = datetime.now(timezone.utc)
+        trade.exit_price = trade.entry_price
+        trade.exit_reason = "force-closed by hand (shadow — no order was ever placed)"
+        session.add(AuditLog(category="engine", message=f"Force-closed shadow position {trade.symbol}"))
+        return {"ok": True, "symbol": trade.symbol, "mode": trade.mode}
+
+    client = get_client(session)
+    if client is None:
+        raise HTTPException(status_code=503, detail="Alpaca isn't configured — can't place the sell order.")
+
+    from qt.api.strategies import _snapshot_price
+    from qt.services import execution
+
+    price = trade.entry_price or 0.0
+    try:
+        snaps = (
+            await client.crypto_snapshots([trade.symbol])
+            if trade.asset_class == "crypto"
+            else await client.stock_snapshots([trade.symbol])
+        )
+        price = _snapshot_price(snaps.get(trade.symbol) or {}) or price
+    except Exception:  # noqa: BLE001 — a stale mark must not block a manual exit
+        log.warning("force close %s: quote unavailable, using entry price as the mark", trade.symbol)
+
+    ok = await execution.close_trade(
+        session, client, trade, price, "force-closed by hand (market order)", market=True
+    )
+    if not ok:
+        raise HTTPException(status_code=502, detail="The broker rejected the sell order — nothing was closed.")
+    session.add(AuditLog(category="engine", message=f"Force-closed {trade.symbol} at market"))
+    from qt.services import notify
+
+    await notify.slack_cat(
+        session, "trades", f":warning: Force-closed {trade.symbol} at market (manual override)."
+    )
+    return {"ok": True, "symbol": trade.symbol, "mode": trade.mode}
 
 
 @router.get("/journal")

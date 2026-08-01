@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   EngineState,
   getEngine,
+  forceClosePosition,
   getOpenPositions,
   getScoreboard,
   getStrategies,
@@ -331,6 +332,7 @@ function StrategyContributionsCard() {
 function OpenPositionsCard() {
   const [data, setData] = useState<OpenPositionsResponse | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [closing, setClosing] = useState<number | null>(null);
   const refresh = useCallback(() => {
     getOpenPositions()
       .then((d) => {
@@ -344,6 +346,36 @@ function OpenPositionsCard() {
     const t = setInterval(refresh, 30_000);
     return () => clearInterval(t);
   }, [refresh]);
+
+  // Selling is irreversible and immediate, so it asks first — naming the symbol,
+  // the size and where the P&L stands, because "are you sure?" on its own is a
+  // question you can't actually answer.
+  async function forceExit(p: OpenPositionsResponse["positions"][number]) {
+    const pnl =
+      p.unrealized_pnl == null
+        ? "P&L unknown right now"
+        : `${p.unrealized_pnl >= 0 ? "a gain" : "a loss"} of $${Math.abs(p.unrealized_pnl).toFixed(2)}`;
+    const ok = window.confirm(
+      `Sell all ${p.qty} ${p.symbol} now, at market?
+
+` +
+        `Held by "${p.strategy_name}", currently ${pnl}.
+
+` +
+        `This ignores the strategy's exit rules and locks in whatever the market gives you. It can't be undone.`,
+    );
+    if (!ok) return;
+    setClosing(p.trade_id);
+    setErr(null);
+    try {
+      await forceClosePosition(p.trade_id);
+      refresh();
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setClosing(null);
+    }
+  }
 
   if (err) return <div className="card error">Open positions: {err}</div>;
   if (!data) return null;
@@ -388,6 +420,7 @@ function OpenPositionsCard() {
                 <th>Now</th>
                 <th>Unrealized</th>
                 <th>Held since</th>
+                <th></th>
               </tr>
             </thead>
             <tbody>
@@ -405,6 +438,17 @@ function OpenPositionsCard() {
                       : "—"}
                   </td>
                   <td className="hint">{p.entry_at ? new Date(p.entry_at).toLocaleString() : "—"}</td>
+                  <td>
+                    <button
+                      type="button"
+                      className="small danger"
+                      disabled={closing !== null}
+                      onClick={() => forceExit(p)}
+                      title={`Sell ${p.symbol} now at market, ignoring ${p.strategy_name}'s exit rules`}
+                    >
+                      {closing === p.trade_id ? "Selling…" : "Force exit"}
+                    </button>
+                  </td>
                 </tr>
               ))}
             </tbody>

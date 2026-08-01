@@ -3,6 +3,25 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Force exit a position by hand (2026-08-01)
+
+Every open position on the dashboard now has a **Force exit** button: sell it
+right now, at market, ignoring whatever the strategy's exit rules would have
+waited for.
+
+It sells at **market**, deliberately. The engine's normal exit is an escalating
+marketable limit, which protects the price but can sit unfilled — and a button
+labelled "force exit" that might not fill would be lying to you.
+
+It closes **one position**, not every holding of that symbol. If two strategies
+hold the same name, the other one is untouched; it didn't ask to be out.
+
+Because it's immediate and irreversible, it asks first — naming the symbol, the
+size, which strategy holds it and where the P&L currently stands, since "are you
+sure?" on its own is a question you can't actually answer. If the broker rejects
+the order you're told, and the position stays open rather than being marked
+closed on a sale that never happened.
+
 ## The Save button says what it does (2026-08-01)
 
 It read **"Save (creates new config version)"** on every edit — including one

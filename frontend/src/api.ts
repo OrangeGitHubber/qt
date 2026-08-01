@@ -303,6 +303,7 @@ export const getEngine = () => fetch("/api/engine").then((r) => handle<EngineSta
 // Account-wide open positions with their owning strategy — the Dashboard view
 // that answers "which strategy already holds the symbol that blocked my entry".
 export interface OpenPositionRow {
+  trade_id: number;
   strategy_id: number;
   strategy_name: string;
   symbol: string;
@@ -328,6 +329,11 @@ export interface OpenPositionsResponse {
 
 export const getOpenPositions = () =>
   fetch("/api/engine/positions").then((r) => handle<OpenPositionsResponse>(r));
+/** Sell one open position immediately, at market, ignoring its strategy's rules. */
+export const forceClosePosition = (tradeId: number) =>
+  fetch(`/api/engine/positions/${tradeId}/close`, { method: "POST" }).then((r) =>
+    handle<{ ok: boolean; symbol: string; mode: string }>(r),
+  );
 export const setEngineMode = (mode: string, confirm = false) =>
   fetch("/api/engine/mode", json({ mode, confirm })).then((r) => handle<{ mode: string }>(r));
 export const setRisk = (risk: RiskConfig & { leverage_confirm?: string }) =>
