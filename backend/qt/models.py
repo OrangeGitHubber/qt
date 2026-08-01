@@ -79,6 +79,12 @@ class Strategy(Base):
     max_positions: Mapped[int] = mapped_column(Integer, default=3)
     swing_mode: Mapped[bool] = mapped_column(Boolean, default=True)  # no same-day exits except stops
     ignore_regime: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Allow this strategy to open a position in a symbol ANOTHER strategy already
+    # holds. Off by default — the account-wide "one position per symbol" rail is
+    # the safe behaviour. It never lets a strategy stack a second position on its
+    # OWN holding (that's scaling-in, a separate feature), and it does not touch
+    # the wash-sale guard or the loss cooldown, which stay portfolio-wide.
+    allow_concurrent_symbol: Mapped[bool] = mapped_column(Boolean, default=False)
     # Your own notes: what you were testing, what a backtest suggested, what to
     # try next. The engine never reads this — it exists purely so the reasoning
     # behind a strategy lives next to the strategy instead of in your head.

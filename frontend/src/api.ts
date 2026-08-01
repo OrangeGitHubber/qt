@@ -96,6 +96,9 @@ export interface StrategyRow {
   // Your own freeform notes. Never read by the engine, and editing them does not
   // create a new config version — a note changes no behaviour.
   notes?: string;
+  // Let this strategy hold a symbol another strategy already holds. Never
+  // relaxes the wash-sale guard or the loss cooldown — those stay account-wide.
+  allow_concurrent_symbol?: boolean;
   open_trades?: number;
   version?: number;
 }

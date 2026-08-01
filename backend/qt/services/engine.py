@@ -176,7 +176,11 @@ def evaluate_entry(params: dict, candidate: Candidate, now_et: datetime) -> tupl
 def check_rails(strategy_cfg: dict, sizing_usd: float, ctx: RailContext) -> tuple[bool, str]:
     risk = ctx.risk
     if ctx.already_open_symbol:
-        return False, "rail: position already open for this symbol"
+        return False, (
+            "rail: this strategy already holds this symbol"
+            if strategy_cfg.get("allow_concurrent_symbol")
+            else "rail: position already open for this symbol (any strategy)"
+        )
     if ctx.entries_today >= risk["max_trades_per_day"]:
         return False, f"rail: trade-rate limit reached ({risk['max_trades_per_day']}/day)"
     if ctx.open_positions_total >= risk["max_total_positions"]:
@@ -1002,7 +1006,11 @@ async def _consider_entries(
                     leverage_unlocked, daily_loss, today_start,
                 )
                 rails_ok, rails_reason = check_rails(
-                    {"max_positions": strategy.max_positions, "sleeve_usd": strategy.sleeve_usd},
+                    {
+                        "max_positions": strategy.max_positions,
+                        "sleeve_usd": strategy.sleeve_usd,
+                        "allow_concurrent_symbol": strategy.allow_concurrent_symbol,
+                    },
                     entry_sizing,
                     ctx,
                 )
@@ -1118,7 +1126,11 @@ async def _consider_dca_entries(
         # Neutralise ONLY this flag; check_rails then enforces everything else.
         ctx.already_open_symbol = False
         rails_ok, rails_reason = check_rails(
-            {"max_positions": strategy.max_positions, "sleeve_usd": strategy.sleeve_usd},
+            {
+                        "max_positions": strategy.max_positions,
+                        "sleeve_usd": strategy.sleeve_usd,
+                        "allow_concurrent_symbol": strategy.allow_concurrent_symbol,
+                    },
             strategy.sizing_usd,
             ctx,
         )
@@ -1527,9 +1539,18 @@ def _build_rail_context(
         .filter(Trade.mode == mode, Trade.entry_at >= today_start, Trade.status != "rejected")
         .scalar()
     )
-    already_open = (
-        open_q.filter(Trade.symbol == symbol).count() > 0
-    )
+    # "Already open for this symbol" — account-wide by default, so whoever gets
+    # there first owns the name. A strategy can opt out of that and take its own
+    # position in a symbol ANOTHER strategy holds; it is still blocked from
+    # stacking a second position on its OWN (that's scaling-in, not this).
+    #
+    # Note this only relaxes the position rail. The wash-sale guard and the
+    # loss cooldown below stay portfolio-wide whatever this is set to: they
+    # protect the ACCOUNT, and the IRS counts the account, not your strategies.
+    symbol_q = open_q.filter(Trade.symbol == symbol)
+    if strategy.allow_concurrent_symbol:
+        symbol_q = symbol_q.filter(Trade.strategy_id == strategy.id)
+    already_open = symbol_q.count() > 0
     last_loss = (
         session.query(func.max(Trade.exit_at))
         .filter(Trade.mode == mode, Trade.symbol == symbol, Trade.status == "closed", Trade.pnl < 0)

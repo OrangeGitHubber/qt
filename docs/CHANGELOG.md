@@ -3,6 +3,45 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Two strategies can hold the same symbol (2026-08-01)
+
+Until now the whole account held at most one position per symbol: whichever
+strategy bought first owned that name and every other strategy was locked out of
+it. That's the safe default and it stays the default — but two strategies with
+genuinely different reasons to own a stock is a real book, and the rail made it
+impossible.
+
+Each strategy now has an opt-in: **"Let this strategy hold a symbol another
+strategy already holds."** Off everywhere until you turn it on. It still won't
+let a strategy stack a second position on one it already holds — that's
+scaling-in, a different feature — and when it does block you, the reason now says
+which of the two rules stopped it.
+
+**The wash-sale guard and the cooldown after a loss stay account-wide**, whatever
+this is set to. Those protect the whole portfolio (the tax rules count the
+account, not your strategies), so a per-strategy exemption would defeat the
+point. Tests pin that specifically.
+
+### The part that had to be fixed first
+
+The broker reports **one net position per symbol**, so once two strategies can
+hold the same name, matching a position to a trade by symbol alone stops working.
+Two failures were waiting:
+
+- An entry we recorded but never confirmed adopted the broker's **whole**
+  position. If one strategy held 5 and another's entry was unconfirmed while the
+  broker showed 8, that second trade would have claimed all 8 — and the journal
+  would then total 13 against a real 8.
+- "In sync" meant only "a position exists", so any drift between what QT thinks
+  it holds and what the broker actually holds went unnoticed.
+
+Reconciliation is now quantity-aware: it adopts the broker's figure only when a
+single trade owns the symbol, and it checks that the open trades for a symbol
+**add up** to the broker's position, reporting a mismatch to the audit log and
+Slack. It never auto-corrects one — it can tell that the totals disagree, but not
+which strategy is wrong, and guessing would either invent shares or write off
+real ones.
+
 ## Force exit a position by hand (2026-08-01)
 
 Every open position on the dashboard now has a **Force exit** button: sell it

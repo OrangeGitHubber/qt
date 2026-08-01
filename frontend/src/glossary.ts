@@ -14,6 +14,12 @@ export interface GlossaryEntry {
 export type InfoKey = keyof typeof GLOSSARY;
 
 export const GLOSSARY: Record<string, GlossaryEntry> = {
+  concurrent_symbol: {
+    term: "Share a symbol with other strategies",
+    explain:
+      "Normally the whole account holds at most one position per symbol — whichever strategy buys first owns that name, and the others are blocked out of it. Turn this on and this strategy may take its own position in a symbol another strategy already holds, which is what you want if two strategies have genuinely different reasons to own it. It still can't stack a second position on one it already holds, and it does NOT relax the wash-sale guard or the cooldown after a loss: those protect the whole account. Worth knowing that you then hold the name twice, so your real exposure to it is the sum.",
+    url: "https://www.investopedia.com/terms/d/diversification.asp",
+  },
   unrealized_pnl: {
     term: "Unrealized P&L",
     explain:

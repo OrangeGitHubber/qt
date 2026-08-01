@@ -19,6 +19,23 @@ Cases handled:
   (c) An entry we recorded but never confirmed — check the order: if it
       filled, finalize it; if it's still working, leave it; if it's dead and
       there's no position, mark the trade rejected.
+  (d) The broker's quantity for a symbol doesn't match what our open trades add
+      up to — log + Slack, never auto-correct.
+
+QUANTITY AWARENESS. The broker reports ONE net position per symbol, so once two
+strategies may hold the same name (see Strategy.allow_concurrent_symbol) a
+symbol match is no longer an identity match. Two things had to change:
+
+* An unconfirmed entry adopted ``pos.qty`` — the WHOLE position. With a second
+  strategy already holding the symbol, that trade would claim the other's shares
+  too and the journal would total more than the broker holds. It now adopts the
+  broker's figure only when a single trade owns the symbol; otherwise it trusts
+  the fill it can actually attribute.
+* "In sync" meant "a position exists". It now means the open trades for that
+  symbol SUM to what the broker holds, and a mismatch is reported.
+
+Case (a) is unchanged and still correct for many trades: if the broker holds
+none of a symbol, nobody holds any of it.
 """
 
 from __future__ import annotations
@@ -74,7 +91,8 @@ class OrderView:
 
 @dataclass(frozen=True)
 class Action:
-    kind: str  # confirm_entry | await_entry | reject_entry | close_reconciled | alert_orphan_position
+    kind: str  # confirm_entry | await_entry | reject_entry | close_reconciled |
+    #            alert_orphan_position | alert_qty_mismatch
     trade_id: int | None = None
     symbol: str = ""
     qty: float = 0.0
@@ -103,6 +121,12 @@ def reconcile(
     pos_by_symbol = {_norm(p.symbol): p for p in positions if _nonzero(p.qty)}
     orders_by_id = {o.id: o for o in orders}
     db_symbols = {_norm(t.symbol) for t in trades}
+    # A symbol can now be held by more than one strategy, so "which trade does
+    # this position belong to?" has no single answer — group them and reason
+    # about the total.
+    trades_by_symbol: dict[str, list[OpenTradeView]] = {}
+    for t in trades:
+        trades_by_symbol.setdefault(_norm(t.symbol), []).append(t)
     actions: list[Action] = []
 
     for t in trades:
@@ -123,12 +147,21 @@ def reconcile(
                 continue
             if pos is not None:
                 # No confirmed fill recorded, but the broker holds the position:
-                # it did fill. Adopt the broker's truth for this known trade.
+                # it did fill. Adopt the broker's quantity ONLY when this trade is
+                # the sole claimant — otherwise pos.qty includes another
+                # strategy's shares and adopting it would double-count them.
+                sole = len(trades_by_symbol[_norm(t.symbol)]) == 1
                 actions.append(
                     Action(
                         "confirm_entry", t.id, t.symbol,
-                        qty=pos.qty, price=pos.current_price,
-                        reason="reconciled: position present though entry was unconfirmed",
+                        qty=pos.qty if sole else t.qty,
+                        price=pos.current_price,
+                        reason=(
+                            "reconciled: position present though entry was unconfirmed"
+                            if sole
+                            else "reconciled: position present though entry was unconfirmed "
+                                 "(kept this trade's own quantity — the symbol is shared)"
+                        ),
                     )
                 )
                 continue
@@ -151,7 +184,7 @@ def reconcile(
 
         # entry_confirmed: we believe we hold this position.
         if pos is not None:
-            continue  # in sync — nothing to do
+            continue  # the symbol is held; the totals are checked once, below
         # Case (a): the position is gone, so the exit filled while we were down.
         actions.append(
             Action(
@@ -160,6 +193,30 @@ def reconcile(
                 reason="reconciled: position no longer held at broker",
             )
         )
+
+    # Case (d): the broker holds this symbol, but not the amount our open trades
+    # claim between them. Reported, never auto-corrected: we can't tell WHICH
+    # strategy drifted, and guessing would either invent shares or write off real
+    # ones. Only confirmed entries count — an unconfirmed one is handled above.
+    for norm_symbol, group in trades_by_symbol.items():
+        pos = pos_by_symbol.get(norm_symbol)
+        if pos is None:
+            continue
+        ours = sum(t.qty for t in group if t.entry_confirmed)
+        if not _nonzero(ours):
+            continue
+        if abs(ours - pos.qty) > max(1e-6, abs(pos.qty) * 1e-6):
+            actions.append(
+                Action(
+                    "alert_qty_mismatch", symbol=group[0].symbol, qty=pos.qty,
+                    reason=(
+                        f"QT's open trades total {ours:g} {group[0].symbol} but the broker holds "
+                        f"{pos.qty:g}"
+                        + (f" across {len(group)} strategies" if len(group) > 1 else "")
+                        + " — not auto-corrected"
+                    ),
+                )
+            )
 
     # Case (b): positions Alpaca holds that no DB trade accounts for.
     for norm_symbol, pos in pos_by_symbol.items():
@@ -301,6 +358,21 @@ async def apply_reconciliation(session, client, mode: str) -> list[Action]:
                 "reconciliation",
                 f":warning: *{mode.upper()}* Alpaca holds {action.qty:g} {action.symbol} that QT "
                 "has no open trade for. Not auto-adopting — check manually.",
+            )
+
+        elif action.kind == "alert_qty_mismatch":
+            # Deliberately not self-healing. We know the totals disagree; we do
+            # NOT know which strategy's row is wrong, and picking one would
+            # either invent shares or write off real ones.
+            session.add(AuditLog(
+                category="reconcile",
+                message=f"[{mode}] QUANTITY MISMATCH on {action.symbol}",
+                detail=action.reason,
+            ))
+            await notify.slack_cat(
+                session,
+                "reconciliation",
+                f":warning: *{mode.upper()}* {action.reason}. Not auto-corrected — check manually.",
             )
 
     if actions:

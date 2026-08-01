@@ -148,6 +148,9 @@ class StrategyBody(BaseModel):
     # Freeform, for the human. Never read by the engine; see update_strategy for
     # why editing it does NOT create a config version.
     notes: str = Field(default="", max_length=10_000)
+    # Opt out of the ACCOUNT-WIDE one-position-per-symbol rail. Never relaxes the
+    # wash-sale guard or the loss cooldown — those stay portfolio-wide.
+    allow_concurrent_symbol: bool = False
     asset_class: str = Field(pattern="^(stock|crypto)$")
     universe: str = Field(default="scanner", pattern="^(scanner|watchlist|both|basket|custom)$")
     basket_id: int | None = None
@@ -231,6 +234,7 @@ def _serialize(s: Strategy) -> dict:
         "sleeve_usd": s.sleeve_usd,
         "max_positions": s.max_positions,
         "notes": s.notes or "",
+        "allow_concurrent_symbol": bool(s.allow_concurrent_symbol),
         "swing_mode": s.swing_mode,
         "ignore_regime": s.ignore_regime,
     }
@@ -290,6 +294,7 @@ def create_strategy(body: StrategyBody, session: Session = Depends(get_session))
         swing_mode=body.swing_mode,
         ignore_regime=body.ignore_regime,
         notes=body.notes.strip() or None,
+        allow_concurrent_symbol=body.allow_concurrent_symbol,
     )
     session.add(strategy)
     session.flush()
@@ -324,6 +329,7 @@ def update_strategy(
     strategy.swing_mode = body.swing_mode
     strategy.ignore_regime = body.ignore_regime
     strategy.notes = body.notes.strip() or None
+    strategy.allow_concurrent_symbol = body.allow_concurrent_symbol
 
     # A config version exists so every trade can point at the settings that
     # produced it. Notes change no behaviour, so jotting one down must not mint a

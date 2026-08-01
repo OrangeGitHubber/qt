@@ -45,6 +45,7 @@ const EMPTY: Partial<StrategyRow> = {
   preset: "custom",
   swing_mode: true,
   ignore_regime: false,
+  allow_concurrent_symbol: false,
   notes: "",
   sizing_usd: 200,
   sleeve_usd: 1000,
@@ -1059,6 +1060,21 @@ function Editor({
               <NumberField step="1" min="2" max="100" value={atr.period} onChange={(n) => setAtr("period", n)} />
             </Param>
           </div>
+          <div className="check-row">
+            <label className="check">
+              <input type="checkbox" checked={!!s.allow_concurrent_symbol}
+                onChange={(e) => setS({ ...s, allow_concurrent_symbol: e.target.checked })} />
+              Let this strategy hold a symbol another strategy already holds{" "}
+              <InfoTip k="concurrent_symbol" />
+            </label>
+          </div>
+          {s.allow_concurrent_symbol && (
+            <p className="hint">
+              You'll then own the name in two places at once, so your real exposure to it is the sum of both
+              positions. The wash-sale guard and the cooldown after a loss stay <strong>account-wide</strong> either
+              way — they protect the whole portfolio, not one strategy.
+            </p>
+          )}
           {s.asset_class === "stock" && (
             <div className="check-row">
               <label className="check">
