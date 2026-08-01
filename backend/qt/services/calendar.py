@@ -18,6 +18,32 @@ from __future__ import annotations
 
 import time
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
+
+ET = ZoneInfo("America/New_York")
+
+
+def et_day(ts: datetime) -> str:
+    """The ET calendar day a timestamp belongs to, as 'YYYY-MM-DD'.
+
+    THE day boundary for everything QT reports about its own trading: the
+    journal, the daily-contribution chart, the scoreboard's rows and the daily
+    risk counters all roll over at midnight New York, and DST is handled by the
+    zone rather than a hardcoded offset.
+
+    Not UTC. During US market hours the two agree, which is why bucketing by UTC
+    went unnoticed — but a 21:00 ET fill is already "tomorrow" in UTC, so crypto
+    (which trades round the clock) had its evening trades filed under the next
+    day while the engine's own counters said otherwise.
+
+    Deliberately NOT applied to market DATA: Alpaca stamps crypto daily bars at
+    00:00Z and the movers cache is keyed to match, so re-bucketing those to ET
+    would misalign our records from the vendor's. Vendor stamps keep vendor
+    conventions; our own bookkeeping is ET.
+    """
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=timezone.utc)  # stored naive == UTC
+    return ts.astimezone(ET).strftime("%Y-%m-%d")
 
 from qt.broker.alpaca import AlpacaClient
 

@@ -7,12 +7,16 @@ from datetime import datetime, timezone
 from sqlalchemy.orm import Session
 
 from qt.broker.alpaca import AlpacaClient
+from qt.services.calendar import et_day
 from qt.models import BenchmarkSnapshot, Strategy, Trade
 from qt.settings_service import get_setting
 
 
 def _today() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    """The ET trading day — the same boundary the engine's daily counters use.
+    An evening snapshot used to be filed under tomorrow's UTC date, starting the
+    next day's row hours early."""
+    return et_day(datetime.now(timezone.utc))
 
 
 async def record_snapshot(session: Session, client: AlpacaClient) -> None:
@@ -121,7 +125,7 @@ def _trades_by_day(session: Session, days: list[str], account: str | None) -> di
         if at is None:
             return
         # Naive stamps are stored UTC; treat them as such rather than as local.
-        day = (at if at.tzinfo else at.replace(tzinfo=timezone.utc)).astimezone(timezone.utc).strftime("%Y-%m-%d")
+        day = et_day(at)
         if day not in window:
             return
         out.setdefault(day, []).append({

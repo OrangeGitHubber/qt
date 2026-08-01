@@ -12,6 +12,7 @@ from qt.broker.factory import get_client
 from qt.db import get_session
 from qt.models import AuditLog, Strategy, Trade
 from qt.services import regime, scoreboard
+from qt.services.calendar import et_day
 from qt.services.engine import ENGINE_MODES, get_mode, get_risk
 from qt.settings_service import get_setting, set_setting
 
@@ -506,25 +507,32 @@ def strategy_pnl_daily(days: int = 30, account: str | None = None, session: Sess
     trades simply doesn't appear. `days` is the lookback window; days <= 0 means
     all time (no cutoff). Scoped to the current account by default."""
     mode = get_mode(session)
-    day_col = func.date(Trade.exit_at)  # 'YYYY-MM-DD' of the (UTC) exit timestamp
     filters = [Trade.mode == mode, Trade.status == "closed", Trade.exit_at.isnot(None)]
     filters += _account_conditions(account, session)
     if days > 0:
-        cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%d")
-        filters.append(day_col >= cutoff)
-    rows = (
-        session.query(day_col, Trade.strategy_id, func.coalesce(func.sum(Trade.pnl), 0.0))
-        .filter(*filters)
-        .group_by(day_col, Trade.strategy_id)
-        .all()
-    )
+        # One extra day of slack: the SQL filter is on the raw UTC timestamp, and
+        # the ET day it belongs to can be the one before. Trimmed exactly below.
+        filters.append(Trade.exit_at >= datetime.now(timezone.utc) - timedelta(days=days + 1))
+    # Grouped in PYTHON, not SQL. SQLite has no timezone database, so bucketing by
+    # ET in SQL would mean a hardcoded offset that is wrong for half the year;
+    # et_day() gets DST right. The row count here is a window of closed trades —
+    # small enough that doing it in Python costs nothing.
+    raw = session.query(Trade.exit_at, Trade.strategy_id, Trade.pnl).filter(*filters).all()
+    cutoff_day = et_day(datetime.now(timezone.utc) - timedelta(days=days)) if days > 0 else ""
+    totals: dict[tuple[str, int], float] = {}
+    for exit_at, sid, pnl in raw:
+        day = et_day(exit_at)
+        if day < cutoff_day:
+            continue
+        totals[(day, sid)] = totals.get((day, sid), 0.0) + float(pnl or 0)
+
     names = dict(session.query(Strategy.id, Strategy.name).all())
-    days_sorted = sorted({d for d, _, _ in rows})
+    days_sorted = sorted({d for d, _ in totals})
     idx = {d: i for i, d in enumerate(days_sorted)}
     per_strategy: dict[int, list[float]] = {}
-    for d, sid, pnl in rows:
+    for (d, sid), pnl in totals.items():
         vals = per_strategy.setdefault(sid, [0.0] * len(days_sorted))
-        vals[idx[d]] = round(float(pnl or 0), 2)
+        vals[idx[d]] = round(pnl, 2)
     strategies = [
         {"strategy_id": sid, "name": names.get(sid, f"#{sid} (deleted)"),
          "values": vals, "total": round(sum(vals), 2)}

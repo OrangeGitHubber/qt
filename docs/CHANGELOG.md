@@ -3,6 +3,31 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## One day boundary everywhere: midnight New York (2026-08-01)
+
+QT had two different ideas of when a day starts. The trading engine's daily
+counters — the trade-rate limit and the daily-loss switch — reset at **midnight
+ET**. But everything that *reported* on the trading (the scoreboard's rows, the
+trades listed on them, and the daily-contribution chart) bucketed by the **UTC**
+date.
+
+During US market hours the two agree, which is why it went unnoticed. Crypto is
+where it bites: a position closed at 21:00 ET is already "tomorrow" in UTC, so it
+appeared on the next day's bar while the engine's own counters still called it
+today.
+
+Everything QT reports about its own trading now rolls over at midnight New York,
+using a proper timezone rather than a fixed offset, so it stays right across
+daylight saving.
+
+Deliberately left alone: **market data keeps the vendor's convention.** Alpaca
+stamps crypto daily bars at 00:00 UTC and the movers cache is keyed to match —
+re-bucketing those to ET would put our records a day out from the data they were
+built from. Vendor stamps keep vendor time; our own bookkeeping is ET.
+
+One visible consequence: an equity snapshot taken in the evening used to open
+the next day's row hours early. It now lands on the day it belongs to.
+
 ## Trade tables: the same colour rule as the charts (2026-07-31)
 
 The charts stopped using green and red for buy-versus-sell, but the trade tables
