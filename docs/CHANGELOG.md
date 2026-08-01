@@ -3,6 +3,39 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Real broker fees are now recorded — per day, not per trade (2026-08-01)
+
+The previous entry ended on "still not recorded: fees on actual paper/live
+trades". They are now. Every morning at 05:00 ET, QT pulls Alpaca's fee
+activities (`CFEE`, `FEE`) and stores each one exactly as the broker reported
+it. Nothing to configure.
+
+**They are shown at account level, not per trade, and that is deliberate.** An
+Alpaca fee activity looks like this — and note what *isn't* in it:
+
+    { "id": "...", "activity_type": "CFEE", "date": "2022-08-12",
+      "net_amount": "0", "symbol": "ETHUSD", "qty": "-0.000195",
+      "price": "1884.5", "status": "executed" }
+
+No order id. No side. No time — only a *date*. So on any day the bot traded ETH
+more than once, nothing in what Alpaca sends says which of those trades a given
+fee belongs to. We could have split fees across trades by symbol and day and
+printed a confident per-trade number, and it would have been a guess wearing a
+dollar sign. The journal's **Fees** column therefore shows "—" for every trade,
+and the real total sits under the table where it can be stated as a fact.
+
+Two smaller honesty details. Alpaca charges the crypto fee **in the coin you
+receive**, not in dollars — buy ETH and the fee is paid in ETH. Converting that
+to dollars means using the broker's mark, so any total containing one is
+labelled *(estimated)*. And if Alpaca sends a fee we can't value at all, the UI
+says how many, so the total isn't read as complete.
+
+The P&L column in the journal is still gross, and now says so.
+
+**Only live accounts will produce numbers here.** Paper accounts simulate fills
+but don't post real fee activities, so on paper this job runs, finds nothing,
+and correctly reports "no fees" rather than inventing them.
+
 ## Backtests now charge crypto trading fees (2026-08-01)
 
 QT recorded no fees anywhere — every P&L figure was gross. For US stocks that's

@@ -1,5 +1,5 @@
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
-import { getJournal, JournalRow } from "../api";
+import { FeeSummary, getFeeSummary, getJournal, JournalRow , JOURNAL_LIMIT } from "../api";
 import ColumnPicker, { useColumnPrefs } from "../components/ColumnPicker";
 import AccountSelect from "../components/AccountSelect";
 
@@ -22,13 +22,20 @@ type JEvent = { key: string; at: string; action: Action; price: number | null; p
 // what came back OUT (qty x exit) — both derived from data the journal already
 // carries, so no extra fetch. A sell row's P&L is the difference between them;
 // showing the two sides makes the size of the bet visible, not just its outcome.
-type JCol = "cost" | "proceeds" | "qty" | "mode" | "strategy" | "status";
+//
+// "Fees" is deliberately always "—" today, and there is no "Net P&L" column to
+// go with it. Alpaca posts crypto fees end of day as activities that carry no
+// order id and only a DATE — so nothing says which fill a fee belongs to, and a
+// per-trade split would be a guess wearing a dollar sign. What the broker
+// charged the ACCOUNT is real, and that total is shown under the table instead.
+type JCol = "cost" | "proceeds" | "qty" | "mode" | "strategy" | "status" | "fees";
 const JOURNAL_COLUMNS: { key: JCol; label: string }[] = [
   { key: "mode", label: "Mode" },
   { key: "strategy", label: "Strategy" },
   { key: "qty", label: "Qty" },
   { key: "cost", label: "Cost (what went in)" },
   { key: "proceeds", label: "Proceeds (what came back)" },
+  { key: "fees", label: "Fees (broker)" },
   { key: "status", label: "Status" },
 ];
 const JOURNAL_COLS_KEY = "qt.journal.columns";
@@ -37,10 +44,14 @@ const JOURNAL_DEFAULT_COLS: JCol[] = ["mode", "strategy", "cost", "status"];
 export default function Journal() {
   const [rows, setRows] = useState<JournalRow[] | null>(null);
   const [mode, setMode] = useState<string>("");
-  const [status, setStatus] = useState<"" | "trades" | "rejected">("");
+  // Defaults to TRADES. On "All" the row cap is swallowed whole by rejected
+  // candidates — the engine logs hundreds a day — so the page came up looking
+  // like nothing had ever traded. A journal should open on what happened.
+  const [status, setStatus] = useState<"" | "trades" | "rejected">("trades");
   const [assetClass, setAssetClass] = useState<"" | "stock" | "crypto">("");
   const [account, setAccount] = useState<string>("");
   const [expanded, setExpanded] = useState<string | null>(null);
+  const [feeSummary, setFeeSummary] = useState<FeeSummary | null>(null);
   const [cols, toggleCol] = useColumnPrefs<JCol>(
     JOURNAL_COLS_KEY,
     JOURNAL_COLUMNS.map((c) => c.key),
@@ -49,6 +60,12 @@ export default function Journal() {
 
   const refresh = useCallback(() => {
     getJournal(mode || undefined, status || undefined, assetClass || undefined, account || undefined).then(setRows);
+    // Fees are account-scoped, not row-scoped, so they follow the account
+    // filter only. A failure leaves it null, which renders as "unknown" — the
+    // journal itself must still load.
+    getFeeSummary(account || undefined)
+      .then(setFeeSummary)
+      .catch(() => setFeeSummary(null));
   }, [mode, status, assetClass, account]);
 
   useEffect(() => {
@@ -102,6 +119,13 @@ export default function Journal() {
           Refresh
         </button>
       </div>
+      {(rows?.length ?? 0) >= JOURNAL_LIMIT && (
+        <p className="hint">
+          Showing the most recent <strong>{JOURNAL_LIMIT}</strong> rows — older activity is hidden. The{" "}
+          <strong>All</strong> view includes every rejected candidate and the engine logs hundreds a day, so
+          narrow with the filters to see further back.
+        </p>
+      )}
       <div className="card">
         {!rows ? (
           <p>Loading…</p>
@@ -125,6 +149,7 @@ export default function Journal() {
                 <th>Price</th>
                 {cols.has("cost") && <th>Cost</th>}
                 {cols.has("proceeds") && <th>Proceeds</th>}
+                {cols.has("fees") && <th>Fees</th>}
                 <th>P&L</th>
                 {cols.has("status") && <th>Status</th>}
               </tr>
@@ -181,6 +206,16 @@ export default function Journal() {
                           {r.exit_price && r.qty ? `$${(r.exit_price * r.qty).toFixed(2)}` : "—"}
                         </td>
                       )}
+                      {/* The broker's fee for THIS trade, which Alpaca does not
+                          tell us — its fee activities have no order id and no
+                          time. So this is "—" (unknown), not $0.00 (charged
+                          nothing). It reads a real value the day a broker
+                          reports fees per fill. */}
+                      {cols.has("fees") && (
+                        <td title={r.fees == null ? "Alpaca reports fees per day, not per trade — see the account total below" : undefined}>
+                          {r.fees == null ? "—" : `$${r.fees.toFixed(2)}`}
+                        </td>
+                      )}
                       <td className={e.pnl == null ? "" : e.pnl >= 0 ? "up" : "down"}>
                         {e.pnl == null ? "—" : `$${e.pnl.toFixed(2)}`}
                       </td>
@@ -233,7 +268,47 @@ export default function Journal() {
           </table>
           </div>
         )}
+        {/* Account-level fees. Kept OUT of the table on purpose: this is the
+            granularity Alpaca actually reports, and putting it in a per-row
+            column would imply an attribution that does not exist. */}
+        <FeesNote summary={feeSummary} />
       </div>
     </>
+  );
+}
+
+/** What the broker really charged, said plainly — including the parts we don't
+    know. Never prints $0.00 for an unknown: zero would claim the account traded
+    for free. */
+function FeesNote({ summary }: { summary: FeeSummary | null }) {
+  if (!summary) return null;
+  const { total_usd, is_estimate, unvalued, synced_through } = summary;
+  return (
+    <p className="hint" style={{ marginTop: "0.75rem" }}>
+      <strong>Broker fees (this account):</strong>{" "}
+      {total_usd == null ? (
+        <>
+          — · nothing synced yet.{" "}
+          {synced_through
+            ? `Checked through ${synced_through}; Alpaca reported no fees for that period.`
+            : "US stocks are commission-free; crypto fees post end of day and are picked up the next morning."}
+        </>
+      ) : (
+        <>
+          ${total_usd.toFixed(2)}
+          {is_estimate && " (estimated)"}
+          {synced_through && ` · synced through ${synced_through}`}
+        </>
+      )}
+      {unvalued > 0 && ` · ${unvalued} fee(s) Alpaca reported in a form we couldn't value in dollars, so the total is short by that much.`}
+      {is_estimate && (
+        <>
+          {" "}
+          Alpaca charges crypto fees in the coin you receive, so part of this is that coin valued at the
+          broker's mark — an estimate, not a dollar figure Alpaca quoted.
+        </>
+      )}{" "}
+      Fees are reported per day, not per trade, so the P&amp;L column above is gross.
+    </p>
   );
 }

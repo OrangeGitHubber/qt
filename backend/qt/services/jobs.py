@@ -163,6 +163,35 @@ async def crypto_movers_sweep() -> None:
         log.exception("crypto movers sweep failed")
 
 
+async def sync_fee_activities() -> None:
+    """Pull the fees Alpaca actually charged into the journal (see
+    qt/services/fees.py).
+
+    Fees post END OF DAY, so there is nothing to attach at fill time and this
+    can only ever be a next-morning reconciliation. Runs every calendar day
+    because crypto — the only asset class Alpaca charges us for — trades on
+    weekends too.
+
+    Best-effort, like every other daily job: a failure logs and the next run
+    re-covers the same window. It is safe to run repeatedly (activities are
+    keyed by Alpaca's own id) and it back-fills gaps after downtime on its own,
+    so nothing here needs to know whether it ran yesterday."""
+    try:
+        from qt.services import fees
+
+        with session_scope() as session:
+            client = get_client(session)
+            if client is None:
+                return  # not configured yet — nothing to reconcile against
+            result = await fees.sync(session, client)
+            # Only worth a line when something landed; otherwise this is a daily
+            # no-op on an equities-only account and would just be log noise.
+            if result["new"] or result["failed_types"]:
+                log.info("fee sync: %s", result)
+    except Exception:
+        log.exception("fee sync failed — will retry on the next run")
+
+
 async def snapshot_benchmarks() -> None:
     try:
         with session_scope() as session:

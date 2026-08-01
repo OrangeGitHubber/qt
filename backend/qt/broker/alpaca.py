@@ -250,6 +250,44 @@ class AlpacaClient:
         """Orders by status ('open' | 'closed' | 'all'). Used for reconciliation."""
         return await self._get("/v2/orders", params={"status": status, "limit": limit}) or []
 
+    async def account_activities(
+        self, activity_type: str, after: str, until: str, page_size: int = 100
+    ) -> list[dict[str, Any]]:
+        """Account activities of ONE type between two YYYY-MM-DD days, oldest first.
+
+        Used for fee reconciliation (activity_type 'CFEE' / 'FEE'); see
+        qt/services/fees.py for what the payload looks like and why fees can't
+        be read at fill time.
+
+        Paginated with `page_token`, which for this endpoint is the LAST ACTIVITY
+        ID seen — not an opaque cursor like the market-data endpoints use, and
+        not returned in the body. Alpaca caps page_size at 100. We stop when a
+        page comes back short, and also break if a page repeats its last id,
+        because a token the server ignores would otherwise spin forever.
+
+        `after` / `until` are exclusive on Alpaca's side, so callers that want a
+        day included must widen the window themselves.
+        """
+        out: list[dict[str, Any]] = []
+        page_token: str | None = None
+        while True:
+            params: dict[str, Any] = {
+                "after": after,
+                "until": until,
+                "direction": "asc",
+                "page_size": min(page_size, 100),
+            }
+            if page_token:
+                params["page_token"] = page_token
+            page = await self._get(f"/v2/account/activities/{activity_type}", params=params) or []
+            if not page:
+                return out
+            out.extend(page)
+            last_id = page[-1].get("id")
+            if len(page) < params["page_size"] or not last_id or last_id == page_token:
+                return out
+            page_token = last_id
+
     # ---- Market data API ----
 
     async def stock_movers(self, top: int = 50) -> dict[str, Any]:

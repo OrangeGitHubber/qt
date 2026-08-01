@@ -2,6 +2,36 @@
 
 Why QT is the way it is. Newest first.
 
+## 2026-08-01 — Real fees are recorded per DAY, not per trade
+Alpaca posts crypto fees end of day as `CFEE` account activities. A `CFEE` is a
+*non-trade* activity: its fields are `id`, `activity_type`, `date`, `net_amount`,
+`description`, `symbol`, `qty`, `price`, `status`. Only *trade* activities carry
+`order_id`. So a fee has **no order id, no side, and no timestamp — only a date**.
+
+That makes per-trade attribution impossible for the case QT actually generates:
+more than one trade in a symbol on the same day. (`allow_concurrent_symbol` and
+intraday round trips both produce exactly that.) Splitting fees by symbol + day
+would produce a plausible, unfalsifiable, and frequently wrong number — the
+failure mode this project cares most about, because a wrong number that looks
+right doesn't get questioned.
+
+Decision: store each fee activity as its own row keyed by Alpaca's activity id,
+report totals at account/day/symbol level, and leave `Trade.fees` **null** so the
+journal renders "—". The column exists for the day a broker reports fees per
+fill; until then, "we know what the account paid, not what each trade paid" is
+the true statement and the one the UI makes.
+
+Corollaries:
+- **Idempotency over completeness.** The primary key is Alpaca's own activity id,
+  so the job re-scans an overlapping window every run (fees post late) and a
+  repeat run inserts nothing. A double-counted fee is worse than a missing one.
+- **A failed fetch must not advance the watermark**, or the days it failed on are
+  stepped over permanently.
+- **Coin-denominated fees are labelled estimates.** Alpaca charges the fee in the
+  asset you receive, so a crypto buy's fee is in coin; dollars only come from
+  multiplying by the broker's mark. That is an estimate and says so.
+- `net_amount: "0"` on a coin-denominated fee means "look at qty", not "free".
+
 ## 2026-07-29 — "Marketable limit only" relaxed to an opt-in, per-strategy choice
 The original council rule (2026-07-13) was **marketable limit orders only, never
 plain market** — price protection against fast/thin fills. Werner hit its real

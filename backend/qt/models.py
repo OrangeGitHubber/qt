@@ -137,7 +137,67 @@ class Trade(Base):
     exit_order_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     high_water: Mapped[float | None] = mapped_column(Float, nullable=True)  # trailing-stop anchor
     pnl: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # Broker fees charged for THIS trade, in USD. Null means "not known per
+    # trade" and must render as "—", never $0.00 — zero would claim the broker
+    # charged nothing, which we cannot know.
+    #
+    # In practice this stays null today: Alpaca posts crypto fees as CFEE
+    # activities that carry no order id and only a DATE, so a fee cannot be tied
+    # to one fill (see qt/services/fees.py). The real figures live in
+    # FeeActivity at day/account level. The column exists so that if Alpaca ever
+    # attaches an order id — or we move to a broker that does — attribution has
+    # somewhere honest to land without another migration.
+    fees: Mapped[float | None] = mapped_column(Float, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+
+
+class FeeActivity(Base):
+    """One fee Alpaca actually charged, exactly as the broker reported it.
+
+    Alpaca charges 0.15-0.25% per side on crypto (US equities are commission-
+    free) and posts each one as an account activity of type CFEE (or FEE) at
+    END OF DAY — never at fill time. See qt/services/fees.py for the full
+    response shape and why these rows are the account's fee truth while
+    Trade.fees stays null.
+
+    The primary key is ALPACA'S OWN activity id, not an autoincrement. That is
+    the whole idempotency guarantee: re-syncing an overlapping date window (the
+    job deliberately does, because fees post late) re-sees the same ids and
+    inserts nothing. A surrogate key would have let a second run double every
+    fee, which is exactly the failure that makes a fee report worse than no
+    report at all.
+    """
+
+    __tablename__ = "fee_activities"
+
+    # e.g. "20220812000000000::53be51ba-46f9-43de-b81f-576f241dc680"
+    id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    # Which broker account was charged. Nullable because the activity payload
+    # itself doesn't always carry one — we stamp the account we fetched it with.
+    account_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    activity_type: Mapped[str] = mapped_column(String(16), index=True)  # CFEE | FEE
+    day: Mapped[str] = mapped_column(String(10), index=True)  # YYYY-MM-DD, the activity's `date`
+    # Slash-less as Alpaca sends it ('ETHUSD'); qt stores trades as 'ETH/USD'.
+    # Nullable: a plain FEE (e.g. a regulatory fee) may name no symbol.
+    symbol: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    # The fee in the asset it was CHARGED IN, which for a crypto buy is the coin
+    # you received, not dollars. Alpaca sends it negative (a debit).
+    qty: Mapped[float | None] = mapped_column(Float, nullable=True)
+    price: Mapped[float | None] = mapped_column(Float, nullable=True)  # broker's mark for that asset
+    # The fee in USD, or null when we genuinely cannot tell. Paired with
+    # usd_is_estimate rather than silently blending the two: `net_amount` is the
+    # broker's own dollar figure (a fact), while a coin-denominated fee only
+    # becomes dollars by multiplying by the broker's mark (an estimate). The UI
+    # has to be able to say which one it is showing.
+    usd_amount: Mapped[float | None] = mapped_column(Float, nullable=True)
+    usd_is_estimate: Mapped[bool] = mapped_column(Boolean, default=False)
+    description: Mapped[str] = mapped_column(Text, default="")
+    # The untouched payload. Alpaca's non-trade activity shape is thinly
+    # documented and may gain fields (an order id would be the big one); keeping
+    # the original means a better attribution can be derived later from rows we
+    # already have, instead of re-fetching history we may no longer be able to.
+    raw: Mapped[str] = mapped_column(Text, default="")
+    synced_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
 class Asset(Base):

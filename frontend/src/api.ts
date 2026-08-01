@@ -154,7 +154,21 @@ export interface JournalRow {
   exit_at: string | null;
   exit_reason: string;
   pnl: number | null;
+  // Broker fees for this one trade. Null = not known per trade, and that is the
+  // normal case: Alpaca's fee activities carry no order id and only a date, so
+  // no fee can be tied to a single fill. Render "—", never $0.00. Account-level
+  // totals come from getFeeSummary().
+  fees: number | null;
   config_version_id: number | null;
+}
+
+export interface FeeSummary {
+  total_usd: number | null; // null = unknown (nothing synced), NOT zero
+  is_estimate: boolean; // true if any part was valued at the broker's mark
+  activities: number;
+  unvalued: number; // fees Alpaca sent that we could not value in dollars
+  synced_through: string | null;
+  by_symbol: { symbol: string; usd: number }[];
 }
 
 export interface ScoreboardTrade {
@@ -360,14 +374,29 @@ export interface SlackPrefs {
 export const getSlackPrefs = () => fetch("/api/engine/slack/prefs").then((r) => handle<SlackPrefs>(r));
 export const setSlackPrefs = (prefs: Record<string, boolean>) =>
   fetch("/api/engine/slack/prefs", { ...json({ prefs }), method: "PUT" }).then((r) => handle<{ prefs: Record<string, boolean> }>(r));
-export const getJournal = (mode?: string, status?: string, assetClass?: string, account?: string) => {
+/** Row cap. Passed explicitly so the page can tell a full page from a truncated
+ *  one — a silently cut list reads as "this is everything". */
+export const JOURNAL_LIMIT = 300;
+
+export const getJournal = (
+  mode?: string,
+  status?: string,
+  assetClass?: string,
+  account?: string,
+  limit: number = JOURNAL_LIMIT,
+) => {
   const qs = new URLSearchParams();
   if (mode) qs.set("mode", mode);
   if (status) qs.set("status", status);
   if (assetClass) qs.set("asset_class", assetClass);
   if (account) qs.set("account", account);
+  qs.set("limit", String(limit));
   const q = qs.toString();
   return fetch(`/api/engine/journal${q ? `?${q}` : ""}`).then((r) => handle<JournalRow[]>(r));
+};
+export const getFeeSummary = (account?: string) => {
+  const qs = account ? `?account=${encodeURIComponent(account)}` : "";
+  return fetch(`/api/engine/fees${qs}`).then((r) => handle<FeeSummary>(r));
 };
 export const getScoreboard = () => fetch("/api/engine/scoreboard").then((r) => handle<Scoreboard>(r));
 

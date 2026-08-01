@@ -405,7 +405,14 @@ def journal(
         q = q.filter(Trade.status.in_(("open", "closed")))
     elif status in ("open", "closed", "rejected"):
         q = q.filter(Trade.status == status)
-    rows = q.order_by(Trade.id.desc()).limit(min(limit, 500)).all()
+    # Order by the most recent ACTIVITY, not by id. id is creation order, so a
+    # position opened last week and sold a minute ago sorted as a week old — and
+    # with the row limit filled by everything created since (rejections alone run
+    # to hundreds a day), the sale never reached the browser at all. The journal
+    # presents itself as a feed of what happened; it has to be ordered that way.
+    # id breaks ties so the order is stable when timestamps collide.
+    last_activity = func.coalesce(Trade.exit_at, Trade.entry_at, Trade.created_at)
+    rows = q.order_by(last_activity.desc(), Trade.id.desc()).limit(min(limit, 500)).all()
     return [
         {
             "id": t.id,
@@ -424,10 +431,30 @@ def journal(
             "exit_at": _iso_utc(t.exit_at),
             "exit_reason": t.exit_reason,
             "pnl": t.pnl,
+            # Null today for every row, and that is the honest answer: Alpaca's
+            # fee activities carry no order id and only a date, so no fee can be
+            # tied to one trade. The account-level truth is at /fees. The UI must
+            # render null as "—" — $0.00 would claim a free trade.
+            "fees": t.fees,
             "config_version_id": t.config_version_id,
         }
         for t, name in rows
     ]
+
+
+@router.get("/fees")
+def fees_summary(account: str | None = None, days: int | None = None, session: Session = Depends(get_session)) -> dict:
+    """What the broker actually charged, at ACCOUNT level.
+
+    Not per trade, and not an approximation of per trade — see
+    qt/services/fees.py. `total_usd` is null when nothing has been synced yet,
+    which means "unknown", not "no fees".
+    """
+    from qt.services import fees as fees_service
+
+    if account is None:
+        account = get_setting(session, "current_account_id") or None
+    return fees_service.summary(session, account_id=account, days=days)
 
 
 @router.get("/scoreboard")

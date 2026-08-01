@@ -68,6 +68,7 @@ def _start_scheduler():
         reconcile_open_trades,
         snapshot_benchmarks,
         sync_assets,
+        sync_fee_activities,
         weekly_summary,
     )
 
@@ -133,6 +134,18 @@ def _start_scheduler():
     scheduler.add_job(
         crypto_movers_sweep,
         CronTrigger(hour=0, minute=20, timezone="UTC"),
+        max_instances=1,
+        coalesce=True,
+    )
+    # Real broker fees: 05:00 ET every calendar day. Alpaca posts crypto fees
+    # end of day, so yesterday's are only readable this morning — querying on
+    # the day of the trade returns nothing. Not gated to US trading days:
+    # crypto (the only thing we're charged for) trades through the weekend.
+    # The job re-scans a few days back each run, so a missed night costs
+    # nothing and needs no catch-up job.
+    scheduler.add_job(
+        sync_fee_activities,
+        CronTrigger(hour=5, minute=0, timezone="America/New_York"),
         max_instances=1,
         coalesce=True,
     )
