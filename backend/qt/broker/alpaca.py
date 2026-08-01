@@ -5,10 +5,14 @@ keeping the surface tiny makes reliability and testing easier. Streaming
 market data in a later phase can still adopt alpaca-py if useful.
 """
 
+import asyncio
+import logging
 from dataclasses import dataclass
 from typing import Any
 
 import httpx
+
+log = logging.getLogger("qt.broker.alpaca")
 
 PAPER_BASE_URL = "https://paper-api.alpaca.markets"
 LIVE_BASE_URL = "https://api.alpaca.markets"
@@ -19,6 +23,14 @@ SECRET_KEY_SECRET = "alpaca_paper_key_secret"
 
 # Free-tier accounts get the IEX feed; SIP requires a paid data plan.
 STOCK_FEED = "iex"
+
+# Retry budget for READS. Alpaca's free tier allows 200 requests/minute, and a
+# long comparison backtest — two strategies, hundreds of days, paginated — can
+# brush against it. A 429 there is not a failure, it's "wait a moment", but
+# without a retry it killed a job that had already run for minutes.
+MAX_READ_ATTEMPTS = 4
+RETRY_STATUSES = (429, 500, 502, 503, 504)
+BACKOFF_SECONDS = (1.0, 3.0, 8.0)  # used when the response carries no Retry-After
 
 
 class AlpacaError(Exception):
@@ -48,10 +60,32 @@ class AlpacaClient:
                 message = ""
             if not message or "<html" in message.lower():
                 message = resp.reason_phrase or f"HTTP {resp.status_code}"
+            if resp.status_code == 429:
+                # Say what to DO about it. "too many requests" alone leaves you
+                # guessing whether it's your keys, your plan, or the window size.
+                message = (
+                    "Alpaca rate limit reached, and it didn't clear after retrying. "
+                    "The free data plan allows 200 requests a minute — a long comparison "
+                    "over many symbols can outrun it. Try a shorter period, fewer symbols, "
+                    "or run the two strategies one at a time; already-downloaded bars are "
+                    "cached, so a re-run asks for much less."
+                )
             raise AlpacaError(resp.status_code, message[:300])
         if resp.status_code == 204 or not resp.content:
             return None
         return resp.json()
+
+    @staticmethod
+    def _retry_after(resp: httpx.Response, attempt: int) -> float:
+        """How long to wait before retrying. Alpaca's own Retry-After wins; else
+        a widening backoff."""
+        raw = resp.headers.get("Retry-After")
+        if raw:
+            try:
+                return max(0.0, min(60.0, float(raw)))
+            except ValueError:
+                pass  # HTTP-date form — fall through to the backoff
+        return BACKOFF_SECONDS[min(attempt, len(BACKOFF_SECONDS) - 1)]
 
     async def _get(
         self,
@@ -60,9 +94,29 @@ class AlpacaClient:
         base: str | None = None,
         timeout: float = 15,
     ) -> Any:
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            resp = await client.get(f"{base or self.base_url}{path}", headers=self._headers(), params=params)
-        return self._check(resp)
+        """A READ, retried on rate limits and transient gateway errors.
+
+        Only reads. _post is NOT retried and must not be: it places orders, and
+        a retry after an ambiguous timeout is how you end up holding the position
+        twice. Idempotency is the whole reason this lives here and not in a
+        shared helper.
+        """
+        last: httpx.Response | None = None
+        for attempt in range(MAX_READ_ATTEMPTS):
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                resp = await client.get(
+                    f"{base or self.base_url}{path}", headers=self._headers(), params=params
+                )
+            if resp.status_code not in RETRY_STATUSES or attempt == MAX_READ_ATTEMPTS - 1:
+                return self._check(resp)
+            last = resp
+            wait = self._retry_after(resp, attempt)
+            log.warning(
+                "Alpaca %s on %s — retrying in %.1fs (attempt %d/%d)",
+                resp.status_code, path, wait, attempt + 1, MAX_READ_ATTEMPTS,
+            )
+            await asyncio.sleep(wait)
+        return self._check(last)  # unreachable in practice; keeps the type honest
 
     async def _post(self, path: str, payload: dict[str, Any]) -> Any:
         async with httpx.AsyncClient(timeout=15) as client:

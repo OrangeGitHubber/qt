@@ -3,6 +3,26 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## A rate limit no longer kills a long run (2026-08-01)
+
+A 500-day comparison backtest died partway through with *"Bar download failed
+(429): too many requests"*. Alpaca's free data plan allows 200 requests a
+minute, and a comparison — two strategies, hundreds of days, fetched in pages —
+can brush against that. A 429 means "wait a moment", but there was no retry at
+all, so a job that had already run for minutes threw the work away.
+
+Reads now wait and try again: up to four attempts, honouring Alpaca's own
+`Retry-After` when it sends one and otherwise backing off 1s → 3s → 8s. The same
+applies to transient gateway errors. If it still can't get through, the message
+now says what to do about it instead of just naming the limit — shorten the
+period, use fewer symbols, or run the two strategies one at a time, noting that
+bars already downloaded are cached so a re-run asks for far less.
+
+**Orders are deliberately not retried.** Retrying a read costs a moment;
+retrying an order submission after an ambiguous response is how one intent
+becomes two positions. The retry lives only on the read path, and there's a test
+that fails if anyone ever tidies the two together.
+
 ## The optimizer searches the strategy's own universe (2026-08-01)
 
 The backtest was locked to a strategy's universe a while back — you test the
