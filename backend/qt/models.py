@@ -79,6 +79,10 @@ class Strategy(Base):
     max_positions: Mapped[int] = mapped_column(Integer, default=3)
     swing_mode: Mapped[bool] = mapped_column(Boolean, default=True)  # no same-day exits except stops
     ignore_regime: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Your own notes: what you were testing, what a backtest suggested, what to
+    # try next. The engine never reads this — it exists purely so the reasoning
+    # behind a strategy lives next to the strategy instead of in your head.
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 

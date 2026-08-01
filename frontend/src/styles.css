@@ -232,6 +232,41 @@ input {
   font-size: 1rem;
 }
 
+/* Notes: the only multi-line input in the app. Inherits the input styling that
+   `input` selectors alone were never going to give it. */
+textarea {
+  display: block;
+  width: 100%;
+  margin-top: 0.3rem;
+  padding: 0.6rem 0.75rem;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 0.95rem;
+  line-height: 1.5;
+  resize: vertical;
+}
+
+textarea:focus {
+  outline: 2px solid var(--accent);
+  border-color: transparent;
+}
+
+.notes-field {
+  margin-top: 1.25rem;
+}
+
+/* A saved note shown on the expanded strategy row — preserves the line breaks
+   you typed instead of running it all together. */
+.strat-notes {
+  white-space: pre-wrap;
+  border-left: 2px solid var(--border);
+  padding-left: 0.7rem;
+  margin: 0.6rem 0 0;
+}
+
 input:focus {
   outline: 2px solid var(--accent);
   border-color: transparent;

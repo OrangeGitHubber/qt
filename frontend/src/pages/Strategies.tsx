@@ -45,6 +45,7 @@ const EMPTY: Partial<StrategyRow> = {
   preset: "custom",
   swing_mode: true,
   ignore_regime: false,
+  notes: "",
   sizing_usd: 200,
   sleeve_usd: 1000,
   max_positions: 3,
@@ -1120,6 +1121,22 @@ function Editor({
           daily. For a swing or rank-and-rotate strategy, turn it off; keep it only for intraday fast-mover strategies.
         </p>
       )}
+      {/* Your own notes. Last field before saving, because it's the one you write
+          AFTER deciding everything above it. Editing it alone doesn't create a
+          config version — a note changes no trading behaviour. */}
+      <label className="notes-field">
+        <span className="field-cap">Notes — for you, not the engine</span>
+        <textarea
+          rows={5}
+          maxLength={10000}
+          value={s.notes ?? ""}
+          placeholder="What you're testing and why, what a backtest showed, what to try next — e.g. 1.9x ATR beat SPY over 500d but lost to buy & hold; try a wider trailing stop."
+          onChange={(e) => setS({ ...s, notes: e.target.value })}
+        />
+        <span className="hint">
+          Never read by the engine, and saving a note on its own won't create a new config version.
+        </span>
+      </label>
       {error !== null && <div className="error">{error}</div>}
       <div className="toolbar">
         <button disabled={busy}>
@@ -1299,6 +1316,14 @@ export default function Strategies() {
             v{r.version} · {r.open_trades ?? 0} open trade(s)
           </dd>
         </dl>
+        {/* Readable without opening the editor — notes you have to dig for are
+            notes you stop writing. pre-wrap keeps the line breaks you typed. */}
+        {r.notes && (
+          <>
+            <span className="field-cap">Your notes</span>
+            <p className="hint strat-notes">{r.notes}</p>
+          </>
+        )}
         {(r.open_trades ?? 0) > 0 && <HoldingsView strategyId={r.id} count={r.open_trades ?? 0} />}
         {(r.rank_enabled || r.universe === "basket") && <RankingView strategyId={r.id} />}
         <LastRunView strategyId={r.id} />

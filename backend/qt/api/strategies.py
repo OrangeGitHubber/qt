@@ -145,6 +145,9 @@ class StrategyParams(BaseModel):
 
 class StrategyBody(BaseModel):
     name: str = Field(min_length=1, max_length=80)
+    # Freeform, for the human. Never read by the engine; see update_strategy for
+    # why editing it does NOT create a config version.
+    notes: str = Field(default="", max_length=10_000)
     asset_class: str = Field(pattern="^(stock|crypto)$")
     universe: str = Field(default="scanner", pattern="^(scanner|watchlist|both|basket|custom)$")
     basket_id: int | None = None
@@ -227,6 +230,7 @@ def _serialize(s: Strategy) -> dict:
         "sizing_usd": s.sizing_usd,
         "sleeve_usd": s.sleeve_usd,
         "max_positions": s.max_positions,
+        "notes": s.notes or "",
         "swing_mode": s.swing_mode,
         "ignore_regime": s.ignore_regime,
     }
@@ -285,6 +289,7 @@ def create_strategy(body: StrategyBody, session: Session = Depends(get_session))
         max_positions=body.max_positions,
         swing_mode=body.swing_mode,
         ignore_regime=body.ignore_regime,
+        notes=body.notes.strip() or None,
     )
     session.add(strategy)
     session.flush()
@@ -301,6 +306,8 @@ def update_strategy(
     if not strategy:
         raise HTTPException(status_code=404, detail="Strategy not found.")
     _validate_basket(session, body)
+    before = {k: v for k, v in _serialize(strategy).items() if k not in ("notes", "version")}
+    previous_notes = strategy.notes
     strategy.name = body.name
     strategy.asset_class = body.asset_class
     strategy.universe = body.universe
@@ -316,8 +323,21 @@ def update_strategy(
     strategy.max_positions = body.max_positions
     strategy.swing_mode = body.swing_mode
     strategy.ignore_regime = body.ignore_regime
-    _snapshot(session, strategy)
-    session.add(AuditLog(category="strategy", message=f"Updated strategy '{body.name}' (new config version)"))
+    strategy.notes = body.notes.strip() or None
+
+    # A config version exists so every trade can point at the settings that
+    # produced it. Notes change no behaviour, so jotting one down must not mint a
+    # version — that would put a "v124" in the journal for a change that altered
+    # nothing, and make the config history unreadable exactly when you need it.
+    # Compare everything EXCEPT the notes.
+    after = {k: v for k, v in _serialize(strategy).items() if k not in ("notes", "version")}
+    if after != before:
+        _snapshot(session, strategy)
+        session.add(
+            AuditLog(category="strategy", message=f"Updated strategy '{body.name}' (new config version)")
+        )
+    elif (strategy.notes or "") != (previous_notes or ""):
+        session.add(AuditLog(category="strategy", message=f"Notes updated on '{body.name}'"))
     return _serialize(strategy)
 
 

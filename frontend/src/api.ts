@@ -93,6 +93,9 @@ export interface StrategyRow {
   max_positions: number;
   swing_mode: boolean;
   ignore_regime: boolean;
+  // Your own freeform notes. Never read by the engine, and editing them does not
+  // create a new config version — a note changes no behaviour.
+  notes?: string;
   open_trades?: number;
   version?: number;
 }

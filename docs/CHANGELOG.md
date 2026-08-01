@@ -3,6 +3,20 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Notes on a strategy (2026-08-01)
+
+Every strategy now has a freeform notes box: what you were testing, what a
+backtest suggested, what to try next. Yours alone — the engine never reads it.
+Saved notes appear on the strategy's expanded row, so you can read them without
+opening the editor, and line breaks are kept as you typed them.
+
+One thing worth knowing: **writing a note does not create a new config version.**
+Config versions exist so every trade in the journal points at the exact settings
+that produced it. A note changes no behaviour, so minting a version for one would
+put a "v124" in your history for a change that altered nothing. Change a real
+setting and a version is still created, exactly as before; change both at once
+and you get one.
+
 ## A rate limit no longer kills a long run (2026-08-01)
 
 A 500-day comparison backtest died partway through with *"Bar download failed
