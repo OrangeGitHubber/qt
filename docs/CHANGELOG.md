@@ -3,6 +3,32 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Crypto backtests now measure a day the same way everything else does (2026-08-01)
+
+Reviewing whether the optimizer handles crypto properly turned up the opposite
+of the expected answer: **the optimizer was right, and the plain backtest was
+wrong.**
+
+Crypto has no trading session. It runs 24/7, its daily bars are stamped
+midnight UTC, and "up 3% today" means over the last 24 **hours** — not since
+some calendar midnight. The live engine, the scanner, the optimizer and the
+portfolio backtester all worked that way. The single-strategy backtest only did
+when a run happened to be mixed-resolution; otherwise it fell back to the stock
+convention.
+
+That mattered more than it sounds. On the same crypto bars, the day-gain that
+`Min gain today` filters against read **1.54%** under the old rule and **3.69%**
+under the correct one — so the optimizer could tune a strategy against one
+definition of a day, and the backtest would then grade it against another.
+Two more consequences of the same flag: the intraday VWAP reset at midnight New
+York instead of midnight UTC, and every crypto *daily* bar was filed a day early
+(00:00 UTC is 8pm the previous evening in New York).
+
+Crypto backtest results will move. They were being measured against the wrong
+yardstick; they are now measured against the one live trading uses.
+
+Nothing changes for stocks.
+
 ## One day boundary everywhere: midnight New York (2026-08-01)
 
 QT had two different ideas of when a day starts. The trading engine's daily

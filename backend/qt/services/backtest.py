@@ -612,7 +612,16 @@ def run_backtest(
     day_of = _day_fn(market)
 
     prepared = {
-        s: _prepare(b, day_of, rolling_24h=market == "crypto") for s, b in bars_by_symbol.items() if b
+        # Rolling 24h day-gain follows the STRATEGY'S asset class, not the day
+        # bucketing. Tying it to `market` meant a crypto run bucketed as 'stock'
+        # silently measured day-gain against an ET calendar day — the thing
+        # min_day_gain_pct filters on — while live, the optimizer and the
+        # portfolio backtester all used the rolling 24h baseline. Same bars, a
+        # 2.4x different number. run_portfolio_backtest already keyed off the
+        # asset class for exactly this reason; this path never caught up.
+        s: _prepare(b, day_of, rolling_24h=strategy["asset_class"] == "crypto")
+        for s, b in bars_by_symbol.items()
+        if b
     }
     # Each is a no-op unless the strategy opts in. `daily_bars_by_symbol` (None
     # by default) switches them to the daily series for their values while the

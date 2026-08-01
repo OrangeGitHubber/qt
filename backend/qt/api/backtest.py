@@ -484,10 +484,17 @@ async def run(
 
     # Day bucketing must be the SAME on both sides of a mixed run, or the daily
     # series and the intraday bars disagree about which day a bar belongs to and
-    # the look-ahead frontier leaks. Crypto daily bars are stamped 00:00Z, so a
-    # crypto mixed run must bucket by the UTC day (as the live engine does);
-    # single-resolution runs keep the historical 'stock' default untouched.
-    market = "crypto" if (mixed and strategy.asset_class == "crypto") else "stock"
+    # the look-ahead frontier leaks. Crypto daily bars are stamped 00:00Z, so
+    # crypto buckets by the UTC day — as the live engine, the optimizer and the
+    # scanner replay all do.
+    #
+    # This used to apply only to MIXED crypto runs, "keeping the historical
+    # 'stock' default untouched" for the rest. That default was wrong: bucketing
+    # a 00:00Z daily bar by ET files it under the PREVIOUS day, and it left the
+    # plain crypto backtest as the only place in the app not using the live
+    # convention — so the optimizer tuned against one definition of a day and the
+    # backtest graded against another.
+    market = "crypto" if strategy.asset_class == "crypto" else "stock"
     # Run the replay OFF the event loop. It is pure CPU over every bar — a
     # 350-day, 30-symbol run is hundreds of thousands of them — and a coroutine
     # that never awaits owns the loop for its whole duration. That would freeze
