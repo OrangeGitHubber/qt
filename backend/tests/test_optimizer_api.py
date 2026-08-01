@@ -170,10 +170,12 @@ def test_scanner_replay_search_counts_only_symbols_it_can_actually_test(
         barcache.store_movers(s, d1, [("HASBARS", 6.0, 106.0, 1e8), ("NOBARS", 6.0, 50.0, 1e8)])
         s.commit()
 
-    sid = client.post("/api/strategies", json=_strategy()).json()["id"]
-    r = client.post("/api/optimizer", json={
-        "strategy_id": sid, "scanner_replay": True, "days": 30, "iterations": 5,
-    })
+    # Scanner replay is now decided by the STRATEGY'S universe, not a request
+    # flag — the search tests the universe the strategy actually trades. Same
+    # behaviour under test; only the way it's switched on has moved.
+    scanner_strategy = {**_strategy(), "universe": "scanner", "symbols": [], "top_n": 10}
+    sid = client.post("/api/strategies", json=scanner_strategy).json()["id"]
+    r = client.post("/api/optimizer", json={"strategy_id": sid, "days": 30, "iterations": 5})
     assert r.status_code == 200, r.text
     body = r.json()
     # Only the symbol that can actually be searched is handed to the search…
@@ -189,3 +191,44 @@ def test_scanner_replay_search_counts_only_symbols_it_can_actually_test(
     if result:  # the search completed — its counts must not overstate
         assert result["universe_size"] == 1
         assert result["universe_dropped"] == ["NOBARS"]
+
+
+def test_a_posted_symbol_list_cannot_replace_the_strategys_universe(client, configured, monkeypatch):
+    """The universe is the strategy's, and the SERVER decides it.
+
+    Hiding the picker in the UI isn't the guarantee — the endpoint is reachable
+    directly. Tuning a strategy against a substituted symbol list fits settings
+    to names it doesn't trade, which is the precise overfitting the
+    out-of-sample split exists to catch; it must not be reachable at all.
+    """
+    from unittest.mock import AsyncMock, patch
+
+    from qt.broker.alpaca import AlpacaClient
+
+    sid = client.post("/api/strategies", json=_strategy()).json()["id"]  # custom universe: AAPL
+    with patch.object(AlpacaClient, "historical_bars", new=AsyncMock(return_value={})):
+        r = client.post("/api/optimizer", json={
+            "strategy_id": sid,
+            "symbols": ["TSLA", "NVDA", "MSFT"],   # ignored
+            "days": 30, "iterations": 5,
+        })
+    assert r.status_code == 200, r.text
+    assert r.json()["symbols"] == ["AAPL"], "a posted symbol list overrode the strategy's universe"
+
+
+def test_scanner_replay_cannot_be_forced_on_a_non_scanner_strategy(client, configured):
+    """Replay is a property of a scanner strategy, not a checkbox. Forcing it on
+    a basket/custom strategy would search a universe that strategy never trades."""
+    from unittest.mock import AsyncMock, patch
+
+    from qt.broker.alpaca import AlpacaClient
+
+    sid = client.post("/api/strategies", json=_strategy()).json()["id"]  # custom universe
+    with patch.object(AlpacaClient, "historical_bars", new=AsyncMock(return_value={})):
+        r = client.post("/api/optimizer", json={
+            "strategy_id": sid, "scanner_replay": True, "days": 30, "iterations": 5,
+        })
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["scanner_replay"] is False
+    assert body["symbols"] == ["AAPL"]

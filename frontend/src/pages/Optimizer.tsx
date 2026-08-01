@@ -17,9 +17,9 @@ import {
 } from "../api";
 import InfoTip from "../components/InfoTip";
 import NumberField from "../components/NumberField";
-import SymbolPicker from "../components/SymbolPicker";
 import { IconWarn } from "../components/icons";
 import RunStatus from "../components/RunStatus";
+import UniverseChips, { resolveUniverse } from "../components/UniverseChips";
 import { consumeNav } from "../lib/nav";
 
 // Human labels for the four searched knobs (keys match the backend PARAM_SPACE).
@@ -98,46 +98,6 @@ function deriveSearchTimeframe(s: StrategyRow | undefined): "1Day" | "15Min" {
   return wantsIntradayRules(s) ? "15Min" : "1Day";
 }
 
-// Spell out EXACTLY which symbols the search will run on, mirroring the backend's
-// _resolve_symbols rules, so there's no mystery about the universe. `warn` = the
-// surprising / fallback cases the user should notice.
-function universeExplain(
-  strategy: StrategyRow | undefined,
-  symbols: string[],
-  baskets: Basket[],
-  scannerReplay: boolean,
-  replayTopN: number,
-): { warn: boolean; text: string } | null {
-  if (!strategy) return null;
-  if (scannerReplay) {
-    return {
-      warn: false,
-      text: `the historical scanner risers — each past day, only that day's top ${replayTopN} movers are eligible to enter, read offline from the bar cache. This tunes the strategy against its REAL, day-varying universe (needs a completed sweep in Settings → Historical bar cache).`,
-    };
-  }
-  if (symbols.length > 0) {
-    const shown = symbols.slice(0, 12).join(", ");
-    return { warn: false, text: `your ${symbols.length} picked symbol${symbols.length === 1 ? "" : "s"}: ${shown}${symbols.length > 12 ? " …" : ""}` };
-  }
-  if (strategy.universe === "basket") {
-    const b = baskets.find((x) => x.id === strategy.basket_id);
-    return b
-      ? { warn: false, text: `the members of basket “${b.name}” (${b.count} symbol${b.count === 1 ? "" : "s"})` }
-      : { warn: true, text: "this basket strategy has no basket/members — pick symbols above first" };
-  }
-  if (strategy.universe === "custom") {
-    const n = strategy.symbols?.length ?? 0;
-    return n > 0
-      ? { warn: false, text: `this strategy's own symbol list (${n})` }
-      : { warn: true, text: "this strategy's symbol list is empty — pick symbols above" };
-  }
-  // scanner / watchlist / both
-  return {
-    warn: true,
-    text: `your ${strategy.asset_class} watchlist — a scanner strategy can't replay the historical daily risers, so the search validates on your watchlist. Pick specific symbols above to test something else.`,
-  };
-}
-
 function Stat({ label, value, tone, sub }: { label: string; value: string; tone?: "up" | "down"; sub?: string }) {
   return (
     <div className="stat">
@@ -178,9 +138,6 @@ export default function Optimizer() {
   const [strategies, setStrategies] = useState<StrategyRow[]>([]);
   const [strategyId, setStrategyId] = useState<number | null>(null);
   const [baskets, setBaskets] = useState<Basket[]>([]);
-  const [symbols, setSymbols] = useState<string[]>([]);
-  const [scannerReplay, setScannerReplay] = useState(false);
-  const [replayTopN, setReplayTopN] = useState(10);
   const [days, setDays] = useState(180);
   const [timeframe, setTimeframe] = useState("1Day");
   const [iterations, setIterations] = useState(40);
@@ -258,13 +215,9 @@ export default function Optimizer() {
     const strat = strategies.find((s) => s.id === strategyId);
     if (strat) {
       setCash(Math.max(strat.sleeve_usd || 5000, 100));
-      setSymbols(strat.universe === "custom" ? (strat.symbols ?? []).slice(0, 50) : []);
-      // A scanner strategy defaults to replaying its REAL universe (each day's
-      // top-N risers) rather than a stand-in watchlist — the whole point of the
-      // scanner-replay optimizer. Any other universe keeps its fixed symbol set.
-      const isScanner = strat.universe === "scanner";
-      setScannerReplay(isScanner);
-      if (isScanner) setReplayTopN(strat.top_n || 10);
+      // No universe state to seed: it is derived from the strategy on every
+      // render (see `uni`) and resolved again server-side, so there is nothing
+      // here that can fall out of step with the strategy you picked.
       // The bar size follows the strategy's own rules: VWAP / an entry-time window
       // are INTRADAY (on daily bars every entry is rejected and the search returns
       // 0 trades); MACD/RSI with a stop is MIXED (15-minute replay, daily signals);
@@ -372,9 +325,11 @@ export default function Optimizer() {
     try {
       await startOptimizer({
         strategy_id: strategyId,
-        symbols,
-        scanner_replay: scannerReplay,
-        replay_top_n: replayTopN,
+        symbols: [],  // the strategy's universe is resolved on the server
+        // Both derived server-side from the strategy now; sent only so an older
+        // backend still behaves. The server ignores them.
+        scanner_replay: uni.scannerReplay,
+        replay_top_n: strategy?.top_n ?? 10,
         days,
         timeframe,
         iterations,
@@ -421,6 +376,9 @@ export default function Optimizer() {
       setSaving(false);
     }
   }
+
+  // Read-only, from the strategy itself — never from a control on this page.
+  const uni = resolveUniverse(strategy, baskets);
 
   const progressPct =
     status && status.combos_total > 0 ? Math.min(100, Math.round((status.combos_done / status.combos_total) * 100)) : 0;
@@ -496,39 +454,28 @@ export default function Optimizer() {
                 ))}
               </select>
             </label>
-            {/* The universe comes from the STRATEGY, not the optimizer. A scanner
-                strategy is optimized by replaying its real universe (the day's
-                top-N risers), so we show the risers knob; every other universe is
-                a fixed pool you can optionally narrow to a validation subset. */}
-            {scannerReplay ? (
-              <label>
-                <span className="field-cap">
-                  Risers per day (top N) <InfoTip k="replay_top_n" />
-                </span>
-                <NumberField min={1} max={100} step={1} value={replayTopN} onChange={setReplayTopN} />
-              </label>
-            ) : (
-              <div className="field">
-                <span className="field-cap">
-                  Symbols to validate across (optional — defaults to the strategy's own universe){" "}
-                </span>
-                <SymbolPicker assetClass={strategy?.asset_class} value={symbols} onChange={setSymbols} multi />
-              </div>
-            )}
           </div>
-          {(() => {
-            const u = universeExplain(strategy, symbols, baskets, scannerReplay, replayTopN);
-            if (!u) return null;
-            return (
-              <p className={`hint ${u.warn ? "warn" : ""}`}>
-                This search will test on: <strong>{u.text}</strong>
-              </p>
-            );
-          })()}
-          {!scannerReplay && (
+          {/* The universe is the STRATEGY'S, shown read-only — same rule the
+              backtest follows. Optimizing against a hand-picked symbol list
+              tunes settings for those names, then hands them to a strategy that
+              trades a different pool; the numbers would describe an experiment
+              you can never actually run. */}
+          <UniverseChips uni={uni} />
+          {uni.scannerReplay ? (
             <p className="hint">
-              Validate across <strong>several symbols or the basket</strong>, never one ticker — a setting that fits a
-              single name's history rarely survives contact with another.
+              A scanner strategy is searched against its <strong>real, day-varying universe</strong> — each past day,
+              only that day's top {strategy?.top_n ?? 10} risers were eligible to enter, replayed offline from the bar
+              cache. Needs a completed sweep (Settings → Historical bar cache).
+            </p>
+          ) : uni.symbols.length === 1 ? (
+            <p className="hint warn">
+              <IconWarn className="icon-inline" /> This strategy trades a <strong>single symbol</strong>, so the search
+              can only fit that one name's history. Settings found this way rarely survive contact with another.
+            </p>
+          ) : (
+            <p className="hint">
+              Searched across the strategy's whole universe, never one ticker — a setting that fits a single name's
+              history rarely survives contact with another.
             </p>
           )}
           <div className="filter-grid">
@@ -545,9 +492,9 @@ export default function Optimizer() {
               <select
                 value={timeframe}
                 onChange={(e) => setTimeframe(e.target.value)}
-                disabled={scannerReplay || stratMixed}
+                disabled={uni.scannerReplay || stratMixed}
                 title={
-                  scannerReplay
+                  uni.scannerReplay
                     ? "Ignored in scanner replay — the cache decides (15-min if swept, else daily)"
                     : stratMixed
                       ? "Fixed by the strategy: daily signals + a stop means a 15-minute replay"
@@ -559,14 +506,14 @@ export default function Optimizer() {
                 <option value="1Day" disabled={stratMixed}>1 day (fast — recommended for a search)</option>
                 <option value="15Min" disabled={stratLockedDaily}>15 minutes (slower, precise)</option>
               </select>
-              {stratLockedDaily && !scannerReplay && (
+              {stratLockedDaily && !uni.scannerReplay && (
                 <span className="field-help warn">
                   <IconWarn className="icon-inline" /> This strategy uses MACD/RSI (daily signals) and has no stop /
                   trailing stop / take-profit, so the search is locked to 1 Day — on intraday bars the signals whipsaw
                   and won't match the live engine, and there's no price-triggered exit an intraday replay could test.
                 </span>
               )}
-              {stratMixed && !scannerReplay && (
+              {stratMixed && !uni.scannerReplay && (
                 <span className="field-help">
                   This strategy has <strong>daily signals (MACD/RSI) and a price-triggered stop</strong>, so the search
                   runs <strong>mixed resolution</strong>: entries and exits replay on 15-minute bars while MACD/RSI keep
@@ -576,7 +523,7 @@ export default function Optimizer() {
                   real. Expect it to take <strong>much longer</strong>: ~26× as many bars per day to replay.
                 </span>
               )}
-              {stratNeedsIntraday && !scannerReplay && (
+              {stratNeedsIntraday && !uni.scannerReplay && (
                 <span className="field-help">
                   This strategy uses VWAP / an entry window (intraday rules), so daily bars would reject every entry —
                   defaulted to intraday. Switch to 1 day only if you also turn those rules off.

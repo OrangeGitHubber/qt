@@ -54,8 +54,10 @@ _task: asyncio.Task | None = None  # keep a ref so the task isn't GC'd mid-run
 
 class OptimizeBody(BaseModel):
     strategy_id: int
-    symbols: list[str] = []  # empty = the strategy's own universe / its asset-class watchlist
-    scanner_replay: bool = False  # search against the cached historical daily top-N risers
+    # IGNORED. The universe is the strategy's own — see _resolve_symbols. Kept on
+    # the model so an older frontend posting them still works rather than 422ing.
+    symbols: list[str] = []
+    scanner_replay: bool = False
     replay_top_n: int = Field(default=10, ge=1, le=100)  # how many of each day's risers are eligible
     days: int = Field(default=180, ge=30, le=730)
     timeframe: str = Field(default="1Day", pattern="^(15Min|1Hour|1Day)$")
@@ -64,15 +66,20 @@ class OptimizeBody(BaseModel):
     spread_pct: float = Field(default=0.1, ge=0, le=2)
 
 
-def _resolve_symbols(session: Session, strategy: Strategy, requested: list[str]) -> list[str]:
-    """Symbols to validate the search across. Explicit picks win; otherwise fall
-    back to the strategy's own universe — a custom list as-is, a basket's members,
-    or the asset-class watchlist. A merged historical timeline can't reconstruct
-    the scanner's daily picks, so a scanner strategy validates on its watchlist
-    (the same honest limitation the portfolio backtest carries)."""
-    picked = [s.strip().upper() for s in requested if s.strip()]
-    if picked:
-        return sorted(set(picked))
+def _resolve_symbols(session: Session, strategy: Strategy) -> list[str]:
+    """The symbols this search runs on — resolved from the STRATEGY, never from
+    the request.
+
+    Callers used to be able to substitute their own list. Tuning a basket
+    rotator against three hand-picked names produces settings fitted to those
+    three, then hands them to a strategy that trades a different pool: a result
+    describing an experiment you can never actually run, and the exact shape of
+    overfitting the out-of-sample split exists to catch. The backtest was locked
+    to the strategy's universe for the same reason; this is the other half.
+
+    A custom list as-is, a basket's members, or the asset-class watchlist. A
+    scanner strategy is replayed against its real day-varying universe elsewhere
+    (see scanner_replay); the watchlist here is its fallback."""
     if strategy.universe == "custom":
         return sorted({s.strip().upper() for s in (json.loads(strategy.symbols) if strategy.symbols else []) if s.strip()})
     if strategy.universe == "basket" and strategy.basket_id is not None:
@@ -236,10 +243,15 @@ async def start_optimize(
     replay_extra: dict | None = None
     timeframe = body.timeframe
     mixed = False
-    if body.scanner_replay:
+    # Derived from the strategy, not taken from the request: a scanner strategy
+    # IS its day-varying universe, and nothing else can meaningfully opt in or
+    # out of that. body.scanner_replay / body.replay_top_n are ignored.
+    scanner_replay = strategy.universe == "scanner"
+    replay_top_n = strategy.top_n or 10
+    if scanner_replay:
         from qt.api.backtest import load_scanner_replay_dataset
 
-        ds = load_scanner_replay_dataset(strategy.asset_class, body.days, body.replay_top_n)
+        ds = load_scanner_replay_dataset(strategy.asset_class, body.days, replay_top_n)
         prebuilt_bars = ds.bars
         eligible_by_day = ds.eligible_by_day
         timeframe = ds.timeframe  # 15Min if intraday cached, else 1Day — from the cache
@@ -253,14 +265,14 @@ async def start_optimize(
         replay_extra = {
             "scanner_replay": True,
             "replay_intraday": ds.used_intraday,
-            "replay_top_n": body.replay_top_n,
+            "replay_top_n": replay_top_n,
             "universe_size": len(ds.replayed),  # what was TESTED, not what made a list
             "universe_dropped": ds.dropped,
             "intraday_covered": ds.intraday_covered,
             "days_replayed": ds.days_replayed,
         }
     else:
-        symbols = _resolve_symbols(session, strategy, body.symbols)
+        symbols = _resolve_symbols(session, strategy)
         if not symbols:
             raise HTTPException(
                 status_code=422,
@@ -339,7 +351,7 @@ async def start_optimize(
     )
     return {
         "ok": True, "started": True, "symbols": symbols, "iterations": body.iterations,
-        "scanner_replay": body.scanner_replay, "timeframe": timeframe,
+        "scanner_replay": scanner_replay, "timeframe": timeframe,
         "mixed_resolution": mixed,
     }
 

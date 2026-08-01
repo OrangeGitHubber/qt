@@ -14,6 +14,7 @@ import InfoTip from "../components/InfoTip";
 import LineChart, { ChartMarker, DayHolding } from "../components/LineChart";
 import NumberField from "../components/NumberField";
 import RunStatus from "../components/RunStatus";
+import UniverseChips, { resolveUniverse } from "../components/UniverseChips";
 import { IconEdit, IconWarn } from "../components/icons";
 import { consumeNav, requestNav } from "../lib/nav";
 
@@ -70,31 +71,6 @@ function actionTone(action: string, pnl: number | null | undefined): string {
 function qty(q: number): string {
   const dp = q >= 100 ? 0 : q >= 1 ? 2 : 4;
   return q.toFixed(dp).replace(/\.?0+$/, "");
-}
-
-// A strategy's backtest universe, resolved READ-ONLY from its own config — the
-// backtest tests the strategy's universe, it isn't picked here. Basket → its
-// members; custom → its symbol list; scanner → replayed risers (no fixed list);
-// watchlist/both → the asset-class watchlist.
-function resolveUniverse(
-  strat: StrategyRow | undefined,
-  baskets: Basket[],
-): { symbols: string[]; label: string; scannerReplay: boolean } {
-  if (!strat) return { symbols: [], label: "", scannerReplay: false };
-  if (strat.universe === "basket" && strat.basket_id != null) {
-    const b = baskets.find((x) => x.id === strat.basket_id);
-    const symbols = b
-      ? b.symbols.filter((m) => m.asset_class === strat.asset_class).map((m) => m.symbol).slice(0, 50)
-      : [];
-    return { symbols, label: b ? `basket “${b.name}”` : "basket", scannerReplay: false };
-  }
-  if (strat.universe === "custom") {
-    return { symbols: (strat.symbols ?? []).slice(0, 50), label: "specific symbols", scannerReplay: false };
-  }
-  if (strat.universe === "scanner") {
-    return { symbols: [], label: "scanner — today’s risers (replayed)", scannerReplay: true };
-  }
-  return { symbols: [], label: "your watchlist", scannerReplay: false }; // watchlist | both
 }
 
 // Which bar size a strategy's signals demand: VWAP → intraday; MACD/RSI → daily.
@@ -163,27 +139,6 @@ function deriveTimeframe(s: StrategyRow | undefined): "1Day" | "15Min" {
 // the "trades in view" log can colour each strategy's name to match its line.
 const SERIES_A_COLOR = "var(--accent)";
 const SERIES_B_COLOR = "#a78bfa";
-
-// Read-only display of a strategy's resolved universe, shown under its dropdown.
-function UniverseChips({ uni }: { uni: { symbols: string[]; label: string } }) {
-  if (!uni.label) return null;
-  return (
-    <div className="universe-ro">
-      <span className="field-cap">Universe — {uni.label}</span>
-      {uni.symbols.length > 0 ? (
-        <div className="chips-ro">
-          {uni.symbols.map((s) => (
-            <span key={s} className="chip-ro">
-              {s}
-            </span>
-          ))}
-        </div>
-      ) : (
-        <span className="hint">Resolved live from the strategy — no fixed list to show.</span>
-      )}
-    </div>
-  );
-}
 
 export default function Backtest() {
   const [mode, setMode] = useState<"single" | "compare" | "portfolio">("single");

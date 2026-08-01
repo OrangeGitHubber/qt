@@ -3,6 +3,28 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## The optimizer searches the strategy's own universe (2026-08-01)
+
+The backtest was locked to a strategy's universe a while back — you test the
+strategy, so you test what it trades. The optimizer had kept its own symbol
+picker and a scanner-replay toggle, which is the same problem in a worse place:
+tune a basket rotator against three hand-picked names and the settings are
+fitted to those three, then handed to a strategy that trades a different pool.
+That's the exact overfitting the out-of-sample split exists to catch, arriving
+through the front door.
+
+The picker and the toggle are gone. The optimizer now shows the strategy's
+universe read-only, the same chips the backtest shows, and a scanner strategy is
+searched against its real day-varying universe automatically because that *is*
+its universe.
+
+The server decides this, not the page — the endpoint is reachable directly, so a
+posted symbol list is ignored rather than merely hidden. Tests cover both.
+
+One thing this makes visible rather than hides: if a strategy trades a single
+symbol, the optimizer now says so plainly, because a search fitted to one name's
+history rarely survives contact with another.
+
 ## Crypto backtests now measure a day the same way everything else does (2026-08-01)
 
 Reviewing whether the optimizer handles crypto properly turned up the opposite
