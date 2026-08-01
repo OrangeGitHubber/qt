@@ -254,6 +254,122 @@ textarea:focus {
   border-color: transparent;
 }
 
+/* ---- Confirmation dialog ----------------------------------------------
+   Replaces window.confirm() for actions worth pausing over. Deliberately NOT a
+   wall of red: a dialog that shouts every time trains you to click through
+   shouting. The FACTS carry the weight, one line says what's irreversible, and
+   colour is spent only on the confirm button. */
+.confirm-scrim {
+  position: fixed;
+  inset: 0;
+  /* Strong enough to isolate the panel — a weak scrim leaves the dashboard
+     competing for attention at the moment you need to read four numbers. */
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  /* Above every other layer in the app (tabs 40, modals 60). */
+  z-index: 100;
+  animation: confirm-fade 140ms ease-out;
+}
+
+.confirm-panel {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 1.25rem 1.35rem;
+  width: 100%;
+  max-width: 27rem;
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.55);
+  animation: confirm-rise 160ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* One red edge, not a red box: enough to mark the class of action without
+   drowning the numbers you're supposed to be reading. */
+.confirm-danger {
+  border-top: 3px solid var(--err);
+}
+
+.confirm-title {
+  margin: 0 0 0.9rem;
+  font-size: 1.05rem;
+  line-height: 1.35;
+}
+
+.confirm-facts {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.35rem 1rem;
+  margin: 0 0 1rem;
+  padding: 0.7rem 0.85rem;
+  background: var(--bg);
+  border-radius: 8px;
+  font-size: 0.9rem;
+}
+
+.confirm-fact {
+  display: contents;
+}
+
+.confirm-fact dt {
+  color: var(--muted);
+}
+
+.confirm-fact dd {
+  margin: 0;
+  /* Numbers line up so two positions can be compared at a glance. */
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+.confirm-warning {
+  margin: 0 0 1.1rem;
+  color: var(--muted);
+  font-size: 0.85rem;
+  line-height: 1.5;
+  border-left: 2px solid var(--err);
+  padding-left: 0.65rem;
+}
+
+.confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.6rem;
+}
+
+.confirm-actions button {
+  margin-top: 0;
+}
+
+/* The only saturated element in the dialog. */
+.danger-solid {
+  background: var(--err);
+  color: #fff;
+}
+
+@keyframes confirm-fade {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes confirm-rise {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+}
+
+/* The dialog must still APPEAR instantly for anyone who asked for less motion —
+   it's a warning, so it can't fade in slowly or be skipped. */
+@media (prefers-reduced-motion: reduce) {
+  .confirm-scrim,
+  .confirm-panel {
+    animation: none;
+  }
+}
+
 /* Right-aligned strip holding a table's Columns menu. */
 .cols-bar {
   display: flex;

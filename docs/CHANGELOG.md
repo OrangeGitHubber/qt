@@ -36,6 +36,44 @@ The P&L column in the journal is still gross, and now says so.
 but don't post real fee activities, so on paper this job runs, finds nothing,
 and correctly reports "no fees" rather than inventing them.
 
+## The journal's "All" view hid every actual trade (2026-08-01)
+
+Force-sell a position and it vanished from open positions, showed as sold at
+Alpaca — and didn't appear in the journal. It was there, but only under the
+**Trades** pill; the **All** view showed nothing but rejected candidates.
+
+Two faults with one symptom:
+
+- Rows were ordered by **creation**, so a position opened last week and sold a
+  minute ago sorted as a week old.
+- **All** applies no filter, and the engine logs *hundreds* of rejected
+  candidates a day. Those filled the row cap completely, so no executed trade
+  survived to reach the browser at all.
+
+The journal is now ordered by **most recent activity** — a sale sorts to the top
+the moment it happens, whenever the position was opened. The page opens on
+**Trades** rather than All, because a journal should open on what happened and
+rejections are a debugging view. And when the list is cut short it says so,
+instead of a truncated page reading as "this is everything".
+
+## In-app confirmation dialogs (2026-08-01)
+
+"Force exit" used the browser's own confirm box — which puts your hostname above
+the message, can't show the numbers in a readable layout, and places the buttons
+wherever the browser likes.
+
+It's now a proper dialog that matches the app: the position's symbol, size,
+owning strategy, entry, current price and unrealized P&L laid out as facts, one
+line about what can't be undone, and a red **Sell at market** button.
+
+Deliberately **no typed confirmation**. Force exit is an escape hatch — you reach
+for it when you want out *now* — and friction on an escape hatch costs real
+money. Typing a phrase stays reserved for the genuinely catastrophic (enabling
+leverage), where diluting it would be the real risk. The safeguards here are that
+the numbers are in front of you, **Cancel** holds the keyboard focus so a
+reflexive Enter cancels rather than sells, and Escape or a click outside backs
+out.
+
 ## Backtests now charge crypto trading fees (2026-08-01)
 
 QT recorded no fees anywhere — every P&L figure was gross. For US stocks that's

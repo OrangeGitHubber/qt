@@ -18,6 +18,7 @@ import {
 import { requestNav } from "../lib/nav";
 import AccountSelect from "../components/AccountSelect";
 import ColumnPicker, { useColumnPrefs } from "../components/ColumnPicker";
+import ConfirmDialog from "../components/ConfirmDialog";
 import InfoTip from "../components/InfoTip";
 import LineChart, { ChartMarker, DayHolding } from "../components/LineChart";
 import StackedPnlBars, { PnlSeries } from "../components/StackedPnlBars";
@@ -350,6 +351,7 @@ function OpenPositionsCard() {
   const [data, setData] = useState<OpenPositionsResponse | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [closing, setClosing] = useState<number | null>(null);
+  const [pending, setPending] = useState<OpenPositionsResponse["positions"][number] | null>(null);
   const [cols, toggleCol] = useColumnPrefs<PosCol>(
     POSITION_COLS_KEY,
     POSITION_COLUMNS.map((c) => c.key),
@@ -371,28 +373,19 @@ function OpenPositionsCard() {
   // Selling is irreversible and immediate, so it asks first — naming the symbol,
   // the size and where the P&L stands, because "are you sure?" on its own is a
   // question you can't actually answer.
-  async function forceExit(p: OpenPositionsResponse["positions"][number]) {
-    const pnl =
-      p.unrealized_pnl == null
-        ? "P&L unknown right now"
-        : `${p.unrealized_pnl >= 0 ? "a gain" : "a loss"} of $${Math.abs(p.unrealized_pnl).toFixed(2)}`;
-    const ok = window.confirm(
-      `Sell all ${p.qty} ${p.symbol} now, at market?
-
-` +
-        `Held by "${p.strategy_name}", currently ${pnl}.
-
-` +
-        `This ignores the strategy's exit rules and locks in whatever the market gives you. It can't be undone.`,
-    );
-    if (!ok) return;
+  // Selling is irreversible and immediate, so it asks first — showing the
+  // symbol, the size, whose position it is and what it's worth right now,
+  // because "are you sure?" on its own is a question you can't answer.
+  async function doForceExit(p: OpenPositionsResponse["positions"][number]) {
     setClosing(p.trade_id);
     setErr(null);
     try {
       await forceClosePosition(p.trade_id);
+      setPending(null);
       refresh();
     } catch (e) {
       setErr((e as Error).message);
+      setPending(null);
     } finally {
       setClosing(null);
     }
@@ -423,6 +416,45 @@ function OpenPositionsCard() {
           </span>
         </h3>
       </summary>
+      <ConfirmDialog
+        open={pending !== null}
+        danger
+        busy={closing !== null}
+        title={pending ? `Sell all ${pending.qty} ${pending.symbol} now, at market?` : ""}
+        facts={
+          pending
+            ? [
+                { label: "Held by", value: pending.strategy_name },
+                { label: "Quantity", value: String(pending.qty) },
+                { label: "Entry", value: `$${pending.entry_price.toFixed(4)}` },
+                {
+                  label: "Now",
+                  value: pending.current_price != null ? `$${pending.current_price.toFixed(4)}` : "—",
+                },
+                {
+                  label: "Unrealized",
+                  value:
+                    pending.unrealized_pnl != null ? signed(pending.unrealized_pnl) : "not known right now",
+                  tone:
+                    pending.unrealized_pnl == null
+                      ? undefined
+                      : pending.unrealized_pnl >= 0
+                        ? "up"
+                        : "down",
+                },
+              ]
+            : []
+        }
+        warning={
+          <>
+            Ignores <strong>{pending?.strategy_name}</strong>&apos;s exit rules and takes whatever price the
+            market gives you. This can&apos;t be undone.
+          </>
+        }
+        confirmLabel="Sell at market"
+        onConfirm={() => pending && doForceExit(pending)}
+        onCancel={() => setPending(null)}
+      />
       {data.positions.length === 0 ? (
         <p className="hint">
           Nothing is held right now. When a strategy buys, the position appears here with its owner — including the one
@@ -480,7 +512,7 @@ function OpenPositionsCard() {
                       type="button"
                       className="small danger"
                       disabled={closing !== null}
-                      onClick={() => forceExit(p)}
+                      onClick={() => setPending(p)}
                       title={`Sell ${p.symbol} now at market, ignoring ${p.strategy_name}'s exit rules`}
                     >
                       {closing === p.trade_id ? "Selling…" : "Force exit"}
