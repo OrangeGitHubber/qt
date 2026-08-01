@@ -28,3 +28,29 @@ def test_exit_slippage_max_cannot_be_below_base():
     ExitRules(exit_slippage_pct=1.0, exit_slippage_max_pct=3.0)  # ok
     with pytest.raises(ValidationError):
         ExitRules(exit_slippage_pct=3.0, exit_slippage_max_pct=1.0)
+
+
+# ---------------------------------------------------------------------------
+# The "market orders + fractional shares" toggle means different things per
+# asset. Crypto is ALWAYS fractional, so only the order type changes there —
+# which is why the editor's label is asset-class aware.
+# ---------------------------------------------------------------------------
+
+
+def test_crypto_quantity_ignores_the_fractional_toggle():
+    """You buy 0.0016 BTC either way. If this ever stops being true, the label
+    promising crypto users a choice becomes accurate and the code has a bug."""
+    from qt.services.execution import _qty_for
+
+    off = _qty_for("crypto", 100.0, 60_000.0, fractional=False)
+    on = _qty_for("crypto", 100.0, 60_000.0, fractional=True)
+    assert off == on > 0
+
+
+def test_the_toggle_is_the_whole_ballgame_for_an_expensive_stock():
+    """The counterpart: for stocks it's the difference between owning a slice
+    and not being able to buy at all."""
+    from qt.services.execution import _qty_for
+
+    assert _qty_for("stock", 100.0, 400.0, fractional=False) == 0.0
+    assert _qty_for("stock", 100.0, 400.0, fractional=True) == 0.25

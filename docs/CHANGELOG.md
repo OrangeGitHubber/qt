@@ -3,6 +3,22 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## "Allow fractional shares" doesn't mean anything for crypto (2026-08-01)
+
+The execution toggle read **"Buy & sell at market price (allow fractional
+shares)"** on every strategy, but crypto is always bought in fractions — you get
+0.0016 BTC whether it's on or off. Half the label described nothing.
+
+The engine was right; only the wording was wrong. On a crypto strategy the
+checkbox now reads simply **"Buy & sell at market price"**, with a line saying
+what it actually changes there: the order type. A market order fills immediately
+at whatever price is available; the default limit protects the price but can sit
+unfilled on a fast move.
+
+Stocks keep the full label, because for them the fractional half is the whole
+point: with it off, a $100-per-trade budget buys **zero** shares of a $400 stock
+and the buy is skipped entirely. With it on, it buys a quarter of a share.
+
 ## Two strategies can hold the same symbol (2026-08-01)
 
 Until now the whole account held at most one position per symbol: whichever

@@ -1042,9 +1042,24 @@ function Editor({
                 }))
               }
             />
-            Buy &amp; sell at market price (allow fractional shares) <InfoTip k="market_fractional" />
+            {/* Crypto is ALWAYS fractional — you buy 0.0016 BTC whether this is
+                on or off — so promising "allow fractional" there describes
+                nothing. What the toggle still changes for crypto is the ORDER
+                TYPE, and that's what the label should say. */}
+            {s.asset_class === "crypto" ? (
+              <>Buy &amp; sell at market price <InfoTip k="market_fractional" /></>
+            ) : (
+              <>Buy &amp; sell at market price (allow fractional shares) <InfoTip k="market_fractional" /></>
+            )}
           </label>
         </div>
+        {s.asset_class === "crypto" && (
+          <p className="hint">
+            Crypto is always bought in fractions, on or off — this only chooses the <strong>order type</strong>:
+            a market order fills immediately at whatever price is there, versus a price-protected limit that can sit
+            unfilled on a fast move.
+          </p>
+        )}
 
         <details className="adv">
           <summary>Advanced — volatility stops &amp; sizing (ATR)</summary>
