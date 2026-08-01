@@ -151,12 +151,21 @@ def rolling_24h(bars: list[dict]) -> tuple[float, float, float] | None:
     return float(current), change_pct, dollar_volume
 
 
-def _meta(scanned: int, best: tuple[str, float, float, float] | None) -> dict[str, Any]:
-    """Diagnostics so an empty panel can explain itself: how many symbols had
-    usable data, and the strongest mover seen (before filtering) with its price
-    and $ volume — so the UI can name the exact floor that stopped it."""
+def _meta(
+    scanned: int, best: tuple[str, float, float, float] | None, passed: int = 0
+) -> dict[str, Any]:
+    """Diagnostics so the panel can explain itself: how many symbols had usable
+    data, the strongest mover seen (before filtering) with its price and $
+    volume — so the UI can name the exact floor that stopped it — and how many
+    passed the filters.
+
+    `passed` matters when the list is FULL, not empty. The rows are cut to
+    top_n, so a symbol can clear every filter and still not be on screen; without
+    this the only honest answer to "why isn't my mover here?" was to go and read
+    the code."""
     return {
         "scanned": scanned,
+        "passed": passed,
         "best_symbol": best[0] if best else None,
         "best_change_pct": round(best[1], 2) if best else None,
         "best_price": round(best[2], 4) if best else None,
@@ -192,7 +201,7 @@ async def scan_stocks(client: AlpacaClient, cfg: dict, market_open: bool) -> tup
                 }
             )
     rows.sort(key=lambda r: r["change_pct"], reverse=True)
-    return rows[: cfg["top_n"]], _meta(len(gainers), best)
+    return rows[: cfg["top_n"]], _meta(len(gainers), best, passed=len(rows))
 
 
 async def crypto_rolling_stats(
@@ -247,7 +256,7 @@ async def scan_crypto(client: AlpacaClient, cfg: dict) -> tuple[list[dict], dict
                 }
             )
     rows.sort(key=lambda r: r["change_pct"], reverse=True)
-    return rows[: cfg["top_n"]], _meta(scanned, best)
+    return rows[: cfg["top_n"]], _meta(scanned, best, passed=len(rows))
 
 
 async def scan(session: Session, client: AlpacaClient) -> dict[str, Any]:

@@ -106,3 +106,28 @@ def test_bars_endpoint(client, configured):
     assert body["symbol"] == "AAPL"
     # oldest-first, as returned
     assert [b["c"] for b in body["bars"]] == [201.0, 202.0]
+
+
+def test_the_scanner_reports_how_many_it_cut(monkeypatch):
+    """A full list hides everything below top_n, so "why isn't my mover here?"
+    had no answer on screen. `passed` is the count BEFORE the cut."""
+    import asyncio
+    from unittest.mock import AsyncMock, patch
+
+    from qt.broker.alpaca import AlpacaClient
+    from qt.services import scanner
+
+    # 15 pairs all up 2-16%, comfortably past the crypto floors.
+    pairs = [{"symbol": f"C{i}/USD"} for i in range(15)]
+    stats = {f"C{i}/USD": (10.0, 2.0 + i, 1_000_000.0) for i in range(15)}
+    cfg = scanner.DEFAULT_CONFIG | {"top_n": 10}
+
+    with patch.object(AlpacaClient, "crypto_assets", new=AsyncMock(return_value=pairs)), \
+         patch.object(scanner, "crypto_rolling_stats", new=AsyncMock(return_value=stats)):
+        rows, meta = asyncio.run(scanner.scan_crypto(AlpacaClient("k", "s"), cfg))
+
+    assert len(rows) == 10, "top_n should still cut the list"
+    assert meta["passed"] == 15, "the count before the cut must be reported"
+    assert meta["scanned"] == 15
+    # The cut is by size of move, so the weakest movers are the ones missing.
+    assert rows[0]["symbol"] == "C14/USD" and rows[-1]["symbol"] == "C5/USD"

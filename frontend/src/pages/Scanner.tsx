@@ -123,6 +123,15 @@ function MoversTable({
         </table>
         </div>
       )}
+      {/* A FULL list explains nothing on its own. The rows are cut to "rows
+          shown", so a symbol can clear every filter and still be missing — which
+          reads as the scanner having ignored it. Say how many were cut. */}
+      {rows.length > 0 && (meta?.passed ?? 0) > rows.length && (
+        <p className="hint">
+          Showing the top <strong>{rows.length}</strong> of <strong>{meta?.passed}</strong> that passed your filters —
+          the rest moved less and are below the cut. Raise “rows shown” in Filters to see further down.
+        </p>
+      )}
     </div>
   );
 }

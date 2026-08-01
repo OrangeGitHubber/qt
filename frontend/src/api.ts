@@ -990,6 +990,9 @@ export interface ScannerRow {
 
 export interface ScannerMeta {
   scanned: number;
+  // How many cleared the filters, BEFORE the list was cut to top_n. Greater than
+  // the rows shown means real movers are hidden below the cut.
+  passed?: number;
   best_symbol: string | null;
   best_change_pct: number | null;
   best_price: number | null;

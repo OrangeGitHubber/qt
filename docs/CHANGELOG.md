@@ -3,6 +3,26 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## The scanner now says when it's hiding movers (2026-08-01)
+
+If a strategy reported a symbol up 3.7% and the scanner didn't show it, there was
+no way to tell why. The scanner explained itself only when the list came back
+**empty** ("the strongest was X at +0.4%, below your 1% min gain"); a full list
+said nothing at all.
+
+But a full list is exactly where things go missing. The rows are cut to **"rows
+shown"** (10 by default), so a symbol can clear every filter and still be off
+screen simply because ten others moved more. That reads as the scanner having
+ignored it.
+
+When there are more passing movers than rows, it now says so: *"Showing the top
+10 of 23 that passed your filters — the rest moved less and are below the cut."*
+
+Worth remembering alongside it: the crypto scanner measures a **rolling 24
+hours**, and that window slides continuously. A coin that was up 3.7% at 6:47pm
+can read quite differently an hour later, so the scanner shows what's rising
+*now*, not what was rising when a trade was journalled.
+
 ## "Allow fractional shares" doesn't mean anything for crypto (2026-08-01)
 
 The execution toggle read **"Buy & sell at market price (allow fractional
