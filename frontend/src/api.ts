@@ -535,6 +535,10 @@ export interface BacktestResult {
   profit_factor: number | null;
   max_drawdown_pct: number;
   spread_cost_pct_per_side: number;
+  // Commission per side (%) and what it actually took in dollars. Crypto isn't
+  // free on Alpaca — 0.15-0.25% a side — so a busy strategy pays real money.
+  fee_pct_per_side?: number;
+  fees_paid?: number;
   max_deployed_usd: number;
   pct_capital_deployed: number;
   return_on_deployed_pct: number | null;
@@ -683,6 +687,10 @@ export interface PortfolioBacktestResult {
   profit_factor: number | null;
   max_drawdown_pct: number;
   spread_cost_pct_per_side: number;
+  // Commission per side (%) and what it actually took in dollars. Crypto isn't
+  // free on Alpaca — 0.15-0.25% a side — so a busy strategy pays real money.
+  fee_pct_per_side?: number;
+  fees_paid?: number;
   max_deployed_usd: number;
   pct_capital_deployed: number;
   return_on_deployed_pct: number | null;

@@ -3,6 +3,36 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Backtests now charge crypto trading fees (2026-08-01)
+
+QT recorded no fees anywhere — every P&L figure was gross. For US stocks that's
+almost right: Alpaca charges no commission, and a sell carries a few cents of
+regulatory fees not worth modelling. **Crypto is not free.** Alpaca charges
+0.15–0.25% per side at the entry volume tier, so a round trip costs roughly half
+a percent, and a strategy taking 1–3% moves several times a day hands over a
+serious share of its edge.
+
+Crypto backtests now charge 0.25% per side by default and report what it took.
+On a test strategy doing 22 round trips, the same run went from **+$308 to
++$195** — **$111 of fees, 37% of the gross profit**. That difference was
+previously invisible, and it's the kind that decides whether a busy strategy is
+actually worth running.
+
+The fee is charged as cash on each side, not as extra slippage — a commission is
+a percentage of the notional, so treating it as a price adjustment would flatter
+big positions and punish small ones. It also has to be affordable: an entry now
+needs the fee as well as the notional in cash.
+
+Stock backtests are unchanged, and say so explicitly rather than leaving a blank
+that reads as "unknown".
+
+**Still not recorded: fees on actual paper/live trades.** Alpaca reports them
+through its Activities API and only posts them at end of day, so they can't be
+attached at the moment of the fill — that needs a reconciliation pass. Worth
+knowing that the dashboard scoreboard is already honest about this, because it
+plots the broker's own equity, which has the real fees taken out. It's the
+per-trade P&L in the journal that's still gross.
+
 ## Cost and value columns, and a column picker (2026-08-01)
 
 "How much is actually in this position?" meant multiplying quantity by entry

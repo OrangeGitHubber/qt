@@ -1035,6 +1035,23 @@ export default function Backtest() {
               orders, market impact, and slippage beyond the spread aren't modeled. Treat a good result as{" "}
               <em>not yet disproven</em>, never proven.
             </p>
+            {/* Commissions are a real, knowable cost — unlike slippage, which we
+                can only wave at. Show the money, not just the rate: "0.25% a
+                side" is abstract, "$110 of fees on 22 round trips" is the number
+                that decides whether a strategy this busy can carry its costs. */}
+            {(result.fees_paid ?? 0) > 0 && (
+              <p className="hint">
+                Includes <strong>${result.fees_paid?.toFixed(2)}</strong> of trading fees at{" "}
+                {result.fee_pct_per_side}% per side ({(result.fee_pct_per_side ?? 0) * 2}% per round trip) — Alpaca's
+                crypto commission at the entry volume tier. Every result above is <strong>after</strong> those.
+              </p>
+            )}
+            {result.fees_paid === 0 && (
+              <p className="hint">
+                No trading fees modelled: Alpaca charges no commission on US stocks (a sell carries a few cents of
+                regulatory fees, too small to model). Crypto is <em>not</em> free — it's charged 0.15–0.25% per side.
+              </p>
+            )}
             {result.scanner_replay &&
               result.replay_intraday === false &&
               strategy &&

@@ -559,6 +559,7 @@ def run_backtest(
     risk: dict,
     starting_cash: float = 5000.0,
     spread_pct: float = 0.1,
+    fee_pct: float = 0.0,
     eligible_by_day: dict[str, set[str]] | None = None,
     market: str = "stock",
     sim_start: datetime | None = None,
@@ -609,6 +610,11 @@ def run_backtest(
     swing = strategy["swing_mode"]
     sizing = strategy["sizing_usd"]
     slip = spread_pct / 100
+    # A commission is NOT a price adjustment — it's cash off the top of each
+    # side, charged on the notional. Modelling it as extra slippage would flatter
+    # a big position and punish a small one, which is backwards.
+    fee_rate = max(0.0, fee_pct) / 100
+    fees_paid = 0.0
     day_of = _day_fn(market)
 
     prepared = {
@@ -743,9 +749,15 @@ def run_backtest(
             trade.exit_price = fill
             trade.exit_at = ts
             trade.exit_reason = reason
-            trade.pnl = round((fill - trade.entry_price) * trade.qty, 2)
-            state.cash += fill * trade.qty
-            day_flows[symbol] = day_flows.get(symbol, 0.0) + fill * trade.qty
+            # Both sides' fees land on the trade that closes: the entry fee was
+            # already paid in cash, but the P&L has to carry it or every trade
+            # reads better than it was.
+            exit_fee = fill * trade.qty * fee_rate
+            entry_fee = trade.entry_price * trade.qty * fee_rate
+            fees_paid += exit_fee + entry_fee
+            trade.pnl = round((fill - trade.entry_price) * trade.qty - exit_fee - entry_fee, 2)
+            state.cash += fill * trade.qty - exit_fee
+            day_flows[symbol] = day_flows.get(symbol, 0.0) + fill * trade.qty - exit_fee
             state.realized_by_day[day] = state.realized_by_day.get(day, 0.0) + trade.pnl
             if trade.pnl < 0:
                 state.last_loss_at[symbol] = ts
@@ -845,14 +857,16 @@ def run_backtest(
                 continue
             fill = bar["close"] * (1 + slip)
             qty = _entry_qty(strategy["asset_class"], entry_sizing, fill, _fractional(params))
-            if qty <= 0 or fill * qty > state.cash:
+            # The fee is part of what the buy costs you, so it has to clear the
+            # cash check too — otherwise the sim can spend money it doesn't have.
+            if qty <= 0 or fill * qty * (1 + fee_rate) > state.cash:
                 diag["too_small_or_no_cash"] += 1
                 reject(day, symbol, "sizing")
                 if debug:
                     _btlog(day, symbol, bar, params, f"reject-sizing: qty={qty} cost={fill * qty:.2f} cash={state.cash:.2f}")
                 continue
-            state.cash -= fill * qty
-            day_flows[symbol] = day_flows.get(symbol, 0.0) - fill * qty
+            state.cash -= fill * qty * (1 + fee_rate)
+            day_flows[symbol] = day_flows.get(symbol, 0.0) - fill * qty * (1 + fee_rate)
             state.entries_by_day[day] = state.entries_by_day.get(day, 0) + 1
             if debug:
                 _btlog(day, symbol, bar, params, f"ENTER @ {fill:.2f} x{qty} ({entry_reason})")
@@ -976,6 +990,11 @@ def run_backtest(
         "profit_factor": round(gross_win / gross_loss, 2) if gross_loss > 0 else None,
         "max_drawdown_pct": _max_drawdown(equity_values),
         "spread_cost_pct_per_side": spread_pct,
+        "fee_pct_per_side": fee_pct,
+        # What the commissions actually took, in dollars. A rate in the header is
+        # abstract; "$412 of fees on 63 round trips" is the number that decides
+        # whether a strategy this busy can carry its own costs.
+        "fees_paid": round(fees_paid, 2),
         "max_deployed_usd": round(max_deployed, 2),
         "pct_capital_deployed": pct_deployed,
         "return_on_deployed_pct": return_on_deployed,

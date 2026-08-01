@@ -60,6 +60,17 @@ def _replay_progress(done: int, total: int) -> None:
 
 TIMEFRAMES = ("15Min", "1Hour", "1Day")
 
+# Commission per side, as a % of notional. US equities on Alpaca are
+# commission-free (a sell carries tiny SEC/TAF regulatory fees — cents, and not
+# worth modelling). CRYPTO is not free: Alpaca charges a volume-tiered
+# 0.15%-0.25% per side at the entry tier (under $100k/month), so a round trip
+# costs roughly half a percent. A strategy taking 1-3% moves several times a day
+# hands over a serious share of its edge, and a backtest that ignores this
+# reports a profit the real account would never have seen.
+#
+# https://docs.alpaca.markets/docs/crypto-fees
+DEFAULT_FEE_PCT = {"stock": 0.0, "crypto": 0.25}
+
 
 @dataclass
 class ScannerReplayDataset:
@@ -164,6 +175,9 @@ class BacktestBody(BaseModel):
     timeframe: str = Field(default="1Hour", pattern="^(15Min|1Hour|1Day)$")
     starting_cash: float = Field(default=5000, ge=100, le=10_000_000)
     spread_pct: float = Field(default=0.1, ge=0, le=2)
+    # None = use the asset class's real-world rate (see DEFAULT_FEE_PCT). An
+    # explicit 0 is honoured, for asking "what would this look like fee-free?".
+    fee_pct: float | None = Field(default=None, ge=0, le=2)
 
 
 class PortfolioBacktestBody(BaseModel):
@@ -507,6 +521,9 @@ async def run(
         backtest.run_backtest,
         strategy_dict, bars, get_risk(session),
         starting_cash=body.starting_cash, spread_pct=body.spread_pct,
+        fee_pct=(
+            body.fee_pct if body.fee_pct is not None else DEFAULT_FEE_PCT.get(strategy.asset_class, 0.0)
+        ),
         market=market,
         # Mixed runs fetch intraday bars for the window only, so sim_start is a
         # belt-and-braces guard: nothing before the window can ever trade.
@@ -571,6 +588,9 @@ async def _scanner_replay(
         backtest.run_backtest,
         strategy_dict, ds.bars, get_risk(session),
         starting_cash=body.starting_cash, spread_pct=body.spread_pct,
+        fee_pct=(
+            body.fee_pct if body.fee_pct is not None else DEFAULT_FEE_PCT.get(strategy.asset_class, 0.0)
+        ),
         eligible_by_day=ds.eligible_by_day, market=ds.market,
         progress=_replay_progress,
     )
