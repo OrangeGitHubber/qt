@@ -26,6 +26,7 @@ from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from qt.api.backtest import (
@@ -38,7 +39,8 @@ from qt.api.backtest import (
 from qt.api.market import require_client
 from qt.broker.alpaca import AlpacaClient
 from qt.db import get_session
-from qt.models import Strategy, StrategyConfigVersion, Trade
+from qt.api import baskets as baskets_api
+from qt.models import BasketItem, Strategy, StrategyConfigVersion, Trade
 from qt.services import fidelity
 from qt.services.backtest import _day_fn
 
@@ -77,6 +79,44 @@ def _day_of(asset_class: str):
     near midnight lands in a different bucket and reads as a mismatch that never
     happened."""
     return _day_fn("crypto" if asset_class == "crypto" else "stock")
+
+
+def _basket_drift(session: Session, strategy: Strategy, live_rows: list[dict]) -> list[dict]:
+    """Whether the basket's MEMBERS changed between the trades and now.
+
+    Answered from the basket's own snapshots, keyed by time: the version live
+    when the newest of these trades was made, against the members today. If the
+    basket has never been snapshotted the answer is unknown and nothing is
+    reported — a guess here would be indistinguishable from "no change", which
+    is the one wrong answer that matters."""
+    if strategy.universe != "basket" or not strategy.basket_id:
+        return []
+    newest = (
+        session.query(func.max(Trade.entry_at))
+        .filter(Trade.strategy_id == strategy.id, Trade.entry_at.isnot(None))
+        .scalar()
+    )
+    if newest is None:
+        return []  # imported trades carry no timestamps — nothing to key on
+    then = baskets_api.members_at(session, strategy.basket_id, _aware(newest))
+    if then is None:
+        return []
+    then_set = {(m["asset_class"], m["symbol"]) for m in then}
+    now_set = {
+        (i.asset_class, i.symbol)
+        for i in session.query(BasketItem).filter(BasketItem.basket_id == strategy.basket_id)
+    }
+    if then_set == now_set:
+        return []
+    added = sorted(s for _, s in now_set - then_set)
+    removed = sorted(s for _, s in then_set - now_set)
+    return [
+        {
+            "field": "Basket members",
+            "then": f"{len(then_set)} symbols" + (f" (since removed: {', '.join(removed)})" if removed else ""),
+            "now": f"{len(now_set)} symbols" + (f" (since added: {', '.join(added)})" if added else ""),
+        }
+    ]
 
 
 def _serialize_current(strategy: Strategy) -> dict:
@@ -229,13 +269,18 @@ async def compare(
         else []
     )
     produced_by = json.loads(versions[-1].snapshot) if versions else None
+    # BASKET MEMBERSHIP. A strategy's config version records which basket it
+    # points at, not who is in it — so a basket edit changes the universe while
+    # leaving the strategy's own version identical. Without this the drift check
+    # above would report "no change" and actively reassure you.
+    basket_drift = _basket_drift(session, strategy, live_rows)
     report["config"] = {
         # More than one means the strategy was edited DURING the window, so no
         # single replay can be faithful to all of these trades — not even one
         # using an old config.
         "versions_used": len(versions),
         "produced_by_version": versions[-1].version_no if versions else None,
-        "drift": fidelity.config_drift(produced_by, _serialize_current(strategy)),
+        "drift": fidelity.config_drift(produced_by, _serialize_current(strategy)) + basket_drift,
     }
     report["strategy_name"] = strategy.name
     report["mode"] = body.mode

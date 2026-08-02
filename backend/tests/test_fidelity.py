@@ -550,3 +550,56 @@ def test_the_report_names_the_config_that_produced_the_trades(client, configured
     assert body["config"]["versions_used"] == 1
     fields = {c["field"] for c in body["config"]["drift"]}
     assert "Sleeve budget" in fields, body["config"]["drift"]
+
+
+def test_a_changed_basket_shows_up_even_though_the_strategy_never_changed(client, configured):
+    """The gap Werner spotted: a strategy's config version records WHICH basket
+    it uses, not who is in it. Edit the basket and the strategy's own version is
+    byte-identical — so the drift check would find nothing and report "no
+    configuration drift", which is a confident statement of something false."""
+    from datetime import datetime, timedelta, timezone
+    from unittest.mock import AsyncMock, patch
+
+    from qt.broker.alpaca import AlpacaClient
+    from qt.models import BasketVersion
+
+    from qt.models import Basket, BasketItem, BasketVersion
+
+    bid = client.post("/api/baskets", json={"name": "Fidelity Banking"}).json()["id"]
+    client.post(f"/api/baskets/{bid}/items", json={"symbol": "NVDA", "asset_class": "stock"})
+
+    strat = _strategy_body()
+    strat.update({"universe": "basket", "basket_id": bid, "symbols": []})
+    sid = client.post("/api/strategies", json=strat).json()["id"]
+
+    with session_scope() as s:
+        # Backdate the snapshot so the trade below lands after it.
+        s.query(BasketVersion).filter_by(basket_id=bid).one().created_at = (
+            datetime.now(timezone.utc) - timedelta(days=10)
+        )
+        s.add(Trade(
+            strategy_id=sid, mode="paper", symbol="NVDA", asset_class="stock",
+            status="closed", qty=10, notional=1000, entry_price=100.0, exit_price=110.0,
+            pnl=100.0, entry_reason="gain 5%", exit_reason="take-profit: +10%",
+            entry_at=datetime.now(timezone.utc) - timedelta(days=5),
+            exit_at=datetime.now(timezone.utc) - timedelta(days=4),
+        ))
+
+    # The basket changes AFTER the trade — the strategy row is untouched.
+    client.post(f"/api/baskets/{bid}/items", json={"symbol": "MSFT", "asset_class": "stock"})
+
+    bars = [{"t": (datetime.now(timezone.utc) - timedelta(days=n)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+             "o": 100, "h": 100, "l": 100, "c": 100, "v": 1e6, "vw": 100} for n in (10, 9, 8)]
+    with patch.object(AlpacaClient, "historical_bars", new=AsyncMock(return_value={"NVDA": bars, "MSFT": bars})):
+        body = client.post("/api/fidelity/compare", json={"strategy_id": sid, "days": 30}).json()
+
+    drift = {c["field"]: c for c in body["config"]["drift"]}
+    # Leave the shared database as we found it — test_baskets.py asserts seeding
+    # starts from an empty table.
+    with session_scope() as s:
+        s.query(BasketVersion).filter_by(basket_id=bid).delete()
+        s.query(BasketItem).filter_by(basket_id=bid).delete()
+        s.query(Basket).filter_by(id=bid).delete()
+
+    assert "Basket members" in drift, body["config"]["drift"]
+    assert "MSFT" in drift["Basket members"]["now"]   # named, not just counted

@@ -228,6 +228,30 @@ class Asset(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+class BasketVersion(Base):
+    """Immutable snapshot of a basket's MEMBERS whenever they change.
+
+    A strategy's config version records which basket it points at — not who was
+    in it. So editing the basket silently changes what that strategy trades
+    while its own config version stays byte-identical, and any later attempt to
+    reconstruct history reads today's members and believes nothing moved. That
+    is worse than having no record: the backtest-fidelity check would compare a
+    replay of today's members against trades made from a different list and
+    report "no configuration drift", actively reassuring you.
+
+    Snapshots are keyed only by time — the version live at a given moment is the
+    newest one created at or before it — so nothing else has to carry a version
+    id for the history to be recoverable."""
+
+    __tablename__ = "basket_versions"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    basket_id: Mapped[int] = mapped_column(ForeignKey("baskets.id"), index=True)
+    version_no: Mapped[int] = mapped_column(Integer)
+    snapshot: Mapped[str] = mapped_column(Text)  # JSON: [{symbol, asset_class}, ...]
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
+
+
 class Basket(Base):
     """A named group of symbols — a curated theme/sector list (e.g. Defense,
     Banking). NOT an authoritative sector database: the starter set is

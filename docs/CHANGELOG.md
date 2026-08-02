@@ -60,6 +60,30 @@ The P&L column in the journal is still gross, and now says so.
 but don't post real fee activities, so on paper this job runs, finds nothing,
 and correctly reports "no fees" rather than inventing them.
 
+## Baskets are versioned now too (2026-08-02)
+
+A strategy's config version records **which** basket it uses — never **who** is
+in it. So adding or removing a symbol changes what that strategy trades while its
+own config version stays byte-identical.
+
+That gap was worse than having no record at all. The fidelity check compares the
+config that produced a trade against the one being replayed; reading today's
+membership it would find nothing different and report "no configuration drift" —
+a confident statement of something false, on exactly the comparison you were
+using to decide whether to trust the backtester.
+
+Every basket edit now snapshots its membership, so "who was in Banking when that
+trade was made?" has an answer. The fidelity report uses it, and names what
+moved: *Basket members: 12 symbols (since removed: WFC) → 13 symbols (since
+added: MS, AIG)*.
+
+Two things it deliberately won't do. A basket with no snapshots yet — one that
+predates this, or that nobody has edited since — reports **unknown** rather than
+assuming today's members, because a guess there is indistinguishable from "no
+change", which is the one wrong answer that matters. And deleting a basket takes
+its history with it: deletion is already blocked while any strategy points at it,
+so once it's gone there's nothing left for the history to explain.
+
 ## Fidelity: say when the strategy was edited after it traded (2026-08-02)
 
 Every trade already records the config version that produced it. The fidelity
