@@ -545,6 +545,9 @@ export interface BacktestResult {
   scanner_replay?: boolean;
   replay_intraday?: boolean;
   intraday_topped_up?: boolean; // bars were downloaded during this run
+  // Symbol-days an intraday replay covered with the DAILY bar because no 15-min
+  // bars were cached for them — those days had stops checked at daily resolution.
+  daily_filled_days?: number;
   // Stretches of the window with NO bars. The chart draws a straight line across
   // them; positions were marked at a stale price and no stop could fire there.
   bar_gaps?: { after: string; before: string; days: number }[];
@@ -840,6 +843,9 @@ export interface OptimizerResult {
   scanner_replay?: boolean;
   replay_intraday?: boolean;
   intraday_topped_up?: boolean; // bars were downloaded during this run
+  // Symbol-days an intraday replay covered with the DAILY bar because no 15-min
+  // bars were cached for them — those days had stops checked at daily resolution.
+  daily_filled_days?: number;
   // Stretches of the window with NO bars. The chart draws a straight line across
   // them; positions were marked at a stale price and no stop could fire there.
   bar_gaps?: { after: string; before: string; days: number }[];

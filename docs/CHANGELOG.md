@@ -36,6 +36,40 @@ The P&L column in the journal is still gross, and now says so.
 but don't post real fee activities, so on paper this job runs, finds nothing,
 and correctly reports "no fees" rather than inventing them.
 
+## A held position no longer goes blind when its symbol stops rising (2026-08-02)
+
+The other half of the flat-line problem, and the more damaging half.
+
+The bar cache stores 15-minute bars **around the days a symbol was a top riser**,
+because those are the days the scanner could have bought it. But a position
+opened on the day a symbol rose can still be open weeks later, long after that
+symbol dropped off every list — and for all those days the replay had no bars for
+it at all.
+
+With no bars the position was invisible: no price to mark it at, so it kept the
+last one it saw, and no bar to check exits against, so its **stop-loss and
+trailing stop could not fire**. It ran unmanaged until the symbol happened to
+rise again. That is what produced the flat line and the cliff.
+
+How wrong that could be: in a test where a position falls 30% after its symbol
+leaves the list, the old behaviour reported the trade as costing **exactly
+nothing** — frozen at the entry price, still open, no loss anywhere in the
+result.
+
+Those days are now covered by the symbol's **daily** bar, which the cache already
+holds for the whole period at no extra cost. The position is valued at that day's
+close and its stops are checked against that day's high and low — the same
+fidelity a daily-bar backtest gives, on those days only. Days that do have
+15-minute bars are untouched, so nothing is downgraded.
+
+Results say how much of the run this applied to ("1,240 symbol-days were checked
+at daily resolution, not 15-minute"), because it changes how finely the stops
+were tested and that shouldn't be buried.
+
+**This will change your numbers, and mostly for the worse.** Losses that were
+hidden behind a frozen price now appear, and stops now fire where they always
+should have. That is the result being correct, not the strategy getting worse.
+
 ## A flat line on the equity chart could be missing data (2026-08-02)
 
 A backtest showed the strategy line going perfectly flat for six weeks and then

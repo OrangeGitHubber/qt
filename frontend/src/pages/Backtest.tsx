@@ -1136,6 +1136,20 @@ export default function Backtest() {
               </p>
             )}
 
+            {(result.daily_filled_days ?? 0) > 0 && (
+              <p className="hint">
+                <strong>
+                  {result.daily_filled_days!.toLocaleString()} symbol-days were checked at daily resolution, not
+                  15-minute.
+                </strong>{" "}
+                The cache stores 15-minute bars around the days a symbol was a top riser, so a position held after its
+                symbol dropped off the list has no intraday bars for those days. Rather than leave it unwatched — no
+                mark, and no chance for a stop to fire — the day's daily bar is used, so the position is valued at that
+                close and its stops are checked against that day's high and low. That's the same fidelity a daily-bar
+                backtest gives, on those days only.
+              </p>
+            )}
+
             {result.intraday_topped_up && (
               <p className="hint">
                 The 15-minute bars this replay needed weren't cached, so they were downloaded as part of this run —

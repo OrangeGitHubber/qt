@@ -103,6 +103,60 @@ class ScannerReplayDataset:
     # signal; run_backtest keeps it look-ahead-safe via _daily_frontier, which
     # only ever reads daily bars completed BEFORE each replay bar's own day.
     daily: dict[str, list[dict]]
+    # Symbol-days an intraday replay had to cover with the DAILY bar because no
+    # 15-minute bars were cached for them. Reported rather than hidden: those days
+    # had their stops checked at daily resolution, not intraday.
+    daily_filled_days: int = 0
+
+
+def _fill_intraday_gaps(
+    intraday: dict[str, list[dict]], daily: dict[str, list[dict]], start_day: str
+) -> tuple[dict[str, list[dict]], int]:
+    """Give every symbol a bar on every day of the window, using its DAILY bar on
+    days it has no intraday ones.
+
+    The intraday cache is filled per MOVER-DAY: when a symbol makes a day's top-N
+    list, that day (plus a short baseline before it) gets 15-minute bars. Nothing
+    else does. So a name that rose once on day 30 and was never a riser again has
+    intraday bars around day 30 and nothing afterwards — while a position opened
+    on day 30 may still be open on day 120.
+
+    For that position the replay was then flying blind: no bar means no mark, so
+    it kept its last seen price, and no bar means no exit check either, so its
+    stop-loss and trailing stop could not fire. The position ran unmanaged until
+    the symbol happened to be a riser again, at which point weeks of price move
+    landed in one step. The equity chart's flat-then-cliff shape was exactly this.
+
+    The daily series is already loaded here, already covers the whole window for
+    every symbol (the daily sweep is universe-wide), and costs nothing extra. On a
+    filled day the position is marked at that day's close and its stops are
+    checked against that day's high and low — daily resolution rather than
+    15-minute, which is precisely what a daily-bar backtest gives and is not
+    blind. Days that DO have intraday bars are untouched, so nothing is
+    double-counted and the resolution is never downgraded.
+
+    Returns the merged bars and how many symbol-days were filled, so the run can
+    report how much of it was checked at which resolution instead of implying the
+    whole thing was intraday.
+    """
+    merged: dict[str, list[dict]] = {}
+    filled = 0
+    for symbol, series in intraday.items():
+        covered = {b["t"][:10] for b in series}
+        # start_day: `daily` deliberately reaches back over the indicator warm-up,
+        # and those earlier bars must not leak into the replay timeline — that
+        # would silently extend the tested window before the period asked for.
+        gap_bars = [
+            b
+            for b in (daily.get(symbol) or [])
+            if b["t"][:10] >= start_day and b["t"][:10] not in covered
+        ]
+        if gap_bars:
+            filled += len(gap_bars)
+            merged[symbol] = sorted(series + gap_bars, key=lambda b: b["t"])
+        else:
+            merged[symbol] = series
+    return merged, filled
 
 
 def load_scanner_replay_dataset(
@@ -179,13 +233,14 @@ def load_scanner_replay_dataset(
             cache, union, warm_start, model=daily_model, stamp=daily_stamp
         )
         if used_intraday:
-            bars = intraday_bars
+            bars, filled = _fill_intraday_gaps(intraday_bars, daily, start_day)
             timeframe = "15Min"
         else:
             bars = {
                 s: [b for b in series if b["t"][:10] >= start_day] for s, series in daily.items()
             }
             timeframe = "1Day"
+            filled = 0  # a daily replay is daily everywhere; nothing to fill
         # Whatever the resolution, a symbol with no bars can't be replayed. Name
         # them rather than quietly shrinking the universe under the user.
         replayed = sorted(s for s in union if bars.get(s))
@@ -198,6 +253,7 @@ def load_scanner_replay_dataset(
         used_intraday=used_intraday, union=union, market=market,
         benchmark_class=market, benchmark_symbol=benchmark_symbol,
         start_day=start_day, days_replayed=len(movers), daily=daily,
+        daily_filled_days=filled,
         replayed=replayed, dropped=dropped, intraday_covered=len(intraday_covered),
     )
 
@@ -245,6 +301,7 @@ def replay_inputs(ds: ScannerReplayDataset, params: dict, replay_top_n: int) -> 
             "universe_size": len(ds.replayed),  # what was TESTED, not what made a list
             "universe_dropped": ds.dropped,
             "intraday_covered": ds.intraday_covered,
+            "daily_filled_days": ds.daily_filled_days,
             "days_replayed": ds.days_replayed,
         },
     }
@@ -805,6 +862,7 @@ async def _scanner_replay(
     result["universe_size"] = len(ds.replayed)  # what was TESTED
     result["universe_dropped"] = ds.dropped
     result["intraday_covered"] = ds.intraday_covered
+    result["daily_filled_days"] = ds.daily_filled_days
     result["days_replayed"] = ds.days_replayed
     timeframe = ds.timeframe
     result["symbols"] = []  # too many to list; summarized by universe_size
