@@ -939,6 +939,19 @@ tr.log-gap td {
   color: var(--text);
 }
 
+/* INPUT areas keep a comfortable column; OUTPUT gets the width.
+   That's the split the wider shell needs. A two-field .filter-grid stretched
+   across 1600px puts "Spread cost" 800px from "History" — auto-fit hands the
+   leftover space to the tracks — so widening made the forms HARDER to scan
+   while leaving a void beside the text. Tables, charts and result panels still
+   run the full width, which is what the extra room was for. */
+.backtest-form,
+form.editor,
+form.filters,
+.settings-form {
+  max-width: 62rem;
+}
+
 /* Long-form text keeps a readable measure even though the shell is now wide: a
    paragraph spanning 1600px runs to ~200 characters a line, far past the 60-75
    the eye tracks without losing its place. Tables and charts want the width;

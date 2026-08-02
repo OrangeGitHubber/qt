@@ -384,7 +384,7 @@ export default function Settings() {
         <summary>
           <h3>Risk rails (apply to every strategy, every mode)</h3>
         </summary>
-        <form onSubmit={saveRisk}>
+        <form className="settings-form" onSubmit={saveRisk}>
         <div className="filter-grid">
           <label>
             Max daily loss ($) <InfoTip k="daily_loss_limit" />
