@@ -36,6 +36,21 @@ The P&L column in the journal is still gross, and now says so.
 but don't post real fee activities, so on paper this job runs, finds nothing,
 and correctly reports "no fees" rather than inventing them.
 
+## Compare-mode trade colours now mean something (2026-08-01)
+
+On the comparison chart, every sell in the hover panel was red — including the
+ones that made money, with **+$18.61** sitting in the same red line contradicting
+itself. The dashboard and the trade tables were fixed for this a while back; the
+backtest chart never was.
+
+Now, matching everywhere else: a **sell takes the colour of what it made**, and a
+**buy stays neutral** because it has no result yet.
+
+Compare mode gains the other half you'd expect: each **strategy's name is tinted
+with its own line colour**, so on a day where both strategies traded you can see
+whose trade each row was without reading the names. Colour never means two things
+at once in the same entry — the name says *who*, the number says *how it went*.
+
 ## Scanner replay ignored your scanner settings (2026-08-01)
 
 TRUMP/USD was on the **never trade these** list, and a backtest kept buying it.

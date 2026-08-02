@@ -184,6 +184,10 @@ export default function Backtest() {
         out.push({
           index: exit,
           kind: "sell",
+          // Tinted by what the sale MADE. Falling back to "sell = red" printed
+          // every profitable exit in loss-red, with the +$18.61 right there in
+          // the same line contradicting it.
+          tone: (t.pnl ?? 0) >= 0 ? "up" : "down",
           text: `Sold ${t.symbol} @ $${t.exit_price} → ${(t.pnl ?? 0) >= 0 ? "+" : ""}$${t.pnl?.toFixed(2)} (${t.exit_reason})`,
         });
       }
@@ -207,23 +211,42 @@ export default function Backtest() {
     const bName = strategies.find((s) => s.id === compareId)?.name ?? "B";
     const out: ChartMarker[] = [];
     const add = (res: BacktestResult, si: number, name: string) => {
+      // The strategy's name wears its own LINE colour, so a busy day reads as
+      // "whose trade was this?" at a glance. Everything after it stays neutral
+      // (a buy) or takes the P&L colour (a sell) — colour never means two things
+      // at once in the same entry.
+      const who = (
+        <span style={{ color: si === 0 ? SERIES_A_COLOR : SERIES_B_COLOR, fontWeight: 600 }}>{name}</span>
+      );
       for (const t of res.trade_list) {
         const e = dayIndex.get(t.entry_day);
         if (e !== undefined)
-          out.push({ index: e, seriesIndex: si, kind: "buy", text: `${name}: bought ${t.qty} ${t.symbol} @ $${t.entry_price}` });
+          out.push({
+            index: e, seriesIndex: si, kind: "buy",
+            text: <>{who}: bought {t.qty} {t.symbol} @ ${t.entry_price}</>,
+          });
         const x = t.exit_day ? dayIndex.get(t.exit_day) : undefined;
         if (x !== undefined)
           out.push({
             index: x,
             seriesIndex: si,
             kind: "sell",
-            text: `${name}: sold ${t.symbol} @ $${t.exit_price} → ${(t.pnl ?? 0) >= 0 ? "+" : ""}$${t.pnl?.toFixed(2)} (${t.exit_reason})`,
+            tone: (t.pnl ?? 0) >= 0 ? "up" : "down",
+            text: (
+              <>
+                {who}: sold {t.symbol} @ ${t.exit_price} → {(t.pnl ?? 0) >= 0 ? "+" : ""}$
+                {t.pnl?.toFixed(2)} ({t.exit_reason})
+              </>
+            ),
           });
       }
       for (const p of res.open_positions) {
         const e = dayIndex.get(p.entry_day);
         if (e !== undefined)
-          out.push({ index: e, seriesIndex: si, kind: "buy", text: `${name}: bought ${p.qty} ${p.symbol} @ $${p.entry_price} (still open)` });
+          out.push({
+            index: e, seriesIndex: si, kind: "buy",
+            text: <>{who}: bought {p.qty} {p.symbol} @ ${p.entry_price} (still open)</>,
+          });
       }
     };
     add(result, 0, aName);

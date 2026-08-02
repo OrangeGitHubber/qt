@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { ReactNode, useEffect, useMemo, useRef, useState } from "react";
 
 interface Series {
   label: string;
@@ -9,7 +9,10 @@ interface Series {
 export interface ChartMarker {
   index: number;
   kind: "buy" | "sell";
-  text: string;
+  // A node, not a string: in compare mode the strategy's NAME is tinted with its
+  // own line colour while the rest of the entry stays neutral, so you can tell
+  // whose trade it was without reading the name.
+  text: ReactNode;
   // Which series line the marker rides (default 0 — the first/strategy line).
   // Comparison charts put strategy B's trades on series 1 so each strategy's
   // markers sit on its own equity line.
