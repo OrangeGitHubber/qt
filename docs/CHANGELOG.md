@@ -3,6 +3,25 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## "Scanner + watchlist" strategies are now backtested as both (2026-08-02)
+
+A strategy whose universe is **scanner *and* watchlist** was being replayed
+against the watchlist alone. The scanner half — the day's risers, which is
+usually where such a strategy does most of its trading — never entered the
+replay at all. Nothing said so: the result came back looking complete, just
+describing half the strategy.
+
+That affected every path that replays history — the backtest, the optimizer's
+search, and the fidelity comparison — so all three were wrong the same way. In
+the fidelity report it was worse than a wrong number: every scanner-driven buy
+came back as "the replay wasn't even looking for it", which reads exactly like a
+bug in the backtester rather than a hole in the universe it was handed.
+
+Now "both" replays each past day's cached risers, with the watchlist names
+**eligible throughout** — they can be bought on any day, not only the days they
+happened to rise. Passing an explicit symbol list still means "test exactly
+these", so a deliberate two-symbol experiment is untouched.
+
 ## Fidelity: a window you edited is now compared piece by piece (2026-08-02)
 
 The last two entries were the machinery. This is the thing they were for.

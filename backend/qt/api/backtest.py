@@ -288,7 +288,7 @@ def _days_between(first: str, last: str) -> list[str]:
 
 def load_scanner_replay_dataset(
     asset_class: str, days: int, replay_top_n: int, scanner_cfg: dict | None = None,
-    *, end: datetime | None = None,
+    *, end: datetime | None = None, always_eligible: list[str] | None = None,
 ) -> ScannerReplayDataset:
     """Read the cached historical top-N risers + their bars for `days` back.
     Prefers cached INTRADAY bars (so intraday exits behave); falls back to daily
@@ -345,8 +345,15 @@ def load_scanner_replay_dataset(
                 detail=f"No cached {asset} movers yet — run a {'crypto ' if crypto else ''}sweep first "
                        "(Settings → Historical bar cache).",
             )
-        eligible_by_day = {day: set(syms) for day, syms in movers.items()}
-        union = sorted({s for syms in movers.values() for s in syms})
+        # `always_eligible` are names the strategy may buy on ANY day regardless
+        # of whether they rose — a watchlist. A "scanner AND watchlist" universe
+        # is otherwise replayed as one or the other: treat it as scanner-only and
+        # every watchlist trade reads as one the replay missed; treat it as
+        # watchlist-only and every scanner trade does. Both are silent, and both
+        # blame the backtester for being pointed at half the universe.
+        pinned = {s.strip().upper() for s in (always_eligible or []) if s.strip()}
+        eligible_by_day = {day: set(syms) | pinned for day, syms in movers.items()}
+        union = sorted({s for syms in movers.values() for s in syms} | pinned)
         # Intraday needs to cover the WHOLE mover set, not just some of it. This
         # used to test `any(...)`, which was safe only by accident: the intraday
         # table was filled exclusively by the "Sweep intraday" job, which fetches
@@ -518,6 +525,7 @@ async def ensure_replay_intraday(
     scanner_cfg: dict | None,
     report=None,
     end: datetime | None = None,
+    always_eligible: list[str] | None = None,
 ) -> tuple[ScannerReplayDataset, bool]:
     """Fetch the 15-minute bars this replay is missing, then re-read the dataset.
 
@@ -576,7 +584,8 @@ async def ensure_replay_intraday(
         sess.close()
 
     fresh = await asyncio.to_thread(
-        load_scanner_replay_dataset, asset_class, days, replay_top_n, scanner_cfg, end=end
+        load_scanner_replay_dataset, asset_class, days, replay_top_n, scanner_cfg, end=end,
+        always_eligible=always_eligible,
     )
     return (fresh, True) if fresh.used_intraday else (ds, False)
 
@@ -911,6 +920,11 @@ def replay_strategy(config) -> dict:
     params = get("params")
     return {
         "asset_class": get("asset_class"),
+        # The replay reads this to decide whether the day's risers are eligible,
+        # so it has to come from the SNAPSHOT like everything else here — a
+        # strategy that has since been switched from "scanner" to "watchlist"
+        # must still replay as the scanner strategy it was.
+        "universe": get("universe"),
         "swing_mode": get("swing_mode"),
         "sizing_usd": get("sizing_usd"),
         "sleeve_usd": get("sleeve_usd"),
@@ -963,8 +977,15 @@ async def replay(
     the basket at the time replays THAT, not today's. `body.strategy_id` is still
     carried for the caller's own bookkeeping and is deliberately not consulted
     here — the config in hand wins."""
-    if body.scanner_replay:
-        return await _scanner_replay(body, strategy_dict, strategy_name, session, client)
+    # An explicit symbol list still means "test exactly these". Absent one, a
+    # scanner-ish universe replays the risers rather than quietly falling through
+    # to the watchlist — which is what "both" (scanner AND watchlist) used to do,
+    # dropping every scanner-driven trade from the replay while the result still
+    # looked complete.
+    if body.scanner_replay or (
+        strategy_dict.get("universe") in ("scanner", "both") and not [s for s in symbols if s.strip()]
+    ):
+        return await _scanner_replay(body, strategy_dict, strategy_name, session, client, symbols)
 
     symbols = [s.strip().upper() for s in symbols if s.strip()]
     if not symbols:
@@ -1125,7 +1146,7 @@ async def replay(
 
 async def _scanner_replay(
     body: BacktestBody, strategy_dict: dict, strategy_name: str,
-    session: Session, client: AlpacaClient,
+    session: Session, client: AlpacaClient, pinned_symbols: list[str] | None = None,
 ) -> dict:
     """Replay the historical 'today's risers' the scanner would have surfaced:
     for each past day, only that day's cached top-N movers are eligible to
@@ -1144,9 +1165,23 @@ async def _scanner_replay(
     # last N days up to today. `span`/`window_end` collapse to `days`/None for an
     # ordinary request, which is why every reload below passes the same pair.
     span, window_end = body.span_days(), body.window_end
+    # A "scanner + watchlist" strategy may buy a watchlist name on ANY day, not
+    # only the days it rose, so those symbols stay eligible throughout instead of
+    # waiting for the movers list to supply them. Before this, "both" fell all
+    # the way through to the watchlist-only path and every scanner-driven trade
+    # silently vanished from the replay — a result that described half the
+    # strategy while looking complete.
+    pinned: list[str] = []
+    if strategy_dict.get("universe") == "both":
+        pinned = [s.strip().upper() for s in (pinned_symbols or []) if s.strip()] or [
+            i.symbol
+            for i in session.query(WatchlistItem)
+            .filter(WatchlistItem.asset_class == strategy_dict["asset_class"])
+            .all()
+        ]
     ds = await asyncio.to_thread(
         load_scanner_replay_dataset, strategy_dict["asset_class"], span, body.replay_top_n, cfg,
-        end=window_end,
+        end=window_end, always_eligible=pinned,
     )
     # Missing 15-minute bars are fetched here rather than sent back as an
     # instruction to go and run a sweep. Runs once per window; afterwards the
@@ -1155,7 +1190,7 @@ async def _scanner_replay(
         client, ds, strategy_dict["params"],
         asset_class=strategy_dict["asset_class"], days=span,
         replay_top_n=body.replay_top_n, scanner_cfg=cfg, report=_report,
-        end=window_end,
+        end=window_end, always_eligible=pinned,
     )
 
     _report("Replaying history…", 0)
@@ -1199,6 +1234,7 @@ async def _scanner_replay(
             ds = await asyncio.to_thread(
                 load_scanner_replay_dataset,
                 strategy_dict["asset_class"], span, body.replay_top_n, cfg, end=window_end,
+                always_eligible=pinned,
             )
             _report("Replaying history…", 0)
             replay_daily = ds.daily if _needs_warmup(strategy_dict["params"]) else None

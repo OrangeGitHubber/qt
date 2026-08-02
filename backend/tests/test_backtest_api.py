@@ -12,7 +12,7 @@ from sqlalchemy.pool import StaticPool
 from qt import security
 from qt.broker.alpaca import SECRET_KEY_ID, SECRET_KEY_SECRET, AlpacaClient
 from qt.db import session_scope
-from qt.models import Strategy, StrategyConfigVersion, Trade
+from qt.models import Strategy, StrategyConfigVersion, Trade, WatchlistItem
 from qt.services import barcache, barsweep
 
 
@@ -145,6 +145,47 @@ def test_scanner_replay_gates_to_cached_movers(client, configured, seeded_cache)
     assert body["timeframe"] == "1Day"
     assert _entries(body) == 1               # MOVER entered (held to end); OTHER gated out
     assert body["open_positions"][0]["symbol"] == "MOVER"
+
+
+@pytest.fixture()
+def watched_other():
+    """OTHER on the stock watchlist — a name that never made a movers list."""
+    with session_scope() as s:
+        s.add(WatchlistItem(symbol="OTHER", asset_class="stock"))
+    yield
+    with session_scope() as s:
+        s.query(WatchlistItem).filter(WatchlistItem.symbol == "OTHER").delete()
+
+
+def test_a_scanner_plus_watchlist_strategy_replays_both(client, configured, seeded_cache, watched_other):
+    """universe="both" means scanner AND watchlist. OTHER rose the same +5% but
+    never made a movers list, so only the pinned watchlist keeps it eligible;
+    MOVER can only come from the scanner replay. Getting both is the only proof
+    that neither half was dropped — and "both" used to fall through to the
+    watchlist alone, silently losing every scanner name."""
+    sid = client.post("/api/strategies", json={**_strategy("stock"), "universe": "both"}).json()["id"]
+    fetch = AsyncMock(side_effect=Exception("no benchmark in test"))
+    with patch.object(AlpacaClient, "historical_bars", new=fetch):
+        # No symbols and no scanner_replay flag: the universe is the strategy's.
+        body = client.post("/api/backtest", json={
+            "strategy_id": sid, "days": 30, "starting_cash": 50000, "spread_pct": 0}).json()
+    assert body["scanner_replay"] is True
+    assert {p["symbol"] for p in body["open_positions"]} == {"MOVER", "OTHER"}
+
+
+def test_a_scanner_plus_watchlist_strategy_still_honours_an_explicit_list(
+    client, configured, seeded_cache, watched_other
+):
+    """Asking for specific symbols still tests exactly those — the derivation
+    above must not seize a deliberate "just these two, please"."""
+    sid = client.post("/api/strategies", json={**_strategy("stock"), "universe": "both"}).json()["id"]
+    fetch = AsyncMock(side_effect=[{"NVDA": BARS}, {"SPY": BARS}])
+    with patch.object(AlpacaClient, "historical_bars", new=fetch):
+        body = client.post("/api/backtest", json={
+            "strategy_id": sid, "symbols": ["NVDA"], "days": 30, "timeframe": "1Hour",
+            "starting_cash": 5000, "spread_pct": 0}).json()
+    assert body.get("scanner_replay") is None   # only the replay path reports it
+    assert body["symbols"] == ["NVDA"]
 
 
 def test_scanner_replay_top_n_narrows_the_eligible_movers(client, configured, monkeypatch):

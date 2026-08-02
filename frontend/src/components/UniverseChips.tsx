@@ -35,7 +35,13 @@ export function resolveUniverse(
   if (strat.universe === "scanner") {
     return { symbols: [], label: "scanner — today’s risers (replayed)", scannerReplay: true };
   }
-  return { symbols: [], label: "your watchlist", scannerReplay: false }; // watchlist | both
+  if (strat.universe === "both") {
+    // Scanner AND watchlist: the risers are replayed day by day, with the
+    // watchlist names eligible throughout. Treating this as watchlist-only
+    // hid every scanner-driven trade from the replay.
+    return { symbols: [], label: "scanner risers (replayed) + your watchlist", scannerReplay: true };
+  }
+  return { symbols: [], label: "your watchlist", scannerReplay: false };
 }
 
 /** Read-only display of that universe, shown under the strategy dropdown. */

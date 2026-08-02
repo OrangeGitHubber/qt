@@ -108,8 +108,10 @@ def test_start_rejects_an_unknown_strategy_immediately(client, configured):
 def test_a_failure_inside_the_job_surfaces_as_an_error(client, configured):
     """The whole point of the rewrite is that failures stop being invisible: a
     422 raised by the handler has to reach the poller, with its status."""
-    sid = client.post("/api/strategies", json=_strategy()).json()["id"]
-    # No symbols passed and an empty watchlist → the handler raises 422.
+    # A WATCHLIST strategy: with no symbols passed and an empty watchlist the
+    # handler raises 422. (A scanner-universe one would replay the cached risers
+    # instead and fail differently, which is not the path under test here.)
+    sid = client.post("/api/strategies", json={**_strategy(), "universe": "watchlist"}).json()["id"]
     start = client.post("/api/backtest/start",
                         json={"strategy_id": sid, "symbols": [], "days": 30,
                               "timeframe": "1Hour", "starting_cash": 5000, "spread_pct": 0})

@@ -225,6 +225,7 @@ async def _run_search(
                     asset_class=replay_ctx["asset_class"], days=replay_ctx["days"],
                     replay_top_n=replay_ctx["replay_top_n"],
                     scanner_cfg=replay_ctx["scanner_cfg"], report=_report,
+                    always_eligible=replay_ctx.get("pinned"),
                 )
                 if topped_up:
                     fresh = replay_inputs(
@@ -271,6 +272,7 @@ async def _run_search(
                             load_scanner_replay_dataset,
                             replay_ctx["asset_class"], replay_ctx["days"],
                             replay_ctx["replay_top_n"], replay_ctx["scanner_cfg"],
+                            always_eligible=replay_ctx.get("pinned"),
                         )
                         fresh = replay_inputs(
                             ds, strategy_dict["params"], replay_ctx["replay_top_n"]
@@ -393,7 +395,10 @@ async def start_optimize(
     # Derived from the strategy, not taken from the request: a scanner strategy
     # IS its day-varying universe, and nothing else can meaningfully opt in or
     # out of that. body.scanner_replay / body.replay_top_n are ignored.
-    scanner_replay = strategy.universe == "scanner"
+    # "both" is scanner AND watchlist: replayed against the risers, with the
+    # watchlist pinned as eligible every day. Searching it as watchlist-only
+    # tuned the settings against half the universe the engine really trades.
+    scanner_replay = strategy.universe in ("scanner", "both")
     replay_top_n = strategy.top_n or 10
     if scanner_replay:
         from qt.api.backtest import load_scanner_replay_dataset, replay_inputs
@@ -403,8 +408,9 @@ async def start_optimize(
         # Same rule as the backtest: search the universe the engine would really
         # trade, not one frozen at sweep time.
         scanner_cfg = scanner_svc.get_config(session)
+        pinned = _resolve_symbols(session, strategy) if strategy.universe == "both" else []
         ds = load_scanner_replay_dataset(
-            strategy.asset_class, body.days, replay_top_n, scanner_cfg
+            strategy.asset_class, body.days, replay_top_n, scanner_cfg, always_eligible=pinned,
         )
         # Derived here only to validate the request and answer it promptly. If the
         # intraday cache is short, the background task tops it up and recomputes
@@ -431,6 +437,7 @@ async def start_optimize(
             "days": body.days,
             "replay_top_n": replay_top_n,
             "scanner_cfg": scanner_cfg,
+            "pinned": pinned,
         }
     else:
         symbols = _resolve_symbols(session, strategy)

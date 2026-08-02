@@ -376,7 +376,12 @@ def _symbols_at(
         # The scanner replays each day's real cached risers, so its universe is
         # reconstructed from history already — nothing to substitute.
         return [], True, True
-    return _strategy_symbols(session, strategy), False, False  # watchlist | both
+    if universe == "both":
+        # Scanner AND watchlist. Scanner-replayed, with the watchlist alongside —
+        # but the watchlist itself is not versioned, so what it held back then is
+        # unknown and this is not a faithful reconstruction.
+        return _strategy_symbols(session, strategy), True, False
+    return _strategy_symbols(session, strategy), False, False  # watchlist
 
 
 def _build_segments(
@@ -793,12 +798,17 @@ async def compare(
     # Scanner strategies replay their real day-varying universe automatically.
     fee_pct = None  # let the backtest use the asset class's real rate
     spread_pct = 0.1
-    scanner_replay = strategy.universe == "scanner"
+    # "both" is scanner AND watchlist: scanner-replayed, with the watchlist
+    # pinned as eligible every day. Treating it as watchlist-only reports every
+    # scanner trade as one the replay missed.
+    scanner_replay = strategy.universe in ("scanner", "both")
     # The strategy's OWN universe, never the watchlist. run() falls back to the
     # watchlist when handed no symbols, which for a custom-universe strategy
     # would replay a different set of names than the one that produced these
     # trades — and then every mismatch would be an artefact of the substitution.
-    symbols = [] if scanner_replay else _strategy_symbols(session, strategy)
+    # "both" is scanner-replayed AND carries its watchlist, which travels as the
+    # always-eligible set rather than as the whole universe.
+    symbols = [] if strategy.universe == "scanner" else _strategy_symbols(session, strategy)
 
     # SHOULD THIS COMPARISON BE SPLIT? Only when a single replay is provably
     # answering the wrong question — the strategy, or the basket it points at,

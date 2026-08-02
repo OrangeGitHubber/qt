@@ -306,6 +306,46 @@ def test_a_basket_edited_mid_window_splits_it_too(client, configured):
 # --- when there are too many edits to split -------------------------------
 
 
+def test_a_scanner_plus_watchlist_segment_is_replayed_as_both(client):
+    """"Scanner + watchlist" is two universes, and the segment has to carry both:
+    scanner-replayed (so each day's risers are eligible) AND holding its watchlist
+    (which travels on as the always-eligible set). Reading it as watchlist-only —
+    what it did before — reported every scanner-driven trade as one the replay
+    never looked for. Contrast the pure-scanner case below, which carries no
+    symbols at all."""
+    from qt.api.fidelity import _symbols_at
+    from qt.models import WatchlistItem
+
+    with session_scope() as s:
+        s.add(WatchlistItem(symbol="PINNED", asset_class="stock"))
+    try:
+        with session_scope() as s:
+            strat = Strategy(
+                name="both-universe", asset_class="stock", universe="both",
+                preset="custom", params=json.dumps({"entry": {}, "exit": {}}),
+                sizing_usd=100, sleeve_usd=1000, max_positions=1,
+            )
+            s.add(strat)
+            s.flush()
+            when = datetime.now(timezone.utc)
+            symbols, scanner, known = _symbols_at(
+                s, strat, {"universe": "both", "asset_class": "stock"}, when
+            )
+            assert scanner is True
+            assert symbols == ["PINNED"]
+            # The watchlist is not versioned, so what it held back then is a guess.
+            assert known is False
+
+            only_scanner, scanner2, known2 = _symbols_at(
+                s, strat, {"universe": "scanner", "asset_class": "stock"}, when
+            )
+            assert (only_scanner, scanner2, known2) == ([], True, True)
+            s.query(Strategy).filter(Strategy.id == strat.id).delete()
+    finally:
+        with session_scope() as s:
+            s.query(WatchlistItem).filter(WatchlistItem.symbol == "PINNED").delete()
+
+
 def test_the_change_log_says_what_moved_and_how_much_traded_after_it():
     """Werner's ask: show the edits alongside the trades. A flat list of 48
     mismatches is unreadable; "the universe widened on the 24th and 30 of them
