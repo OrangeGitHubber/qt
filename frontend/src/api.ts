@@ -1247,7 +1247,26 @@ export interface FidelityReport {
   execution_is_measurable: boolean;
   // The comparison told trade by trade, in order, in plain words. The buckets
   // summarise; this is the part you read.
-  log: { day: string; at: string | null; symbol: string; verdict: string; detail: string }[];
+  log: {
+    day: string;
+    at: string | null;
+    symbol: string;
+    action: string;
+    verdict: string;
+    detail: string;
+  }[];
+  // Everything that happened to this strategy in one stream, ordered by the
+  // clock: buys, sells and the edits between them. Separate lists made the
+  // reader do the merge, and the merge is the point.
+  timeline: {
+    kind: "trade" | "edit";
+    day: string;
+    at: string | null;
+    symbol: string;
+    action: string;
+    verdict: string;
+    detail: string;
+  }[];
   // The window actually compared — clamped to the strategy's own lifetime, since
   // replaying history it never lived through scores every trade the replay takes
   // there as one it invented.

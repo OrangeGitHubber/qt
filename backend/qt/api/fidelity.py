@@ -960,6 +960,36 @@ async def compare(
             sum(1 for s in segments if not s.universe_known) if segmented else 0
         ),
     }
+    # ONE stream: buys, sells, strategy edits and basket edits, ordered by when
+    # each actually happened. Separate lists made the reader do the merge in
+    # their head — and the merge is the whole point, because "the replay invented
+    # four trades" means something entirely different once you can see the
+    # universe widened eleven minutes earlier.
+    report["timeline"] = sorted(
+        [{**r, "kind": "trade"} for r in report.get("log") or []]
+        + [
+            {
+                "kind": "edit",
+                "at": c["at"],
+                "day": (c["at"] or "")[:10],
+                "symbol": "",
+                "action": "edited",
+                "verdict": "strategy changed",
+                "detail": (
+                    "Strategy edited: "
+                    + ("; ".join(
+                        f"{d['field']} {json.dumps(d['then'])} → {json.dumps(d['now'])}"
+                        for d in c["changed"]
+                    ) or "settings changed")
+                    + f". {c['live_trades_after']} real trade"
+                    + ("" if c["live_trades_after"] == 1 else "s")
+                    + " followed before the next change."
+                ),
+            }
+            for c in (report.get("config") or {}).get("changes") or []
+        ],
+        key=lambda r: (str(r["at"] or r["day"]), r.get("symbol") or ""),
+    )
     report["window"] = {
         "start": _iso(since),
         "end": _iso(until),

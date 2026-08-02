@@ -733,9 +733,11 @@ def test_the_log_reads_as_a_comparison_not_a_bucket_count():
         [_live("XYZ", "2026-07-29", entry=100.0) | {"entry_at": _at("2026-07-29", "14:14")}],
         _result([_sim("XYZ", "2026-07-29", entry=100.0) | {"entry_at": _at("2026-07-29", "14:00")}]),
     )
-    row = out["log"][0]
-    assert row["verdict"] == "match"
-    assert "14:14" in row["detail"] and "14:00" in row["detail"]
+    buy = next(r for r in out["log"] if r["action"] == "bought")
+    assert buy["verdict"] == "match"
+    # Both clocks, because "three hours later" and "a day later" are different
+    # findings and a day-grouped row cannot tell them apart.
+    assert "14:14" in buy["detail"] and "14:00" in buy["detail"]
 
 
 def test_an_exit_a_day_late_is_named_as_such():
@@ -745,9 +747,12 @@ def test_an_exit_a_day_late_is_named_as_such():
         [_live("ABC", "2026-07-29", exit_day="2026-07-31", exit_reason="trailing stop: -4%")],
         _result([_sim("ABC", "2026-07-29", exit_day="2026-08-01", exit_reason="stop-loss: -10%")]),
     )
-    row = out["log"][0]
-    assert row["verdict"] == "exit timing differs"
-    assert "2026-07-31" in row["detail"] and "2026-08-01" in row["detail"]
+    sell = next(r for r in out["log"] if r["action"] == "sold")
+    assert sell["verdict"] == "timing differs"
+    assert "2026-07-31" in sell["detail"] and "2026-08-01" in sell["detail"]
+    # The BUY still matched — the disagreement is the exit, and saying so is the
+    # difference between "chase the exit rule" and "chase the entry rule".
+    assert next(r for r in out["log"] if r["action"] == "bought")["verdict"] == "match"
 
 
 def test_a_missed_trade_says_whether_the_replay_was_even_looking():
@@ -768,9 +773,10 @@ def test_a_hand_closed_trade_says_its_exit_is_not_compared():
         [_live("NVDA", "2026-07-29", exit_reason="force-closed by hand (market order)")],
         _result([_sim("NVDA", "2026-07-29", exit_reason="take-profit: +10%")]),
     )
-    row = out["log"][0]
-    assert row["verdict"] == "entry matched"
-    assert "by hand" in row["detail"]
+    sell = next(r for r in out["log"] if r["action"] == "sold")
+    assert sell["verdict"] == "not compared"
+    assert "by hand" in sell["detail"]
+    assert next(r for r in out["log"] if r["action"] == "bought")["verdict"] == "match"
 
 
 def test_the_log_is_in_time_order():
@@ -779,4 +785,5 @@ def test_the_log_is_in_time_order():
         [_live("B", "2026-07-30"), _live("A", "2026-07-28")],
         _result([_sim("B", "2026-07-30"), _sim("A", "2026-07-28")]),
     )
-    assert [r["day"] for r in out["log"]] == ["2026-07-28", "2026-07-30"]
+    # Buys and sells interleaved by when they happened, not grouped per trade.
+    assert [r["day"] for r in out["log"]] == sorted(r["day"] for r in out["log"])

@@ -575,3 +575,80 @@ def test_the_window_still_opens_at_midnight_so_that_days_trades_count(client, co
 
     assert body["window"]["start"].endswith("T00:00:00+00:00"), "the go-live day's trades would be lost"
     assert body["decision"]["live_trades"] == 1
+
+
+def test_the_timeline_interleaves_edits_with_trades_by_the_clock(client, configured):
+    """One stream, ordered by when things happened. Separate lists made the
+    reader merge them mentally, and the merge is the point: "the replay invented
+    four trades" means something completely different once you can see the
+    universe widened minutes earlier."""
+    from unittest.mock import AsyncMock, patch
+
+    from qt.broker.alpaca import AlpacaClient
+
+    sid = client.post("/api/strategies", json=_strategy_body(3, ["TMLN"], "timeline")).json()["id"]
+    now = datetime.now(timezone.utc)
+    with session_scope() as s:
+        for days_ago in (9, 3):
+            s.add(Trade(
+                strategy_id=sid, mode="paper", symbol="TMLN", asset_class="stock",
+                status="closed", qty=10, notional=1000, entry_price=100.0, exit_price=110.0,
+                pnl=100.0, entry_reason="gain 5%", exit_reason="take-profit: +10%",
+                entry_at=now - timedelta(days=days_ago),
+                exit_at=now - timedelta(days=days_ago - 1),
+            ))
+    # An edit BETWEEN the two trades.
+    edited = _strategy_body(9, ["TMLN"], "timeline")
+    client.put(f"/api/strategies/{sid}", json=edited)
+    with session_scope() as s:
+        newest = (
+            s.query(StrategyConfigVersion)
+            .filter_by(strategy_id=sid)
+            .order_by(StrategyConfigVersion.version_no.desc())
+            .first()
+        )
+        newest.created_at = now - timedelta(days=6)
+
+    bars = [{"t": (now - timedelta(days=n)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+             "o": 100, "h": 100, "l": 100, "c": 100, "v": 1e6, "vw": 100} for n in (11, 10, 9)]
+    with patch.object(AlpacaClient, "historical_bars", new=AsyncMock(return_value={"TMLN": bars})):
+        body = client.post("/api/fidelity/compare", json={"strategy_id": sid}).json()
+
+    timeline = body["timeline"]
+    kinds = [r["kind"] for r in timeline]
+    assert "edit" in kinds, "the strategy edit is missing from the timeline"
+    assert "trade" in kinds
+    # Ordered by the clock, not grouped by kind or by day — which is what puts an
+    # edit between the trades on either side of it. Asserting a fixed INDEX for
+    # the edit would test the fixture's backdating rather than the merge, so the
+    # ordering itself is the claim.
+    stamps = [str(r["at"] or r["day"]) for r in timeline]
+    assert stamps == sorted(stamps)
+    # Buys and sells are separate events, so a two-trade window yields four.
+    assert len([r for r in timeline if r["kind"] == "trade"]) == 4
+
+
+def test_a_sale_is_its_own_event_at_its_own_time(client, configured):
+    """A position bought Monday and sold Thursday is two things that happened.
+    Collapsing them into one row dated Monday hides when the sell landed."""
+    from unittest.mock import AsyncMock, patch
+
+    from qt.broker.alpaca import AlpacaClient
+
+    sid = client.post("/api/strategies", json=_strategy_body(3, ["SELL"], "sale event")).json()["id"]
+    now = datetime.now(timezone.utc)
+    with session_scope() as s:
+        s.add(Trade(
+            strategy_id=sid, mode="paper", symbol="SELL", asset_class="stock",
+            status="closed", qty=10, notional=1000, entry_price=100.0, exit_price=110.0,
+            pnl=100.0, entry_reason="gain 5%", exit_reason="take-profit: +10%",
+            entry_at=now - timedelta(days=8), exit_at=now - timedelta(days=4),
+        ))
+    bars = [{"t": (now - timedelta(days=n)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+             "o": 100, "h": 100, "l": 100, "c": 100, "v": 1e6, "vw": 100} for n in (10, 9, 8)]
+    with patch.object(AlpacaClient, "historical_bars", new=AsyncMock(return_value={"SELL": bars})):
+        body = client.post("/api/fidelity/compare", json={"strategy_id": sid}).json()
+
+    actions = [(r["action"], r["day"]) for r in body["timeline"] if r["kind"] == "trade"]
+    assert ("bought", (now - timedelta(days=8)).strftime("%Y-%m-%d")) in actions
+    assert ("sold", (now - timedelta(days=4)).strftime("%Y-%m-%d")) in actions

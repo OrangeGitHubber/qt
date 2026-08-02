@@ -419,29 +419,40 @@ export default function FidelityPanel() {
             </p>
           )}
 
-          {report.log.length > 0 && (
+          {report.timeline.length > 0 && (
             <>
-              <h4>Trade by trade</h4>
+              <h4>What happened, in order</h4>
               <p className="hint">
-                Every decision either side made, in the order it happened. This is the part that names a bug: "the
-                replay held a day longer" is something to go and fix, where a percentage is not.
+                Every buy, every sell, and every edit in between — at the moment each happened, not grouped by day.
+                This is the part that names a bug: "the replay sold three hours later" is something to go and fix,
+                where a percentage is not. An edit in the middle explains the rows after it.
               </p>
               <div className="table-scroll">
                 <table>
                   <thead>
                     <tr>
-                      <th>Day</th>
+                      <th>When</th>
                       <th>Symbol</th>
+                      <th>What</th>
                       <th>Verdict</th>
-                      <th>What happened</th>
+                      <th>Detail</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {report.log.map((r, i) => (
-                      <tr key={`${r.day}-${r.symbol}-${i}`}>
-                        <td>{r.day}</td>
-                        <td>{r.symbol}</td>
-                        <td className={r.verdict === "match" ? "up" : r.verdict === "entry matched" ? "" : "down"}>
+                    {report.timeline.map((r, i) => (
+                      <tr key={`${r.at ?? r.day}-${r.symbol}-${i}`} className={r.kind === "edit" ? "cmp-win" : ""}>
+                        <td className="tabular">
+                          {r.at ? r.at.slice(0, 10) : r.day}
+                          {r.at && r.at.includes("T") ? <span className="hint"> {r.at.slice(11, 16)}</span> : null}
+                        </td>
+                        <td>{r.symbol || "—"}</td>
+                        <td>{r.action}</td>
+                        <td
+                          className={
+                            r.verdict === "match" ? "up" : r.kind === "edit" ? "" :
+                            r.verdict.includes("not compared") || r.verdict.includes("nothing") ? "" : "down"
+                          }
+                        >
                           {r.verdict}
                         </td>
                         <td className="hint">{r.detail}</td>

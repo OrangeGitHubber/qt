@@ -139,6 +139,31 @@ The P&L column in the journal is still gross, and now says so.
 but don't post real fee activities, so on paper this job runs, finds nothing,
 and correctly reports "no fees" rather than inventing them.
 
+## One timeline: every buy, sell and edit, by the clock (2026-08-02)
+
+The trade log grouped by day and kept the strategy edits in a separate list, so
+reading it meant merging two things in your head — and the merge was the point.
+"The replay invented four trades" means something entirely different once you can
+see the universe widened eleven minutes earlier.
+
+Now it is a single stream, ordered by the exact moment each thing happened:
+
+> *2026-07-29 **14:33** · TMLN · bought · match — Both bought TMLN.*
+> *2026-07-29 **16:02** · — · edited · strategy changed — Universe "basket" →
+> "scanner". 3 real trades followed before the next change.*
+> *2026-07-30 **09:15** · TMLN · sold · timing differs — You sold on 2026-07-30
+> (trailing stop); the replay held until 2026-08-01 (stop-loss).*
+
+Buys and sells are separate events at their own timestamps, because a position
+bought Monday and sold Thursday is two things that happened, and a row dated
+Monday hides when the sell landed. Times are exact and unrounded: "the replay
+sold three hours later" and "sold a day later" are different findings, and a
+day-grouped log cannot tell them apart.
+
+Sales of trades the replay never took are listed too, marked as having nothing to
+compare against. A timeline that quietly drops them isn't a record of what
+happened.
+
 ## The replay no longer gets a head start on go-live day (2026-08-02)
 
 If a strategy went live at 14:30, a replay that opened at midnight had the whole

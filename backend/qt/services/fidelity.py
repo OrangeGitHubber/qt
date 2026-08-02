@@ -127,6 +127,9 @@ def compare(
                     "pnl": live.get("pnl"),
                     "entry_reason": live.get("entry_reason"),
                     "entry_at": live.get("entry_at"),
+                    "exit_at": live.get("exit_at"),
+                    "exit_day": live.get("exit_day"),
+                    "exit_reason": live.get("exit_reason"),
                     # Whether the replay was even LOOKING at this symbol. A name
                     # outside the replayed universe was never going to be found,
                     # so calling it "the backtest missed a trade" blames the
@@ -160,6 +163,8 @@ def compare(
                 "sim_pnl": sim.get("pnl"),
                 "live_entry_at": live.get("entry_at"),
                 "sim_entry_at": sim.get("entry_at"),
+                "live_exit_at": live.get("exit_at"),
+                "sim_exit_at": sim.get("exit_at"),
                 "live_exit_reason": live.get("exit_reason"),
                 "sim_exit_reason": sim.get("exit_reason"),
                 # False when a human or the broker ended this trade, not a rule.
@@ -192,6 +197,7 @@ def compare(
             "day": key[1],
             "sim_entry": sim.get("entry_price"),
             "sim_pnl": sim.get("pnl"),
+            "sim_entry_at": sim.get("entry_at"),
             "sim_exit_reason": sim.get("exit_reason"),
         }
         if key in rejected_keys:
@@ -257,70 +263,80 @@ def _clock(iso: str | None) -> str:
 
 
 def _trade_log(matched: list[dict], live_only: list[dict], backtest_only: list[dict]) -> list[dict]:
-    """Every decision either side made, in order, each with a verdict.
+    """Every buy and sell either side made, as separate events at their own
+    timestamps.
 
-    Written as sentences rather than columns of numbers because the question
-    being asked is "does the replay behave like the engine", and the answer is
-    only useful when it names the difference: same day but three hours later,
-    out a day early, never taken at all."""
+    One event per action, not one row per trade: a position bought on Monday and
+    sold on Thursday is two things that happened, and collapsing them into a row
+    dated Monday hides when the sell actually landed. Timestamps are exact and
+    unrounded — "the replay sold three hours later" and "the replay sold a day
+    later" are different findings, and a day-grouped log cannot tell them apart.
+    """
     rows: list[dict] = []
-    for m in matched:
-        live_t, sim_t = _clock(m.get("live_entry_at")), _clock(m.get("sim_entry_at"))
-        when = f" (live {live_t}, replay {sim_t})" if live_t and sim_t else ""
-        if m["exit_comparable"] is False:
-            verdict, detail = "entry matched", (
-                f"Both bought {m['symbol']}{when}. You closed this one by hand, so the exit "
-                "isn't compared."
-            )
-        elif m["exit_day_matches"] and m["exit_reason_matches"] is not False:
-            verdict, detail = "match", (
-                f"Both bought {m['symbol']}{when} and both sold on {m['sim_exit_day']}"
-                f" — {m['sim_exit_reason'] or 'same reason'}."
-            )
-        elif not m["exit_day_matches"] and m["live_exit_day"] and m["sim_exit_day"]:
-            verdict, detail = "exit timing differs", (
-                f"Both bought {m['symbol']}{when}. You sold on {m['live_exit_day']} "
-                f"({m['live_exit_reason']}); the replay held until {m['sim_exit_day']} "
-                f"({m['sim_exit_reason']})."
-            )
-        elif m["live_exit_day"] and not m["sim_exit_day"]:
-            verdict, detail = "replay never sold", (
-                f"Both bought {m['symbol']}{when}. You sold on {m['live_exit_day']} "
-                f"({m['live_exit_reason']}); the replay was still holding at the end."
-            )
-        else:
-            verdict, detail = "exit reason differs", (
-                f"Both bought {m['symbol']}{when} and both sold on {m['sim_exit_day']}, but for "
-                f"different reasons — you: {m['live_exit_reason']}; the replay: {m['sim_exit_reason']}."
-            )
-        rows.append({"day": m["day"], "at": m.get("live_entry_at"), "symbol": m["symbol"],
+
+    def event(at, day, symbol, action, verdict, detail):
+        rows.append({"at": at, "day": day, "symbol": symbol, "action": action,
                      "verdict": verdict, "detail": detail})
 
-    for r in live_only:
-        detail = (
-            f"You bought {r['symbol']}"
-            + (f" at {_clock(r.get('entry_at'))}" if _clock(r.get("entry_at")) else "")
-            + ". The replay did not."
+    for m in matched:
+        live_t, sim_t = _clock(m.get("live_entry_at")), _clock(m.get("sim_entry_at"))
+        gap = f" — the replay was {live_t} vs {sim_t}" if live_t and sim_t and live_t != sim_t else ""
+        event(
+            m.get("live_entry_at") or m["day"], m["day"], m["symbol"], "bought",
+            "match",
+            f"Both bought {m['symbol']}{gap or ' at the same point'}.",
         )
-        detail += (
+        if m["exit_comparable"] is False:
+            event(m.get("live_exit_at") or m["live_exit_day"], m["live_exit_day"], m["symbol"],
+                  "sold", "not compared",
+                  f"You closed {m['symbol']} by hand, so its exit isn't judged against the replay.")
+        elif m["live_exit_day"] and not m["sim_exit_day"]:
+            event(m.get("live_exit_at") or m["live_exit_day"], m["live_exit_day"], m["symbol"],
+                  "sold", "replay never sold",
+                  f"You sold {m['symbol']} ({m['live_exit_reason']}). The replay was still "
+                  "holding it when the window ended.")
+        elif m["exit_day_matches"] and m["exit_reason_matches"] is not False:
+            live_x, sim_x = _clock(m.get("live_exit_at")), _clock(m.get("sim_exit_at"))
+            when = f" — the replay was {live_x} vs {sim_x}" if live_x and sim_x and live_x != sim_x else ""
+            event(m.get("live_exit_at") or m["live_exit_day"], m["live_exit_day"], m["symbol"],
+                  "sold", "match",
+                  f"Both sold {m['symbol']}, {m['sim_exit_reason'] or 'same reason'}{when}.")
+        elif not m["exit_day_matches"]:
+            event(m.get("live_exit_at") or m["live_exit_day"], m["live_exit_day"], m["symbol"],
+                  "sold", "timing differs",
+                  f"You sold {m['symbol']} on {m['live_exit_day']} ({m['live_exit_reason']}); "
+                  f"the replay held until {m['sim_exit_day']} ({m['sim_exit_reason']}).")
+        else:
+            event(m.get("live_exit_at") or m["live_exit_day"], m["live_exit_day"], m["symbol"],
+                  "sold", "reason differs",
+                  f"Both sold {m['symbol']} the same day, but you on {m['live_exit_reason']} "
+                  f"and the replay on {m['sim_exit_reason']}.")
+
+    for r in live_only:
+        why = (
             " It wasn't in the universe the replay covered, so it was never looking for it."
             if r.get("in_replayed_universe") is False
-            else " It was looking at this symbol and passed — either it had no bars for that day,"
-            " or its view of the day differed. This is the kind that points at a real bug."
+            else " The replay was watching this symbol and passed — no bars for that day, or a"
+            " different view of it. This is the kind that points at a real bug."
         )
-        rows.append({"day": r["day"], "at": r.get("entry_at"), "symbol": r["symbol"],
-                     "verdict": "replay missed it", "detail": detail})
+        event(r.get("entry_at") or r["day"], r["day"], r["symbol"], "bought",
+              "replay missed it", f"You bought {r['symbol']}. The replay did not." + why)
+        # The sale really happened, so it belongs in the log even though there is
+        # nothing to compare it against — a timeline that quietly drops the exits
+        # of trades the replay missed is not a record of what happened.
+        if r.get("exit_day"):
+            event(r.get("exit_at") or r["exit_day"], r["exit_day"], r["symbol"], "sold",
+                  "nothing to compare",
+                  f"You sold {r['symbol']} ({r.get('exit_reason') or 'no reason recorded'}). "
+                  "The replay never held it, so there is no exit to judge this against.")
 
     for r in backtest_only:
-        rows.append({
-            "day": r["day"], "at": None, "symbol": r["symbol"],
-            "verdict": "replay invented it",
-            "detail": f"The replay bought {r['symbol']} on {r['day']}. You never did — so the "
-                      "backtest believes something was tradable that wasn't.",
-        })
+        event(r.get("sim_entry_at") or r["day"], r["day"], r["symbol"], "bought",
+              "replay invented it",
+              f"The replay bought {r['symbol']}. You never did — it believes something was "
+              "tradable that wasn't.")
 
-    # Ordered by time, falling back to the day when a side has no clock.
-    return sorted(rows, key=lambda r: (r["day"], r["at"] or "", r["symbol"]))
+    return sorted(rows, key=lambda r: (str(r["at"] or r["day"]), r["symbol"]))
 
 
 def _decision_stats(matched: list[dict], live_only: list[dict], backtest_only: list[dict]) -> dict:
