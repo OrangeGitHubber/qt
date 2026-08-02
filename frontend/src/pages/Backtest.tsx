@@ -1093,11 +1093,19 @@ export default function Backtest() {
                 <p className="hint warn">
                   <IconWarn className="icon-inline" /> <strong>This ran on daily bars, not intraday.</strong> Your strategy trades intraday
                   (flatten-before-close / no overnight hold), which a daily-bar replay can't simulate — positions look
-                  like they exit the next day and stops can gap overnight instead of firing intraday. Run a{" "}
-                  <strong>{strategy.asset_class === "crypto" ? "crypto intraday sweep" : "intraday sweep"}</strong>{" "}
-                  (Settings → Historical bar cache) so replay uses 15-minute bars, then re-run for a true test.
+                  like they exit the next day and stops can gap overnight instead of firing intraday. The missing
+                  15-minute bars were requested automatically for this run but couldn't all be fetched — usually a rate
+                  limit or a brief outage. <strong>Re-running picks up where it stopped</strong>, since everything that
+                  did arrive is now cached.
                 </p>
               )}
+            {result.intraday_topped_up && (
+              <p className="hint">
+                The 15-minute bars this replay needed weren't cached, so they were downloaded as part of this run —
+                which is why it took longer than usual. They're stored now: the same period replays offline from here
+                on.
+              </p>
+            )}
             {/* The honest-run note: signals were still daily (as live reads
                 them) but the stops were checked bar by intraday bar, so the
                 warning below deliberately does NOT apply here. */}

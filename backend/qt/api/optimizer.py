@@ -117,6 +117,7 @@ async def _run_search(
     prebuilt_daily: dict | None = None,
     eligible_by_day: dict | None = None,
     replay_extra: dict | None = None,
+    replay_ctx: dict | None = None,
     mixed: bool = False,
 ) -> None:
     """Background worker: get the bars once, then run the search in a worker
@@ -147,6 +148,37 @@ async def _run_search(
             # Scanner replay: the daily series read from the same cache, used as
             # the INDICATOR source only (never split, never the replay timeline).
             daily_bars = prebuilt_daily
+            if replay_ctx:
+                # Top up the intraday cache if this strategy needs bars the cache
+                # is short of, then recompute everything from the reloaded
+                # dataset — the search must describe what it ACTUALLY replayed,
+                # and after a successful top-up that is a different (intraday,
+                # possibly mixed) dataset than the request handler saw.
+                from qt.api.backtest import ensure_replay_intraday, replay_inputs
+
+                _progress.phase = "downloading 15-minute bars"
+
+                def _report(msg: str, _pct: int | None = None) -> None:
+                    _progress.phase = msg
+
+                ds2, topped_up = await ensure_replay_intraday(
+                    client, replay_ctx["ds"], strategy_dict["params"],
+                    asset_class=replay_ctx["asset_class"], days=replay_ctx["days"],
+                    replay_top_n=replay_ctx["replay_top_n"],
+                    scanner_cfg=replay_ctx["scanner_cfg"], report=_report,
+                )
+                if topped_up:
+                    fresh = replay_inputs(
+                        ds2, strategy_dict["params"], replay_ctx["replay_top_n"]
+                    )
+                    bars = fresh["bars"]
+                    daily_bars = fresh["daily"]
+                    eligible_by_day = fresh["eligible_by_day"]
+                    timeframe = fresh["timeframe"]
+                    mixed = fresh["mixed"]
+                    if replay_extra is not None:
+                        replay_extra.update(fresh["extra"])
+                        replay_extra["intraday_topped_up"] = True
         else:
             # Read-through the bar cache: only the missing recent edge is actually
             # downloaded, and any cache trouble degrades to a plain fetch.
@@ -245,6 +277,7 @@ async def start_optimize(
     prebuilt_bars: dict | None = None
     prebuilt_daily: dict | None = None
     eligible_by_day: dict | None = None
+    replay_ctx: dict | None = None
     replay_extra: dict | None = None
     timeframe = body.timeframe
     mixed = False
@@ -254,28 +287,27 @@ async def start_optimize(
     scanner_replay = strategy.universe == "scanner"
     replay_top_n = strategy.top_n or 10
     if scanner_replay:
-        from qt.api.backtest import load_scanner_replay_dataset
+        from qt.api.backtest import load_scanner_replay_dataset, replay_inputs
 
         from qt.services import scanner as scanner_svc
 
         # Same rule as the backtest: search the universe the engine would really
         # trade, not one frozen at sweep time.
+        scanner_cfg = scanner_svc.get_config(session)
         ds = load_scanner_replay_dataset(
-            strategy.asset_class, body.days, replay_top_n, scanner_svc.get_config(session)
+            strategy.asset_class, body.days, replay_top_n, scanner_cfg
         )
-        prebuilt_bars = ds.bars
-        eligible_by_day = ds.eligible_by_day
-        timeframe = ds.timeframe  # 15Min if intraday cached, else 1Day — from the cache
-        # Same rule as the scanner-replay backtest: MACD/RSI/ATR are daily signals
-        # live, so they come from the daily series, never from the replay stream.
-        # This is what makes a scanner strategy's search MIXED — previously the
-        # replay path had no route to the daily bars at all, so an intraday replay
-        # computed a "14-period ATR" over 15-minute bars and a daily replay checked
-        # every searched stop once a day at the close.
-        from qt.api.backtest import _needs_warmup as _nw
-
-        prebuilt_daily = ds.daily if _nw(json.loads(strategy.params)) else None
-        mixed = bool(ds.used_intraday and prebuilt_daily)
+        # Derived here only to validate the request and answer it promptly. If the
+        # intraday cache is short, the background task tops it up and recomputes
+        # ALL of this from the reloaded dataset — the download is far too slow to
+        # hold a request open for (Cloudflare cuts the origin off at 100s).
+        inputs = replay_inputs(ds, json.loads(strategy.params), replay_top_n)
+        prebuilt_bars = inputs["bars"]
+        prebuilt_daily = inputs["daily"]
+        eligible_by_day = inputs["eligible_by_day"]
+        timeframe = inputs["timeframe"]
+        mixed = inputs["mixed"]
+        replay_extra = inputs["extra"]
         # Names that made a top-N list AND actually have bars (offline: no 25 cap).
         # Searching over ds.union would hand the optimizer symbols with no data —
         # silently dropped downstream, exactly the way the backtest used to drop
@@ -283,14 +315,13 @@ async def start_optimize(
         # backtest was fixed to report what it REPLAYED; this is the other consumer
         # of the same dataset and has to agree.
         symbols = ds.replayed
-        replay_extra = {
-            "scanner_replay": True,
-            "replay_intraday": ds.used_intraday,
+        # What the task needs to re-read the dataset for itself after a top-up.
+        replay_ctx = {
+            "ds": ds,  # same in-process objects already passed as prebuilt_bars
+            "asset_class": strategy.asset_class,
+            "days": body.days,
             "replay_top_n": replay_top_n,
-            "universe_size": len(ds.replayed),  # what was TESTED, not what made a list
-            "universe_dropped": ds.dropped,
-            "intraday_covered": ds.intraday_covered,
-            "days_replayed": ds.days_replayed,
+            "scanner_cfg": scanner_cfg,
         }
     else:
         symbols = _resolve_symbols(session, strategy)
@@ -368,6 +399,7 @@ async def start_optimize(
             timeframe, body.days, body.iterations, body.starting_cash, body.spread_pct,
             prebuilt_bars=prebuilt_bars, prebuilt_daily=prebuilt_daily,
             eligible_by_day=eligible_by_day, replay_extra=replay_extra,
+            replay_ctx=replay_ctx,
             mixed=mixed,
         )
     )

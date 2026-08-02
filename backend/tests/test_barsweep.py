@@ -418,3 +418,45 @@ def test_daily_movers_update_pulls_recent_and_reranks():
     assert summary["days_reconstructed"] >= 1
     movers = barcache.top_movers(s, d_today)
     assert movers[0].symbol == "AAA" and movers[0].rank == 1   # biggest riser ranked first
+
+
+def test_sweep_intraday_fills_the_names_a_day_is_missing():
+    """Resume is per (day, SYMBOL), not per day.
+
+    Day-level resume was safe only while this sweep was the sole writer to the
+    intraday table. Ordinary backtests cache the bars they fetch too, so one
+    incidental symbol could mark a whole mover-day "done" — and because replay
+    only uses intraday bars when they cover the ENTIRE mover set, the cache got
+    stuck one symbol short of usable, permanently, since every later sweep
+    skipped the day as well."""
+    s = _mem_session()
+    barcache.store_movers(s, "2026-06-02", [("AAA", 40.0, 5.0, 1e7), ("BBB", 30.0, 8.0, 1e7)])
+    s.commit()
+    # AAA arrived incidentally (e.g. a plain backtest of AAA); BBB never did.
+    barcache.save_intraday_bars(s, "AAA", [_ibar("2026-06-02T14:00:00Z", 6.9)])
+    s.commit()
+
+    client = FakeIntradayClient({"BBB": [_ibar("2026-06-01T14:00:00Z", 7.9),
+                                         _ibar("2026-06-02T14:00:00Z", 9.9)]})
+    summary = asyncio.run(barsweep.sweep_intraday_movers(client, s, retry_delay=0))
+
+    assert summary["skipped"] == 0            # the day is NOT considered done
+    assert len(client.calls) == 1
+    assert client.calls[0][0] == ("BBB",)     # only the missing name is fetched
+    assert barcache.cached_intraday_bars(s, ["BBB"], "2026-06-01")["BBB"]
+
+
+def test_sweep_intraday_still_skips_a_fully_covered_day():
+    """The flip side: when every mover for the day is present, nothing is
+    re-fetched. Resumability was the point of the day check and must survive."""
+    s = _mem_session()
+    barcache.store_movers(s, "2026-06-02", [("AAA", 40.0, 5.0, 1e7), ("BBB", 30.0, 8.0, 1e7)])
+    s.commit()
+    for sym in ("AAA", "BBB"):
+        barcache.save_intraday_bars(s, sym, [_ibar("2026-06-02T14:00:00Z", 6.9)])
+    s.commit()
+
+    client = FakeIntradayClient({})
+    summary = asyncio.run(barsweep.sweep_intraday_movers(client, s, retry_delay=0))
+    assert summary["skipped"] == 1
+    assert client.calls == []

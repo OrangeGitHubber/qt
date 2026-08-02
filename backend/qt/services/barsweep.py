@@ -234,6 +234,7 @@ async def sweep_intraday_movers(
     since_day: str | None = None,
     progress: IntradayProgressFn | None = None,
     retry_delay: float = 2.0,
+    attempts: int = 3,
     asset_class: str = "stock",
     mover_model=DailyMover,
     intraday_model=IntradayBar,
@@ -259,27 +260,38 @@ async def sweep_intraday_movers(
         by_day.setdefault(day, []).append(symbol)
 
     days = sorted(by_day)
-    # Resumable: skip mover-days already pulled. Bars are committed per day, so a
-    # day is either fully cached or not started — a re-run after an interruption
-    # (or a rate-limit-heavy stretch) continues where it stopped instead of
-    # re-fetching everything and re-hitting the wall.
-    done = {row[0] for row in sess.query(func.substr(intraday_model.ts, 1, 10)).distinct().all()}
+    # Resumable at (day, SYMBOL) granularity, not just by day. Day-level resume
+    # was safe only while this sweep was the sole writer: ordinary backtests also
+    # cache the intraday bars they fetch (see barfetch), so a single incidental
+    # symbol could mark a whole mover-day "done" and the missing names would never
+    # be fetched — permanently, since every later run skipped the day too. Replay
+    # demands FULL coverage of the mover set before it uses intraday bars, so that
+    # left the cache stuck one symbol short of usable with no way out.
+    have: set[tuple[str, str]] = {
+        (row[0], row[1])
+        for row in sess.query(
+            func.substr(intraday_model.ts, 1, 10), intraday_model.symbol
+        ).distinct().all()
+    }
     bars_saved = 0
     symbols_saved = 0
     errors = 0
     skipped = 0
     for idx, day in enumerate(days, start=1):
-        if day in done:
+        # Only the names still missing for this day — a partially-filled day costs
+        # one request for the remainder rather than a re-fetch of everything.
+        symbols = sorted({s for s in by_day[day] if (day, s) not in have})
+        if not symbols:
             skipped += 1
             if progress:
                 progress(idx, len(days), symbols_saved, bars_saved)
             continue
-        symbols = sorted(set(by_day[day]))
         start = (date.fromisoformat(day) - timedelta(days=baseline_days)).isoformat()
         end = (date.fromisoformat(day) + timedelta(days=1)).isoformat()
         try:
             data = await _bars_with_retry(
-                client, symbols, timeframe, start, end, asset_class=asset_class, retry_delay=retry_delay
+                client, symbols, timeframe, start, end,
+                asset_class=asset_class, retry_delay=retry_delay, attempts=attempts
             )
         except Exception as exc:  # noqa: BLE001 — persistent failure after retries: skip the day, don't abort
             errors += 1
@@ -471,6 +483,7 @@ async def sweep_crypto_intraday(
     since_day: str | None = None,
     progress: IntradayProgressFn | None = None,
     retry_delay: float = 2.0,
+    attempts: int = 3,
 ) -> dict:
     """sweep_intraday_movers over the crypto tables (crypto feed, UTC days)."""
     return await sweep_intraday_movers(
@@ -481,6 +494,7 @@ async def sweep_crypto_intraday(
         since_day=since_day,
         progress=progress,
         retry_delay=retry_delay,
+        attempts=attempts,
         asset_class="crypto",
         mover_model=CryptoDailyMover,
         intraday_model=CryptoIntradayBar,

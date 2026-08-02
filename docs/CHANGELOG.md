@@ -36,6 +36,33 @@ The P&L column in the journal is still gross, and now says so.
 but don't post real fee activities, so on paper this job runs, finds nothing,
 and correctly reports "no fees" rather than inventing them.
 
+## Missing 15-minute bars are now fetched automatically (2026-08-01)
+
+Scanner replay only uses intraday bars when they cover **every** name in the
+mover set, so one uncached symbol quietly demoted a run to daily bars — where a
+stop can only trigger at the close. The fix was a trip to Settings to run a
+sweep, which is a strange thing to ask of someone who just pressed **Backtest**.
+The app knows exactly which bars are missing, so it goes and gets them.
+
+Press Backtest (or run the optimizer) and any missing 15-minute bars for that
+window are downloaded as part of the run, with live progress, then cached. It
+happens once per period; every later run over the same window reads from the
+cache. The download is limited to the window being tested — not the whole
+history the cache has ever known.
+
+**A related trap is fixed too.** The sweep used to record progress by DAY, which
+was safe only while it was the only thing writing intraday bars. Ordinary
+backtests cache the bars they fetch as well, so a single incidental symbol could
+mark a whole day "done" — and since replay needs full coverage, the cache could
+sit one symbol short of usable **permanently**, because every later sweep skipped
+that day too. Progress is now tracked per symbol per day, so a partly-filled day
+costs one request for the remainder instead of being written off.
+
+If the download fails, the backtest still runs on the daily bars already cached
+and says what happened; whatever did arrive is kept, so re-running continues
+where it stopped rather than starting over. The manual sweep in Settings is still
+there for pre-warming a large window before you start experimenting.
+
 ## ATR strategies were being tested on the wrong bars (2026-08-01)
 
 Two changes, one of which is a real correctness fix rather than a refinement.

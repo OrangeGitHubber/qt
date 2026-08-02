@@ -224,6 +224,115 @@ class PortfolioBacktestBody(BaseModel):
     spread_pct: float = Field(default=0.1, ge=0, le=2)
 
 
+def replay_inputs(ds: ScannerReplayDataset, params: dict, replay_top_n: int) -> dict:
+    """Everything a scanner-replay run takes from a dataset, derived in ONE place
+    so the optimizer's request handler and its background task cannot disagree
+    about what was replayed — they each hold a different dataset once the task
+    tops up the intraday cache."""
+    daily = ds.daily if _needs_warmup(params) else None
+    return {
+        "bars": ds.bars,
+        "daily": daily,
+        "eligible_by_day": ds.eligible_by_day,
+        "timeframe": ds.timeframe,
+        # Mixed only when the replay is intraday AND something reads the daily
+        # series; either alone is a single-resolution run.
+        "mixed": bool(ds.used_intraday and daily),
+        "extra": {
+            "scanner_replay": True,
+            "replay_intraday": ds.used_intraday,
+            "replay_top_n": replay_top_n,
+            "universe_size": len(ds.replayed),  # what was TESTED, not what made a list
+            "universe_dropped": ds.dropped,
+            "intraday_covered": ds.intraday_covered,
+            "days_replayed": ds.days_replayed,
+        },
+    }
+
+
+def _wants_intraday_replay(params: dict) -> bool:
+    """Whether replaying this strategy on 15-minute bars would tell you anything
+    a daily replay can't: any price-triggered exit (a stop checked once a day at
+    the close is barely a stop), the VWAP rule, or an entry-time window. A
+    buy-and-hold sleeve with none of these gains nothing, so it isn't worth a
+    download."""
+    entry = params.get("entry") or {}
+    return bool(
+        _has_price_triggered_exit(params)
+        or entry.get("require_above_vwap")
+        or (entry.get("entry_window_start") and entry.get("entry_window_end"))
+    )
+
+
+async def ensure_replay_intraday(
+    client: AlpacaClient,
+    ds: ScannerReplayDataset,
+    params: dict,
+    *,
+    asset_class: str,
+    days: int,
+    replay_top_n: int,
+    scanner_cfg: dict | None,
+    report=None,
+) -> tuple[ScannerReplayDataset, bool]:
+    """Fetch the 15-minute bars this replay is missing, then re-read the dataset.
+
+    Replay only uses intraday bars when they cover the WHOLE mover set, so a
+    single uncached name silently demoted the run to daily bars — where a stop
+    can only trigger at the close. The fix used to be a manual trip to Settings
+    to run a sweep, which is a strange thing to ask of someone who just pressed
+    "backtest": the app knows exactly which bars are missing, so it fetches them.
+
+    Bounded by design: `since_day` limits the pull to the replay window, and the
+    sweep is resumable per (day, symbol), so the download happens once and every
+    later run over the same period is a cache read. Returns the dataset to use —
+    the reloaded one when the fetch achieved full coverage, otherwise the
+    original, because a partial fill still can't be replayed intraday and the run
+    should continue on daily bars rather than fail."""
+    if ds.used_intraday or not _wants_intraday_replay(params):
+        return ds, False
+
+    from qt.services import barcache, barsweep
+
+    crypto = asset_class == "crypto"
+    sweep_fn = barsweep.sweep_crypto_intraday if crypto else barsweep.sweep_intraday_movers
+    if report:
+        report("Downloading the 15-minute bars this replay is missing…", 0)
+
+    def on_progress(done: int, total: int, saved: int, bars: int) -> None:
+        if report and total:
+            report(
+                f"Downloading 15-minute bars — day {done} of {total} ({bars:,} bars cached)",
+                int(done * 100 / total),
+            )
+
+    sess = barcache.session()
+    try:
+        # since_day: only the window being replayed. Without it this would sweep
+        # every mover-day the cache has ever known, which on a 30-day backtest
+        # means downloading a year of bars nobody asked for.
+        # Less patient than the manual sweep on purpose. That one runs unattended
+        # and can afford three attempts with exponential backoff; this one runs
+        # while somebody watches a progress bar, and the sweep is resumable per
+        # (day, symbol), so a day lost to a blip is picked up by the next run
+        # rather than lost. Grinding 3 x backoff through every day of a dead API
+        # key would stall an interactive backtest for many minutes.
+        await sweep_fn(
+            client, sess, since_day=ds.start_day, progress=on_progress,
+            attempts=2, retry_delay=1.0,
+        )
+    except Exception as exc:  # noqa: BLE001 — a failed top-up is not a failed backtest
+        log.warning("auto intraday top-up failed (%s); continuing on daily bars", exc)
+        return ds, False
+    finally:
+        sess.close()
+
+    fresh = await asyncio.to_thread(
+        load_scanner_replay_dataset, asset_class, days, replay_top_n, scanner_cfg
+    )
+    return (fresh, True) if fresh.used_intraday else (ds, False)
+
+
 def _strategy_symbols(session: Session, strategy: Strategy) -> list[str]:
     """Resolve the symbols a strategy trades in a portfolio backtest. A merged
     timeline can't reconstruct the scanner's historical daily picks, so a
@@ -638,6 +747,14 @@ async def _scanner_replay(
     ds = await asyncio.to_thread(
         load_scanner_replay_dataset, strategy.asset_class, body.days, body.replay_top_n, cfg
     )
+    # Missing 15-minute bars are fetched here rather than sent back as an
+    # instruction to go and run a sweep. Runs once per window; afterwards the
+    # cache serves it.
+    ds, topped_up = await ensure_replay_intraday(
+        client, ds, strategy_dict["params"],
+        asset_class=strategy.asset_class, days=body.days,
+        replay_top_n=body.replay_top_n, scanner_cfg=cfg, report=_report,
+    )
 
     _report("Replaying history…", 0)
     # MACD/RSI/ATR come from the DAILY series, never from the replay stream. On an
@@ -677,6 +794,7 @@ async def _scanner_replay(
     result["strategy_name"] = strategy.name
     result["scanner_replay"] = True
     result["replay_intraday"] = ds.used_intraday
+    result["intraday_topped_up"] = topped_up  # bars were downloaded for this run
     # Mixed = the replay ran on intraday bars while the signals came from daily
     # ones. Only true when BOTH are the case; a daily replay has one resolution,
     # and a strategy with no daily signal never reads the daily series.

@@ -540,6 +540,7 @@ export interface BacktestResult {
   symbols: string[];
   scanner_replay?: boolean;
   replay_intraday?: boolean;
+  intraday_topped_up?: boolean; // bars were downloaded during this run
   replay_top_n?: number;
   universe_size?: number; // symbols actually REPLAYED (not merely movers)
   universe_dropped?: string[]; // movers with no bars at the chosen resolution
@@ -826,6 +827,7 @@ export interface OptimizerResult {
   days?: number;
   scanner_replay?: boolean;
   replay_intraday?: boolean;
+  intraday_topped_up?: boolean; // bars were downloaded during this run
   replay_top_n?: number;
   universe_size?: number; // movers actually SEARCHED (not merely listed)
   universe_dropped?: string[]; // movers with no bars at the chosen resolution

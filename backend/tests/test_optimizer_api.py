@@ -232,3 +232,81 @@ def test_scanner_replay_cannot_be_forced_on_a_non_scanner_strategy(client, confi
     body = r.json()
     assert body["scanner_replay"] is False
     assert body["symbols"] == ["AAPL"]
+
+
+def test_the_search_tops_up_intraday_bars_and_reports_what_it_replayed(configured, monkeypatch):
+    """The optimizer tops up the cache in its BACKGROUND TASK, not in the request
+    — the download is far too slow to hold a request open for (Cloudflare cuts
+    the origin off at 100s). So the task ends up holding a DIFFERENT dataset than
+    the request handler saw, and everything derived from it — bars, timeframe,
+    mixed — has to be recomputed. Miss that and the search silently replays daily
+    bars while reporting 15-minute ones, which is worse than not topping up.
+
+    Driven through _run_search directly: under TestClient the event loop is torn
+    down when the response returns, which cancels the background task, so an
+    end-to-end poll can only ever assert conditionally (see the test above)."""
+    import asyncio
+    from datetime import datetime, timedelta, timezone
+
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from sqlalchemy.pool import StaticPool
+
+    from qt.api.backtest import load_scanner_replay_dataset, replay_inputs
+    from qt.services import barcache
+
+    eng = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    barcache.CacheBase.metadata.create_all(eng)
+    Sess = sessionmaker(bind=eng, expire_on_commit=False)
+    monkeypatch.setattr(barcache, "_engine", eng)
+    monkeypatch.setattr(barcache, "_Session", Sess)
+    d0 = (datetime.now(timezone.utc) - timedelta(days=6)).strftime("%Y-%m-%d")
+    d1 = (datetime.now(timezone.utc) - timedelta(days=5)).strftime("%Y-%m-%d")
+
+    with Sess() as s:
+        barcache.save_daily_bars(s, "HASBARS", [
+            {"t": f"{d0}T14:00:00Z", "o": 100, "h": 100, "l": 100, "c": 100, "v": 1e6, "vw": 100},
+            {"t": f"{d1}T14:00:00Z", "o": 106, "h": 106, "l": 106, "c": 106, "v": 1e6, "vw": 106},
+        ])
+        barcache.store_movers(s, d1, [("HASBARS", 6.0, 106.0, 1e8)])
+        s.commit()
+
+    def ib(ts, c):
+        return {"t": ts, "o": c, "h": c, "l": c, "c": c, "v": 1e5, "vw": c}
+
+    intraday = {"HASBARS": [ib(f"{d0}T14:00:00Z", 100), ib(f"{d0}T18:00:00Z", 101),
+                            ib(f"{d1}T14:00:00Z", 104), ib(f"{d1}T18:00:00Z", 106)]}
+
+    class FakeClient:
+        async def historical_bars(self, *a, **kw):
+            return intraday
+
+    strategy_dict = {
+        "asset_class": "stock", "swing_mode": True, "sizing_usd": 1000,
+        "sleeve_usd": 1000, "max_positions": 1, "params": _strategy()["params"],
+    }
+    ds = load_scanner_replay_dataset("stock", 30, 10, None)
+    assert ds.used_intraday is False  # the state the request handler would see
+    inputs = replay_inputs(ds, strategy_dict["params"], 10)
+
+    # _progress is a module singleton and earlier tests in this file leave their
+    # background task's error/result on it. Clear it, or this test reads someone
+    # else's outcome.
+    optimizer_api._progress.error = None
+    optimizer_api._progress.result = None
+
+    asyncio.run(optimizer_api._run_search(
+        FakeClient(), strategy_dict, {}, ds.replayed, "stock",
+        inputs["timeframe"], 30, 5, 5000, 0.1,
+        prebuilt_bars=inputs["bars"], prebuilt_daily=inputs["daily"],
+        eligible_by_day=inputs["eligible_by_day"], replay_extra=inputs["extra"],
+        replay_ctx={"ds": ds, "asset_class": "stock", "days": 30,
+                    "replay_top_n": 10, "scanner_cfg": None},
+        mixed=inputs["mixed"],
+    ))
+
+    assert optimizer_api._progress.error is None
+    result = optimizer_api._progress.result
+    assert result["intraday_topped_up"] is True
+    assert result["replay_intraday"] is True
+    assert result["timeframe"] == "15Min"   # what it ACTUALLY replayed

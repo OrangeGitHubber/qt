@@ -13,7 +13,7 @@ from qt import security
 from qt.broker.alpaca import SECRET_KEY_ID, SECRET_KEY_SECRET, AlpacaClient
 from qt.db import session_scope
 from qt.models import Strategy, StrategyConfigVersion, Trade
-from qt.services import barcache
+from qt.services import barcache, barsweep
 
 
 def hourly(closes: list[float], symbol_days: int = 6) -> list[dict]:
@@ -567,3 +567,106 @@ def test_scanner_replay_without_daily_signals_is_not_mixed(client, configured, m
             "starting_cash": 5000, "spread_pct": 0}).json()
     assert body["replay_intraday"] is True
     assert body["mixed_resolution"] is False
+
+
+def _seed_movers_without_intraday(monkeypatch):
+    """A crypto mover with daily bars cached but NO intraday bars — the state
+    that used to demote a replay to daily and tell you to go run a sweep."""
+    eng = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    barcache.CacheBase.metadata.create_all(eng)
+    Sess = sessionmaker(bind=eng, expire_on_commit=False)
+    monkeypatch.setattr(barcache, "_engine", eng)
+    monkeypatch.setattr(barcache, "_Session", Sess)
+    d0 = (datetime.now(timezone.utc) - timedelta(days=6)).strftime("%Y-%m-%d")
+    d1 = (datetime.now(timezone.utc) - timedelta(days=5)).strftime("%Y-%m-%d")
+    with Sess() as s:
+        barcache.save_daily_bars(s, "BTC/USD", [
+            {"t": f"{d0}T00:00:00Z", "o": 100, "h": 101, "l": 99, "c": 100, "v": 1e6, "vw": 100},
+            {"t": f"{d1}T00:00:00Z", "o": 104, "h": 107, "l": 103, "c": 106, "v": 1e6, "vw": 106},
+        ], model=barcache.CryptoDailyBar)
+        barcache.store_movers(s, d1, [("BTC/USD", 6.0, 106.0, 1e8)], model=barcache.CryptoDailyMover)
+        s.commit()
+    return d0, d1
+
+
+def test_replay_downloads_the_intraday_bars_it_is_missing(client, configured, monkeypatch):
+    """The whole point: pressing Backtest fetches the missing 15-minute bars and
+    replays on them, instead of quietly running on daily bars and telling you to
+    visit Settings."""
+    d0, d1 = _seed_movers_without_intraday(monkeypatch)
+
+    def ib(ts, c):
+        return {"t": ts, "o": c, "h": c, "l": c, "c": c, "v": 1e5, "vw": c}
+
+    fetched = {"BTC/USD": [ib(f"{d0}T12:00:00Z", 100), ib(f"{d0}T18:00:00Z", 100),
+                           ib(f"{d1}T12:00:00Z", 104), ib(f"{d1}T18:00:00Z", 106)]}
+    # First call = the auto top-up; the later benchmark call is best-effort.
+    fetch = AsyncMock(side_effect=[fetched, Exception("no benchmark")])
+    sid = _make(client, "crypto")
+    with patch.object(AlpacaClient, "historical_bars", new=fetch):
+        body = client.post("/api/backtest", json={
+            "strategy_id": sid, "scanner_replay": True, "days": 30,
+            "starting_cash": 5000, "spread_pct": 0}).json()
+
+    assert body["intraday_topped_up"] is True
+    assert body["replay_intraday"] is True   # it really replayed on the new bars
+    assert body["timeframe"] == "15Min"
+    # And they were CACHED, so the next run is offline.
+    with barcache.session() as s:
+        assert barcache.cached_intraday_bars(s, ["BTC/USD"], d0, model=barcache.CryptoIntradayBar)["BTC/USD"]
+
+
+def test_a_failed_top_up_still_returns_a_backtest(client, configured, monkeypatch):
+    """A download problem must not turn into a failed backtest — it falls back to
+    the daily bars that are already cached and says so."""
+    _seed_movers_without_intraday(monkeypatch)
+    fetch = AsyncMock(side_effect=Exception("alpaca down"))
+    sid = _make(client, "crypto")
+    with patch.object(AlpacaClient, "historical_bars", new=fetch):
+        r = client.post("/api/backtest", json={
+            "strategy_id": sid, "scanner_replay": True, "days": 30,
+            "starting_cash": 5000, "spread_pct": 0})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["intraday_topped_up"] is False
+    assert body["replay_intraday"] is False
+    assert body["timeframe"] == "1Day"
+
+
+def test_no_download_for_a_strategy_that_gains_nothing_from_intraday(client, configured, monkeypatch):
+    """A buy-and-hold sleeve has no stop, no VWAP rule and no entry window, so an
+    intraday replay would tell it nothing a daily one doesn't. Don't spend the
+    bandwidth."""
+    _seed_movers_without_intraday(monkeypatch)
+    strat = _no_price_exits(_strategy("crypto"))
+    sid = client.post("/api/strategies", json=strat).json()["id"]
+    fetch = AsyncMock(side_effect=Exception("no benchmark"))
+    with patch.object(AlpacaClient, "historical_bars", new=fetch):
+        body = client.post("/api/backtest", json={
+            "strategy_id": sid, "scanner_replay": True, "days": 30,
+            "starting_cash": 5000, "spread_pct": 0}).json()
+    assert body["intraday_topped_up"] is False
+    # The only call that may have happened is the benchmark — never a bar sweep.
+    assert all("15Min" not in str(c) for c in fetch.await_args_list)
+
+
+def test_a_broken_top_up_falls_back_instead_of_failing_the_run(client, configured, monkeypatch):
+    """The sweep swallows per-DAY fetch errors itself, so the guard around it is
+    for the rest: an unreadable cache DB, a bad DSN, a sweep that raises. None of
+    those should turn "backtest" into an error page when perfectly good daily
+    bars are sitting in the cache."""
+    _seed_movers_without_intraday(monkeypatch)
+
+    async def boom(*a, **kw):
+        raise RuntimeError("cache DB unreadable")
+
+    monkeypatch.setattr(barsweep, "sweep_crypto_intraday", boom)
+    sid = _make(client, "crypto")
+    fetch = AsyncMock(side_effect=Exception("no benchmark"))
+    with patch.object(AlpacaClient, "historical_bars", new=fetch):
+        r = client.post("/api/backtest", json={
+            "strategy_id": sid, "scanner_replay": True, "days": 30,
+            "starting_cash": 5000, "spread_pct": 0})
+    assert r.status_code == 200, r.text
+    assert r.json()["intraday_topped_up"] is False
+    assert r.json()["timeframe"] == "1Day"
