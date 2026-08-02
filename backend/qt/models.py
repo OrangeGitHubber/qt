@@ -65,6 +65,10 @@ class Strategy(Base):
     enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     asset_class: Mapped[str] = mapped_column(String(16))  # stock | crypto
     universe: Mapped[str] = mapped_column(String(16), default="scanner")  # scanner | watchlist | both | basket | custom
+    # When it was last switched ON. The moment the engine was allowed to act, so
+    # it is where a fidelity comparison starts for a strategy that hasn't traded
+    # yet. Null on strategies enabled before this was recorded — see 0014.
+    enabled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     basket_id: Mapped[int | None] = mapped_column(ForeignKey("baskets.id"), nullable=True)
     symbols: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON list for universe="custom"
     rank_by: Mapped[str] = mapped_column(String(24), default="momentum_today")  # momentum_today | return_30d | relative_strength | rs_vs_spy

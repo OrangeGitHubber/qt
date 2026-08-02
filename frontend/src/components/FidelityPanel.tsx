@@ -419,6 +419,16 @@ export default function FidelityPanel() {
             </p>
           )}
 
+          {report.quiet && (
+            <p className="hint">
+              <strong>Nothing traded on either side.</strong> The strategy has been live
+              {report.activated_at ? ` since ${report.activated_at.slice(0, 10)} ${report.activated_at.slice(11, 16)}` : ""},
+              and neither it nor the replay of it took a trade in that time. That is an agreement, not a
+              failure — the two are behaving identically. Give it longer, or loosen the entry rules if you
+              expected activity by now.
+            </p>
+          )}
+
           {report.timeline.length > 0 && (
             <>
               <h4>What happened, in order</h4>
@@ -440,7 +450,10 @@ export default function FidelityPanel() {
                   </thead>
                   <tbody>
                     {report.timeline.map((r, i) => (
-                      <tr key={`${r.at ?? r.day}-${r.symbol}-${i}`} className={r.kind === "edit" ? "cmp-win" : ""}>
+                      <tr
+                        key={`${r.at ?? r.day}-${r.symbol}-${i}`}
+                        className={r.kind === "edit" || r.kind === "activated" ? "cmp-win" : ""}
+                      >
                         <td className="tabular">
                           {r.at ? r.at.slice(0, 10) : r.day}
                           {r.at && r.at.includes("T") ? <span className="hint"> {r.at.slice(11, 16)}</span> : null}
@@ -449,7 +462,7 @@ export default function FidelityPanel() {
                         <td>{r.action}</td>
                         <td
                           className={
-                            r.verdict === "match" ? "up" : r.kind === "edit" ? "" :
+                            r.verdict === "match" ? "up" : r.kind === "edit" || r.kind === "activated" ? "" :
                             r.verdict.includes("not compared") || r.verdict.includes("nothing") ? "" : "down"
                           }
                         >

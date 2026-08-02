@@ -3,6 +3,27 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## "Nothing happened" is now an answer, not an error (2026-08-02)
+
+Enable a strategy, open the fidelity report, and it refused: *no trades, nothing
+to compare*. That was the wrong response to the commonest first question a user
+asks — **is this thing working?** — and it hid the more interesting half of the
+answer.
+
+The report now runs anyway. Whether the **replay** would have traded in that
+stretch is exactly the question, so a backtest that bought three things the live
+engine never touched is a real finding that a refusal was burying. And when
+neither side traded, it says so in words: *nothing traded on either side — that
+is an agreement, not a failure.*
+
+It also says **when the strategy went live**, to the minute, as the first row of
+the timeline, and starts the window there. Nothing recorded that moment before —
+enabling flipped a boolean, and a boolean has no timestamp — so strategies now
+record it (migration 0014). Ones already running when this shipped have no such
+record; for those the moment is recovered from the audit log, and if the strategy
+has been renamed since, the report says the moment is unknown rather than
+inventing one.
+
 ## The scanner-replay cache now builds and prunes itself (2026-08-02)
 
 Backtesting a scanner strategy used to require finding a button in Settings and

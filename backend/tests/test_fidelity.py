@@ -334,15 +334,109 @@ def _strategy_body(asset_class="stock"):
     }
 
 
-def test_comparing_with_no_real_trades_explains_itself(client, configured):
-    """The commonest first experience: a strategy that hasn't traded yet. A bare
-    'no data' would leave you guessing which of the three fixes applies."""
+def test_a_strategy_never_switched_on_has_no_period_to_compare(client, configured):
+    """The one case that genuinely cannot be answered: never enabled, never
+    traded, so there is no moment for a window to start from. Contrast the test
+    below — merely having no TRADES is answerable, and answering it is the point."""
     sid = client.post("/api/strategies", json=_strategy_body()).json()["id"]
     r = client.post("/api/fidelity/compare", json={"strategy_id": sid, "days": 30})
     assert r.status_code == 422
     detail = r.json()["detail"]
-    assert "nothing to compare" in detail
-    assert "import" in detail and "widen" in detail
+    assert "never been enabled" in detail
+
+
+def test_an_enabled_strategy_that_has_not_traded_still_reports(client, configured):
+    """Werner's ask: enabling a strategy and asking immediately should say when
+    it went live and that neither side has traded since — not fail. "Nothing
+    happened on either side" is an agreement, and the replay still runs, so a
+    backtest that DID trade in that stretch surfaces as a real disagreement
+    instead of being hidden behind a refusal."""
+    from datetime import datetime, timedelta, timezone
+    from unittest.mock import AsyncMock, patch
+
+    from qt.broker.alpaca import AlpacaClient
+
+    sid = client.post("/api/strategies", json=_strategy_body()).json()["id"]
+    client.post(f"/api/strategies/{sid}/toggle")   # enabling is its own act
+
+    now = datetime.now(timezone.utc)
+    flat = [
+        {"t": (now - timedelta(days=n)).strftime("%Y-%m-%dT14:00:00Z"),
+         "o": 100, "h": 100, "l": 100, "c": 100, "v": 1000, "vw": 100}
+        for n in range(30, 0, -1)
+    ]
+    with patch.object(AlpacaClient, "historical_bars", new=AsyncMock(return_value={"NVDA": flat})):
+        r = client.post("/api/fidelity/compare", json={"strategy_id": sid})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["activated_at"] is not None
+    assert body["quiet"] is True            # neither side traded
+    events = [e for e in body["timeline"] if e["kind"] == "activated"]
+    assert len(events) == 1
+    assert events[0]["at"] == body["activated_at"]
+    assert "switched on" in events[0]["detail"]
+
+
+def test_switching_a_strategy_on_records_the_moment_and_that_record_wins(client, configured):
+    """Two claims one test, because either alone is passable by the other's
+    mechanism: the toggle must WRITE enabled_at, and enabled_at must BEAT the
+    audit log. The audit line here says a week ago and is wrong-on-purpose — a
+    strategy paused and re-enabled has an old ENABLED line above the current
+    one, and reading that would date the window to a period this run of the
+    strategy never covered."""
+    from datetime import datetime, timedelta, timezone
+
+    from qt.api.fidelity import activated_at
+    from qt.db import session_scope
+    from qt.models import AuditLog, Strategy
+
+    body = {**_strategy_body(), "name": "fid activation stamp"}
+    sid = client.post("/api/strategies", json=body).json()["id"]
+    before = datetime.now(timezone.utc)
+    client.post(f"/api/strategies/{sid}/toggle")
+
+    with session_scope() as s:
+        strat = s.get(Strategy, sid)
+        assert strat.enabled_at is not None            # the toggle stamped it
+        assert (strat.enabled_at.replace(tzinfo=timezone.utc) - before).total_seconds() >= -2
+        s.add(AuditLog(category="strategy", at=before - timedelta(days=7),
+                       message=f"Strategy '{strat.name}' ENABLED"))
+        s.flush()
+        found = activated_at(s, strat)
+        assert (found - before).total_seconds() > -2   # today's, not last week's
+
+
+def test_a_strategy_enabled_before_the_column_existed_falls_back_to_the_audit_log(client, configured):
+    """Migration 0014 leaves enabled_at null on strategies already running, and
+    those are exactly the ones a user checks first. The audit line the toggle
+    wrote is the only surviving evidence, so it is read — and NOT guessed at when
+    even that is missing, because a confident wrong go-live time under a fidelity
+    report is worse than an admitted unknown."""
+    from datetime import datetime, timedelta, timezone
+
+    from qt.api.fidelity import activated_at
+    from qt.db import session_scope
+    from qt.models import AuditLog, Strategy
+
+    body = {**_strategy_body(), "name": "fid activation legacy"}
+    sid = client.post("/api/strategies", json=body).json()["id"]
+    client.post(f"/api/strategies/{sid}/toggle")
+    then = datetime.now(timezone.utc) - timedelta(days=3)
+    with session_scope() as s:
+        strat = s.get(Strategy, sid)
+        strat.enabled_at = None                        # as an upgraded row looks
+        s.add(AuditLog(category="strategy", at=then,
+                       message=f"Strategy '{strat.name}' ENABLED"))
+        s.flush()
+        found = activated_at(s, strat)
+        assert found is not None
+        assert abs((found - then).total_seconds()) < 2
+
+        # Renamed since: the audit line no longer matches, and the honest answer
+        # is "unknown" rather than the wrong moment or today's date.
+        strat.name = "renamed since"
+        s.flush()
+        assert activated_at(s, strat) is None
 
 
 def test_a_paper_comparison_says_its_costs_are_not_measurable(client, configured):

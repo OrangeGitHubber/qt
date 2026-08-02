@@ -43,7 +43,7 @@ from qt.api.market import require_client
 from qt.broker.alpaca import AlpacaClient
 from qt.db import get_session
 from qt.api import baskets as baskets_api
-from qt.models import BasketItem, Strategy, StrategyConfigVersion, Trade
+from qt.models import AuditLog, BasketItem, Strategy, StrategyConfigVersion, Trade
 from qt.services import fidelity
 from qt.services.backtest import _day_fn
 
@@ -564,6 +564,38 @@ def first_trade_at(session: Session, strategy: Strategy, mode: str) -> datetime 
     return min(known) if known else None
 
 
+def activated_at(session: Session, strategy: Strategy) -> datetime | None:
+    """The moment this strategy was switched ON.
+
+    This is the honest start of a comparison for a strategy that has not traded
+    yet. "It hasn't traded" is not a reason to refuse to answer: whether the
+    REPLAY would have traded in the same stretch is exactly the question, and
+    "neither of us did anything" is a real agreement rather than an error.
+
+    Two sources, in order of trust. `enabled_at` is the record (migration 0014)
+    and is null only for strategies switched on before it existed. For those,
+    the audit log is the sole surviving evidence — it is matched on the message
+    the toggle writes, which means a strategy renamed since then will not be
+    found. That is a miss, not a wrong answer: the report says the moment is
+    unknown rather than inventing one, which is the only acceptable failure for
+    a feature whose whole job is measuring accuracy.
+
+    Returns None when nothing was ever enabled, or when a legacy activation
+    can't be recovered."""
+    if strategy.enabled_at is not None:
+        return _aware(strategy.enabled_at)
+    row = (
+        session.query(AuditLog)
+        .filter(
+            AuditLog.category == "strategy",
+            AuditLog.message == f"Strategy '{strategy.name}' ENABLED",
+        )
+        .order_by(AuditLog.at)
+        .first()
+    )
+    return _aware(row.at) if row else None
+
+
 def _journal_rows(
     session: Session, strategy: Strategy, since: datetime, until: datetime, mode: str
 ) -> list[dict]:
@@ -744,6 +776,13 @@ async def compare(
     # past), otherwise the last `days` days. Computed before the journal read
     # because both ends bound which trades are in scope.
     began = None if body.imported_trades is not None else first_trade_at(session, strategy, body.mode)
+    # A strategy that has been switched on but has not traded still has a
+    # meaningful window: switch-on until now. Without this the report refused to
+    # run at all, which reads as breakage at exactly the moment a user is
+    # checking whether their new strategy works.
+    switched_on = None if body.imported_trades is not None else activated_at(session, strategy)
+    if began is None:
+        began = switched_on
     until = _aware(body.window_end) or datetime.now(timezone.utc)
     # Precedence: an explicit stretch (the "use that window" button), then a
     # deliberate day count, then the strategy's own lifetime — which is the case
@@ -760,8 +799,8 @@ async def compare(
         # score whatever it bought there as a trade it invented.
         since = began.replace(hour=0, minute=0, second=0, microsecond=0)
     else:
-        # No history at all. Any window is empty; the 422 below explains it
-        # better than an arbitrary number would.
+        # Never traded and never enabled — there is no moment to start from. The
+        # 422 below explains that better than an arbitrary number would.
         since = until - timedelta(days=90)
     if until <= since:
         raise HTTPException(status_code=422, detail="The window ends before it starts.")
@@ -785,13 +824,16 @@ async def compare(
         if body.imported_trades is not None
         else _journal_rows(session, strategy, since, until, body.mode)
     )
-    if not live_rows:
+    if not live_rows and began is None:
+        # Nothing traded AND never switched on: there is no window and no event.
         raise HTTPException(
             status_code=422,
-            detail=f"No {body.mode} trades for \"{strategy.name}\" in the last {body.days} days — "
-            "there is nothing to compare the backtest against. Let it trade for a while, widen the "
-            "window, or import an export from another instance.",
+            detail=f"\"{strategy.name}\" has never been enabled and has no {body.mode} trades, "
+            "so there is no period to compare. Enable it, or import an export from another instance.",
         )
+    # An empty journal is NOT a refusal from here on. The replay still runs over
+    # the same window, and what it did — nothing, or something the engine never
+    # did — is the finding.
 
     # The replay is the ordinary backtest, unchanged and with the strategy's own
     # universe — anything else would be comparing against a different experiment.
@@ -997,7 +1039,24 @@ async def compare(
                 ),
             }
             for c in (report.get("config") or {}).get("changes") or []
-        ],
+        ]
+        # The moment the engine was allowed to start. Every trade below is
+        # judged from here, and its absence made a report on a freshly enabled
+        # strategy look like it had simply failed to find anything.
+        + (
+            [{
+                "kind": "activated",
+                "at": _iso(switched_on),
+                "day": _iso(switched_on)[:10],
+                "symbol": "",
+                "action": "activated",
+                "verdict": "went live",
+                "detail": f"\"{strategy.name}\" was switched on. The replay starts here too — "
+                          "nothing before this moment counts against either side.",
+            }]
+            if switched_on and since <= switched_on <= until
+            else []
+        ),
         key=lambda r: (str(r["at"] or r["day"]), r.get("symbol") or ""),
     )
     report["window"] = {
@@ -1008,6 +1067,11 @@ async def compare(
         "clamped_to_first_trade": clamped,
         "first_trade_at": _iso(began),
     }
+    # Said plainly rather than left to be inferred from an empty table: a
+    # comparison where NEITHER side traded is an agreement, and the most likely
+    # reading of an empty report — "it's broken" — is the wrong one.
+    report["quiet"] = not live_rows and not (report.get("backtest_only") or [])
+    report["activated_at"] = _iso(switched_on)
     report["strategy_name"] = strategy.name
     report["mode"] = body.mode
     report["days"] = body.days

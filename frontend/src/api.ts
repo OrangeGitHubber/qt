@@ -1259,7 +1259,7 @@ export interface FidelityReport {
   // clock: buys, sells and the edits between them. Separate lists made the
   // reader do the merge, and the merge is the point.
   timeline: {
-    kind: "trade" | "edit";
+    kind: "trade" | "edit" | "activated";
     day: string;
     at: string | null;
     symbol: string;
@@ -1267,6 +1267,11 @@ export interface FidelityReport {
     verdict: string;
     detail: string;
   }[];
+  // When the strategy was switched on, and whether NEITHER side traded in the
+  // window. A quiet report is an agreement, not a failure — it needs saying,
+  // because an empty table reads as breakage.
+  activated_at?: string | null;
+  quiet?: boolean;
   // The window actually compared — clamped to the strategy's own lifetime, since
   // replaying history it never lived through scores every trade the replay takes
   // there as one it invented.

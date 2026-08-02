@@ -228,6 +228,7 @@ def _serialize(s: Strategy) -> dict:
         "id": s.id,
         "name": s.name,
         "enabled": s.enabled,
+        "enabled_at": s.enabled_at.isoformat() if s.enabled_at else None,
         "asset_class": s.asset_class,
         "universe": s.universe,
         "basket_id": s.basket_id,
@@ -367,6 +368,10 @@ def toggle_strategy(strategy_id: int, session: Session = Depends(get_session)) -
     if not strategy:
         raise HTTPException(status_code=404, detail="Strategy not found.")
     strategy.enabled = not strategy.enabled
+    if strategy.enabled:
+        # Stamped on the way ON only: "when did this go live" is the question the
+        # fidelity report asks, and a pause should not erase the answer.
+        strategy.enabled_at = datetime.now(timezone.utc)
     state = "ENABLED" if strategy.enabled else "paused"
     session.add(AuditLog(category="strategy", message=f"Strategy '{strategy.name}' {state}"))
     return _serialize(strategy)
