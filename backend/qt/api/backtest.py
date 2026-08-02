@@ -25,7 +25,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from sqlalchemy.orm import Session
 
 from qt.api.market import require_client
@@ -287,13 +287,21 @@ def _days_between(first: str, last: str) -> list[str]:
 
 
 def load_scanner_replay_dataset(
-    asset_class: str, days: int, replay_top_n: int, scanner_cfg: dict | None = None
+    asset_class: str, days: int, replay_top_n: int, scanner_cfg: dict | None = None,
+    *, end: datetime | None = None,
 ) -> ScannerReplayDataset:
     """Read the cached historical top-N risers + their bars for `days` back.
     Prefers cached INTRADAY bars (so intraday exits behave); falls back to daily
     when no intraday sweep has been run. Fully offline. Raises HTTPException 422
     when the cache is empty and 502 on a bad cache DSN — both API-shaped because
-    both callers are FastAPI routes."""
+    both callers are FastAPI routes.
+
+    `end` moves the window's far edge off "now": `days` are counted back from it,
+    and the movers, the intraday bars and the daily bars all stop there. None
+    keeps the original meaning — the last `days` up to this moment — and reads
+    exactly the same rows as before, so an ordinary backtest is untouched. It
+    exists so a period that ended in the past can be replayed with the
+    configuration that was live during it."""
     from qt.services import barcache
 
     crypto = asset_class == "crypto"
@@ -310,7 +318,11 @@ def load_scanner_replay_dataset(
     except Exception as exc:  # noqa: BLE001 — surface a bad cache DSN clearly
         raise HTTPException(status_code=502, detail=f"Could not open the bar cache DB: {exc}")
 
-    start_day = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%d")
+    # `end_day` stays None for an open-ended run so every cache query keeps the
+    # exact filter it had — a windowed run is the new case, not the default.
+    finish = end or datetime.now(timezone.utc)
+    start_day = (finish - timedelta(days=days)).strftime("%Y-%m-%d")
+    end_day = finish.strftime("%Y-%m-%d") if end is not None else None
     cache = barcache.session()
     try:
         # The replay's universe must obey the SAME scanner settings the live
@@ -324,6 +336,7 @@ def load_scanner_replay_dataset(
             min_price=float(f.get("min_price") or 0),
             max_price=float(f.get("max_price") or 0),
             min_dollar_volume=float(f.get("min_dollar_volume") or 0),
+            end_day=end_day,
         )
         if not movers:
             asset = "crypto" if crypto else "stock"
@@ -344,7 +357,9 @@ def load_scanner_replay_dataset(
         # because run_backtest skips empty series — would vanish while the header
         # still claimed the full universe. Demand full coverage or use daily,
         # which the daily sweep fills completely.
-        intraday_bars = barcache.cached_intraday_bars(cache, union, start_day, model=intraday_model)
+        intraday_bars = barcache.cached_intraday_bars(
+            cache, union, start_day, model=intraday_model, end_day=end_day
+        )
         intraday_covered = sorted(s for s in union if intraday_bars.get(s))
         used_intraday = len(intraday_covered) == len(union) and bool(union)
         # The daily series is loaded either way, and always reaches back over the
@@ -357,7 +372,7 @@ def load_scanner_replay_dataset(
             datetime.strptime(start_day, "%Y-%m-%d") - timedelta(days=WARMUP_DAYS)
         ).strftime("%Y-%m-%d")
         daily = barcache.cached_daily_bars(
-            cache, union, warm_start, model=daily_model, stamp=daily_stamp
+            cache, union, warm_start, model=daily_model, stamp=daily_stamp, end_day=end_day
         )
         if used_intraday:
             bars, filled = _fill_intraday_gaps(intraday_bars, daily, start_day)
@@ -391,12 +406,56 @@ class BacktestBody(BaseModel):
     scanner_replay: bool = False  # replay the cached historical daily top-N risers instead
     replay_top_n: int = Field(default=10, ge=1, le=100)  # how many of each day's risers are eligible
     days: int = Field(default=90, ge=7, le=730)
+    # An EXPLICIT window, as an alternative to counting `days` back from now.
+    # Either end may be given on its own: `window_end` alone replays the `days`
+    # before it, `window_start` alone runs from there to now. Both together pin
+    # the window exactly, which is what a caller replaying one segment of a past
+    # period with the config that was live during it needs — `days` cannot
+    # express "12 May to 3 June" at all, because its far edge is always today.
+    window_start: datetime | None = None
+    window_end: datetime | None = None
     timeframe: str = Field(default="1Hour", pattern="^(15Min|1Hour|1Day)$")
     starting_cash: float = Field(default=5000, ge=100, le=10_000_000)
     spread_pct: float = Field(default=0.1, ge=0, le=2)
     # None = use the asset class's real-world rate (see DEFAULT_FEE_PCT). An
     # explicit 0 is honoured, for asking "what would this look like fee-free?".
     fee_pct: float | None = Field(default=None, ge=0, le=2)
+
+    @model_validator(mode="after")
+    def _check_window(self) -> "BacktestBody":
+        # Everything QT stores and sends is UTC, so stamping a naive datetime is
+        # a restatement rather than an assumption — and without it the comparison
+        # against an aware now() below raises instead of answering.
+        if self.window_start is not None and self.window_start.tzinfo is None:
+            self.window_start = self.window_start.replace(tzinfo=timezone.utc)
+        if self.window_end is not None and self.window_end.tzinfo is None:
+            self.window_end = self.window_end.replace(tzinfo=timezone.utc)
+        start, end = self.window()
+        if end <= start:
+            raise ValueError("The window's end must be after its start.")
+        if (end - start) > timedelta(days=730):
+            raise ValueError("A backtest window can span at most 730 days.")
+        return self
+
+    def window(self) -> tuple[datetime, datetime]:
+        """(start, end) of the period to TRADE — what sim_start and sim_end become.
+
+        Note there is no 7-day floor here, unlike `days`. That floor guards the UI
+        control against a window too short to mean anything; an explicit window is
+        used by callers that CUT a period at the moments a config changed, and two
+        edits on the same afternoon legitimately leave a segment of hours. Refusing
+        it would force those trades to be scored against the wrong config, which is
+        the whole thing this exists to stop."""
+        end = self.window_end or datetime.now(timezone.utc)
+        start = self.window_start or (end - timedelta(days=self.days))
+        return start, end
+
+    def span_days(self) -> int:
+        """The window's length in whole days, rounded UP — what the day-keyed
+        scanner-replay cache reads back. Rounding down would drop the window's
+        first day whenever it starts mid-session."""
+        start, end = self.window()
+        return max(1, -(-int((end - start).total_seconds()) // 86400))
 
 
 class PortfolioBacktestBody(BaseModel):
@@ -458,6 +517,7 @@ async def ensure_replay_intraday(
     replay_top_n: int,
     scanner_cfg: dict | None,
     report=None,
+    end: datetime | None = None,
 ) -> tuple[ScannerReplayDataset, bool]:
     """Fetch the 15-minute bars this replay is missing, then re-read the dataset.
 
@@ -494,7 +554,11 @@ async def ensure_replay_intraday(
     try:
         # since_day: only the window being replayed. Without it this would sweep
         # every mover-day the cache has ever known, which on a 30-day backtest
-        # means downloading a year of bars nobody asked for.
+        # means downloading a year of bars nobody asked for. It has no far edge,
+        # so a window that closed in the past still sweeps forward to today —
+        # more than that run needs, but the sweep is idempotent and per-day
+        # resumable, so it is paid once and every later window inside it is then
+        # a cache read.
         # Less patient than the manual sweep on purpose. That one runs unattended
         # and can afford three attempts with exponential backoff; this one runs
         # while somebody watches a progress bar, and the sweep is resumable per
@@ -512,7 +576,7 @@ async def ensure_replay_intraday(
         sess.close()
 
     fresh = await asyncio.to_thread(
-        load_scanner_replay_dataset, asset_class, days, replay_top_n, scanner_cfg
+        load_scanner_replay_dataset, asset_class, days, replay_top_n, scanner_cfg, end=end
     )
     return (fresh, True) if fresh.used_intraday else (ds, False)
 
@@ -814,6 +878,20 @@ async def run_portfolio(
     return result
 
 
+def _stamp_window(result: dict, body: BacktestBody, start: datetime, end: datetime) -> None:
+    """Record the exact period replayed, but ONLY when the caller pinned one.
+
+    An open-ended run's window ends "now", and stamping that would put a moving
+    timestamp on a result whose shape is otherwise stable — and invite a UI to
+    print a precise end for a period whose end is just when you pressed the
+    button. A caller that asked for a window gets it back, so it can prove which
+    slice this result covers."""
+    if body.window_start is None and body.window_end is None:
+        return
+    result["window_start"] = start.isoformat()
+    result["window_end"] = end.isoformat()
+
+
 @router.post("")
 async def run(
     body: BacktestBody,
@@ -879,7 +957,12 @@ async def run(
     # Fetch WARM-UP history before the window when the strategy uses daily
     # indicators, so MACD/RSI/ATR are defined from day one of the tested window
     # (the sim ignores warm-up bars for trading — see run_backtest's sim_start).
-    window_start = datetime.now(timezone.utc) - timedelta(days=body.days)
+    window_start, window_end = body.window()
+    # Bars are fetched from a start and always run to NOW — there is no end on the
+    # fetch — so a window that closed in the past is enforced by the SIM, not by
+    # trimming the download. Costs a few extra bars; the alternative is a second
+    # fetch path and a second thing to get wrong.
+    sim_end = body.window_end
     needs_warmup = _needs_warmup(params)
     warmup = WARMUP_DAYS if (body.timeframe == "1Day" or mixed) and needs_warmup else 0
     fetch_start = (window_start - timedelta(days=warmup)).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -942,8 +1025,11 @@ async def run(
         ),
         market=market,
         # Mixed runs fetch intraday bars for the window only, so sim_start is a
-        # belt-and-braces guard: nothing before the window can ever trade.
-        sim_start=window_start if (warmup or mixed) else None,
+        # belt-and-braces guard: nothing before the window can ever trade. An
+        # explicit window always sets it, because there the guard is the only
+        # thing standing between the replay and bars outside the period asked for.
+        sim_start=window_start if (warmup or mixed or body.window_start) else None,
+        sim_end=sim_end,
         daily_bars_by_symbol=daily_bars,
         progress=_replay_progress,
     )
@@ -979,7 +1065,9 @@ async def run(
     result["mixed_resolution"] = mixed
     if mixed:
         result["signal_timeframe"] = "1Day"
-    result["days"] = body.days
+    # The window's LENGTH, which for a plain `days` request is `days` itself.
+    result["days"] = body.span_days()
+    _stamp_window(result, body, window_start, window_end)
     return result
 
 
@@ -998,16 +1086,23 @@ async def _scanner_replay(
     from qt.services import scanner as scanner_svc
 
     cfg = scanner_svc.get_config(session)
+    # The dataset is read for the SPAN of the window ending where the window ends,
+    # so a segment of a past period reads that segment's movers and bars — not the
+    # last N days up to today. `span`/`window_end` collapse to `days`/None for an
+    # ordinary request, which is why every reload below passes the same pair.
+    span, window_end = body.span_days(), body.window_end
     ds = await asyncio.to_thread(
-        load_scanner_replay_dataset, strategy.asset_class, body.days, body.replay_top_n, cfg
+        load_scanner_replay_dataset, strategy.asset_class, span, body.replay_top_n, cfg,
+        end=window_end,
     )
     # Missing 15-minute bars are fetched here rather than sent back as an
     # instruction to go and run a sweep. Runs once per window; afterwards the
     # cache serves it.
     ds, topped_up = await ensure_replay_intraday(
         client, ds, strategy_dict["params"],
-        asset_class=strategy.asset_class, days=body.days,
+        asset_class=strategy.asset_class, days=span,
         replay_top_n=body.replay_top_n, scanner_cfg=cfg, report=_report,
+        end=window_end,
     )
 
     _report("Replaying history…", 0)
@@ -1026,6 +1121,13 @@ async def _scanner_replay(
         ),
         eligible_by_day=ds.eligible_by_day, market=ds.market,
         daily_bars_by_symbol=replay_daily,
+        # The dataset is already trimmed to the window, so these are exactness
+        # rather than safety: the cache is keyed by DAY, so a window that opens or
+        # closes mid-session would otherwise pick up the whole of its first and
+        # last day. Both are None for an ordinary run, which therefore replays
+        # byte-identically to before.
+        sim_start=body.window_start,
+        sim_end=window_end,
         progress=_replay_progress,
     )
 
@@ -1043,7 +1145,7 @@ async def _scanner_replay(
         if got:
             ds = await asyncio.to_thread(
                 load_scanner_replay_dataset,
-                strategy.asset_class, body.days, body.replay_top_n, cfg,
+                strategy.asset_class, span, body.replay_top_n, cfg, end=window_end,
             )
             _report("Replaying history…", 0)
             replay_daily = ds.daily if _needs_warmup(strategy_dict["params"]) else None
@@ -1057,6 +1159,8 @@ async def _scanner_replay(
                 ),
                 eligible_by_day=ds.eligible_by_day, market=ds.market,
                 daily_bars_by_symbol=replay_daily,
+                sim_start=body.window_start,
+                sim_end=window_end,
                 progress=_replay_progress,
             )
             topped_up = True
@@ -1097,7 +1201,8 @@ async def _scanner_replay(
     timeframe = ds.timeframe
     result["symbols"] = []  # too many to list; summarized by universe_size
     result["timeframe"] = timeframe
-    result["days"] = body.days
+    result["days"] = span
+    _stamp_window(result, body, *body.window())
     return result
 
 

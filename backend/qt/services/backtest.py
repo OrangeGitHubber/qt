@@ -596,6 +596,7 @@ def run_backtest(
     market: str = "stock",
     sim_start: datetime | None = None,
     *,
+    sim_end: datetime | None = None,
     daily_bars_by_symbol: dict[str, list[dict]] | None = None,
     progress: Callable[[int, int], None] | None = None,
 ) -> dict:
@@ -609,6 +610,19 @@ def run_backtest(
     it a MACD strategy backtested over a short window couldn't trade for its first
     ~35 days because MACD was undefined — unfaithful to live. None = trade every
     bar (the old behaviour, for callers that pre-trim).
+
+    `sim_end` marks where the window CLOSES, inclusive: the replay stops dead at
+    the last bar on or before it. None = run to the end of the bars (the old
+    behaviour). It exists because bars are fetched from a start and always run to
+    now, so "replay 12 May → 3 June" cannot be expressed by trimming the fetch.
+
+    Bars after `sim_end` are dropped ENTIRELY — they do not even re-mark open
+    positions. That is the deliberate choice: marking a held position at a price
+    from after the window would put a number on the screen the window could not
+    have known, and every equity, unrealized-P&L and drawdown figure would then
+    describe a period longer than the one asked for. A position still open at
+    `sim_end` is marked at the last price INSIDE the window, exactly as a position
+    open at the end of the bars always has been. The window's end is the end.
 
     `eligible_by_day` powers "scanner replay": when given, a symbol may only be
     ENTERED on a day it appears in that day's set (the day's reconstructed
@@ -736,6 +750,13 @@ def run_backtest(
     # enough that the number visibly moves, rare enough to cost nothing.
     tick_every = max(1, len(timeline) // 100)
     for step, ts in enumerate(timeline):
+        # Ahead of everything else in the loop on purpose: a bar past the window's
+        # end must not trade, mark a holding, or extend the day index. See the
+        # sim_end note above for why that is not the mirror image of warm-up.
+        # A break rather than a continue because the timeline is sorted — there is
+        # nothing after this bar that could ever be inside the window.
+        if sim_end is not None and ts > sim_end:
+            break
         if progress is not None and step % tick_every == 0:
             progress(step, len(timeline))
         bars = events[ts]
@@ -1096,6 +1117,7 @@ def run_portfolio_backtest(
     market: str = "stock",
     sim_start: datetime | None = None,
     daily_bars_by_strategy: dict[int, dict[str, list[dict]]] | None = None,
+    sim_end: datetime | None = None,
 ) -> dict:
     """Portfolio simulation: replay N strategies over ONE merged timeline sharing
     a SINGLE cash account and the GLOBAL risk rails — exactly like the live engine,
@@ -1113,6 +1135,9 @@ def run_portfolio_backtest(
     a per-strategy `contributions` breakdown whose realized P&L sums to the
     portfolio net P&L. The single-strategy run_backtest is untouched — this is a
     separate arbitration layer over the shared primitives.
+
+    `sim_end` closes the window (inclusive), mirroring run_backtest's: the replay
+    stops at the last bar on or before it and bars after it never mark a position.
     """
     day_of = _day_fn(market)
     slip = spread_pct / 100
@@ -1175,6 +1200,10 @@ def run_portfolio_backtest(
     total_bar_ticks = 0
 
     for ts in sorted(events):
+        # Ahead of the last_price refresh below on purpose: a bar past the
+        # window's end must not re-mark a holding either (see run_backtest).
+        if sim_end is not None and ts > sim_end:
+            break
         tick = events[ts]
         # index this tick's bars for exit lookup + refresh last-seen prices
         bar_at: dict[tuple[int, str], dict] = {}

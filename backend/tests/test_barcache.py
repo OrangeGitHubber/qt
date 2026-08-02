@@ -158,6 +158,43 @@ def test_movers_between_narrows_to_top_n_at_read_time():
     assert barcache.movers_between(s, "2026-06-01") == {"2026-06-01": ["CCC", "AAA", "BBB"]}  # all
 
 
+def test_the_reads_can_be_bounded_at_both_ends():
+    """A replay of a window that ENDED in the past must not be handed the days
+    after it. Without a far edge every such read would drag in everything up to
+    today — bars the period being replayed could not have seen, and, for the
+    movers, entry candidates from days outside it entirely."""
+    s = _mem_session()
+    for day in ("2026-06-01", "2026-06-02", "2026-06-03"):
+        barcache.store_movers(s, day, [("AAA", 20.0, 12.0, 1e7)])
+        barcache.save_daily_bars(s, "AAA", [
+            {"t": f"{day}T00:00:00Z", "o": 1, "h": 1, "l": 1, "c": 1, "v": 1e6, "vw": 1},
+        ])
+        # Two stamps a day, the later one well after midnight — the case an
+        # inclusive end must still keep, and a naive `ts <= end_day` would drop.
+        barcache.save_intraday_bars(s, "AAA", [
+            {"t": f"{day}T14:00:00Z", "o": 1, "h": 1, "l": 1, "c": 1, "v": 1, "vw": 1},
+            {"t": f"{day}T19:45:00Z", "o": 1, "h": 1, "l": 1, "c": 1, "v": 1, "vw": 1},
+        ])
+    s.commit()
+
+    assert sorted(barcache.movers_between(s, "2026-06-01", end_day="2026-06-02")) == [
+        "2026-06-01", "2026-06-02",
+    ]
+    assert [b["t"][:10] for b in
+            barcache.cached_daily_bars(s, ["AAA"], "2026-06-01", end_day="2026-06-02")["AAA"]] == [
+        "2026-06-01", "2026-06-02",
+    ]
+    assert [b["t"] for b in
+            barcache.cached_intraday_bars(s, ["AAA"], "2026-06-01", end_day="2026-06-02")["AAA"]] == [
+        "2026-06-01T14:00:00Z", "2026-06-01T19:45:00Z",
+        "2026-06-02T14:00:00Z", "2026-06-02T19:45:00Z",
+    ]
+
+    # No end = every stored day, exactly as before.
+    assert len(barcache.movers_between(s, "2026-06-01")) == 3
+    assert len(barcache.cached_intraday_bars(s, ["AAA"], "2026-06-01")["AAA"]) == 6
+
+
 def test_cached_daily_bars_shapes_like_alpaca_and_filters():
     s = _mem_session()
     barcache.save_daily_bars(s, "AAA", [

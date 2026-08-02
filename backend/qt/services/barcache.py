@@ -16,6 +16,7 @@ broker-free function so the reconstruction is exhaustively testable.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import date, timedelta
 
 from sqlalchemy import Float, Integer, String, create_engine, func
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -302,9 +303,14 @@ def movers_between(
     min_price: float = 0.0,
     max_price: float = 0.0,
     min_dollar_volume: float = 0.0,
+    end_day: str | None = None,
 ) -> dict[str, list[str]]:
     """{day: [symbols ranked]} for all reconstructed days on/after start_day —
     the per-day 'today's risers' a scanner-replay backtest gates entries on.
+
+    `end_day` (inclusive) closes the other side, for a replay of a window that
+    ended in the past rather than one running up to today. None = everything from
+    start_day on, which is what a plain "last N days" backtest wants.
 
     `top_n` narrows each day to its best N at READ time: the cache stores a
     generous set (see barsweep.SWEEP_STORE_TOP_N), so the backtest can dial the
@@ -321,12 +327,10 @@ def movers_between(
 
     The exclude list is matched loosely on purpose: the cache stores 'TRUMPUSD'
     where the scanner config holds 'TRUMP/USD'."""
-    rows = (
-        sess.query(model)
-        .filter(model.day >= start_day)
-        .order_by(model.day, model.rank)
-        .all()
-    )
+    query = sess.query(model).filter(model.day >= start_day)
+    if end_day is not None:
+        query = query.filter(model.day <= end_day)
+    rows = query.order_by(model.day, model.rank).all()
     banned = {_norm_symbol(s) for s in (exclude or set())}
     out: dict[str, list[str]] = {}
     for m in rows:  # rows are rank-ordered, so appending while under the cap keeps the top N
@@ -345,10 +349,13 @@ def movers_between(
 
 
 def cached_daily_bars(
-    sess: OrmSession, symbols: list[str], start_day: str, model=DailyBar, stamp: str = "T14:00:00Z"
+    sess: OrmSession, symbols: list[str], start_day: str, model=DailyBar, stamp: str = "T14:00:00Z",
+    *, end_day: str | None = None,
 ) -> dict[str, list[dict]]:
     """Cached daily bars for `symbols` on/after start_day, shaped like Alpaca
     bar dicts (t/o/h/l/c/v/vw) so the backtester consumes them unchanged.
+
+    `end_day` (inclusive) bounds the far side for a replay of a past window.
 
     `stamp` places each bar INSIDE its trading day so the backtest's day-bucket
     matches the movers key. Stocks stamp 14:00Z (10:00 ET — inside the ET day,
@@ -360,12 +367,10 @@ def cached_daily_bars(
     # Chunk the IN() list so a large movers union doesn't build a giant query.
     for i in range(0, len(symbols), 500):
         chunk = symbols[i : i + 500]
-        rows = (
-            sess.query(model)
-            .filter(model.symbol.in_(chunk), model.day >= start_day)
-            .order_by(model.symbol, model.day)
-            .all()
-        )
+        query = sess.query(model).filter(model.symbol.in_(chunk), model.day >= start_day)
+        if end_day is not None:
+            query = query.filter(model.day <= end_day)
+        rows = query.order_by(model.symbol, model.day).all()
         for b in rows:
             out.setdefault(b.symbol, []).append(
                 {"t": f"{b.day}{stamp}", "o": b.o, "h": b.h, "l": b.l, "c": b.c, "v": b.v, "vw": b.vw}
@@ -396,23 +401,32 @@ def save_intraday_bars(sess: OrmSession, symbol: str, bars: list[dict], model=In
 
 
 def cached_intraday_bars(
-    sess: OrmSession, symbols: list[str], start_day: str, model=IntradayBar
+    sess: OrmSession, symbols: list[str], start_day: str, model=IntradayBar,
+    *, end_day: str | None = None,
 ) -> dict[str, list[dict]]:
     """Cached intraday bars for `symbols` with a timestamp on/after start_day,
     shaped like Alpaca bar dicts (t/o/h/l/c/v/vw) so the backtester consumes
     them unchanged. ISO timestamps sort/compare lexically, so a plain string
-    filter on the 'YYYY-MM-DD' prefix is correct."""
+    filter on the 'YYYY-MM-DD' prefix is correct.
+
+    `end_day` is an INCLUSIVE day, so the bound is the day after it, exclusive —
+    every stamp within end_day ('...T19:45:00Z' and all the rest) sorts before
+    the next day's midnight. Comparing against end_day itself would keep only the
+    bars stamped exactly at midnight, i.e. none of them."""
     if not symbols:
         return {}
+    end_before = (
+        (date.fromisoformat(end_day) + timedelta(days=1)).isoformat()
+        if end_day is not None
+        else None
+    )
     out: dict[str, list[dict]] = {}
     for i in range(0, len(symbols), 500):
         chunk = symbols[i : i + 500]
-        rows = (
-            sess.query(model)
-            .filter(model.symbol.in_(chunk), model.ts >= start_day)
-            .order_by(model.symbol, model.ts)
-            .all()
-        )
+        query = sess.query(model).filter(model.symbol.in_(chunk), model.ts >= start_day)
+        if end_before is not None:
+            query = query.filter(model.ts < end_before)
+        rows = query.order_by(model.symbol, model.ts).all()
         for b in rows:
             out.setdefault(b.symbol, []).append(
                 {"t": b.ts, "o": b.o, "h": b.h, "l": b.l, "c": b.c, "v": b.v, "vw": b.vw}

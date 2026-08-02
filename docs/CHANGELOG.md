@@ -3,6 +3,31 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## A backtest can now be told when to stop, not just when to start (2026-08-02)
+
+Every replay QT has ever run was "the last N days, up to right now". Useful for
+"how would this do?", and no use at all for "what happened between the 12th and
+the 3rd" — which is exactly what the fidelity check needs to ask once a strategy
+was edited partway through the period being compared.
+
+A backtest now takes an explicit **start and end**. Ask for `days` and nothing
+changes; give it a window and it replays that window and nothing else.
+
+**The end of a window is stricter than its start, deliberately.** Bars before the
+start are warm-up: they feed MACD, RSI and ATR so those signals aren't dead for
+the first weeks, and they trade nothing. Bars after the end are not the mirror of
+that — they are dropped completely, and they are not even allowed to re-price a
+position you were still holding when the window shut. Letting them would value
+that holding at a price the period could not have known, and the equity curve,
+the unrealized P&L and the drawdown would then all quietly describe a longer
+stretch than the header claimed. A position open at the end is marked at the last
+price *inside* the window. The window's end is the end.
+
+Scanner replay follows the same line: the cached movers and bars stop at the
+window too, so a replayed day's candidates are that day's risers and not a later
+day's. Nothing here is visible in the app yet — it is the machinery the next
+change needs.
+
 ## You name the search draft yourself, before it's saved (2026-08-02)
 
 Saving a draft off the optimizer used to fail for anyone with a descriptive
