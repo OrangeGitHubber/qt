@@ -115,6 +115,28 @@ export default function FidelityPanel() {
             </p>
           )}
 
+          {(report.config?.drift.length ?? 0) > 0 && (
+            <p className="hint warn">
+              <IconWarn className="icon-inline" />{" "}
+              <strong>This strategy was edited after these trades were made.</strong> Every trade records the config
+              version that produced it, and the replay uses the strategy as it stands <em>today</em> — so this is
+              measuring whether today's settings reproduce yesterday's trades, which is a different and much less
+              useful question. What changed:{" "}
+              {report.config!.drift
+                .slice(0, 6)
+                .map((c) => `${c.field} ${JSON.stringify(c.then)} → ${JSON.stringify(c.now)}`)
+                .join("; ")}
+              {report.config!.drift.length > 6 ? `; …and ${report.config!.drift.length - 6} more` : ""}.
+              {report.config!.versions_used > 1 && (
+                <>
+                  {" "}
+                  These trades span <strong>{report.config!.versions_used} different config versions</strong>, so no
+                  single replay can be faithful to all of them — not even one using an older config.
+                </>
+              )}
+            </p>
+          )}
+
           {d.backtest_trades === 0 && (
             <p className="hint warn">
               <IconWarn className="icon-inline" /> <strong>The backtest took no trades at all</strong> over this

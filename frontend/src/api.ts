@@ -1254,6 +1254,14 @@ export interface FidelityReport {
   replayed_symbols: string[];
   // The backtester's own account of why it opened nothing, when it opened nothing.
   backtest_no_trade_reason?: string | null;
+  // The config that produced the real trades, versus the one being replayed.
+  // Non-empty drift means the comparison is measuring today's settings against
+  // yesterday's history — which looks identical on screen unless it says so.
+  config?: {
+    versions_used: number;
+    produced_by_version: number | null;
+    drift: { field: string; then: unknown; now: unknown }[];
+  };
   backtest_only: { symbol: string; day: string; sim_entry: number | null; sim_exit_reason: string }[];
   rails_blocked: { symbol: string; day: string; blocked_by: string | null }[];
   decision: {

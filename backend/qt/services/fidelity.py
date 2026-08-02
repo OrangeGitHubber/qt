@@ -318,3 +318,61 @@ def _execution_stats(matched: list[dict], assumed_spread_pct: float, assumed_fee
         "backtest_pnl_optimism_usd": pnl_gap,
         "enough_to_judge": len(both) >= 30,
     }
+
+
+# Fields that change WHAT gets traded, and therefore make a replay of today's
+# config a comparison against a different strategy. Presentation names, because
+# this is read by someone deciding whether to trust a report.
+_SHAPING_FIELDS: list[tuple[str, str]] = [
+    ("universe", "Universe"),
+    ("symbols", "Symbol list"),
+    ("basket_id", "Basket"),
+    ("rank_by", "Ranking"),
+    ("top_n", "Top N"),
+    ("rank_enabled", "Ranking on"),
+    ("sizing_usd", "$ per trade"),
+    ("sleeve_usd", "Sleeve budget"),
+    ("max_positions", "Max positions"),
+    ("swing_mode", "Swing mode"),
+    ("ignore_regime", "Ignore regime filter"),
+]
+
+
+def _flat_params(snapshot: dict) -> dict:
+    """entry/exit/atr/macd numbers flattened to "Entry min_day_gain_pct" style
+    keys, so a changed stop shows up as one row rather than a nested blob."""
+    out: dict[str, object] = {}
+    params = snapshot.get("params") or {}
+    for block in ("entry", "exit", "atr", "macd", "dca"):
+        values = params.get(block) or {}
+        if isinstance(values, dict):
+            for key, value in values.items():
+                out[f"{block.capitalize()} {key}"] = value
+    return out
+
+
+def config_drift(produced_by: dict | None, replayed: dict) -> list[dict]:
+    """What differs between the config that PRODUCED the trades and the one being
+    replayed against them.
+
+    Every trade records the config version that produced it, precisely so a later
+    question like this one can be answered. Edit a strategy's universe — or its
+    sleeve, or how many positions it may hold — and a replay of today's settings
+    is answering a different question than "did the backtester reproduce what
+    happened", while looking identical on screen.
+
+    Returns the changed fields only. An empty list is the good case and means the
+    comparison is apples to apples."""
+    if not produced_by:
+        return []
+    changes: list[dict] = []
+    for key, label in _SHAPING_FIELDS:
+        then, now = produced_by.get(key), replayed.get(key)
+        if then != now:
+            changes.append({"field": label, "then": then, "now": now})
+    then_params, now_params = _flat_params(produced_by), _flat_params(replayed)
+    for key in sorted(set(then_params) | set(now_params)):
+        then, now = then_params.get(key), now_params.get(key)
+        if then != now:
+            changes.append({"field": key, "then": then, "now": now})
+    return changes

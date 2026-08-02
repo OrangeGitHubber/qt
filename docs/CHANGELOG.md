@@ -60,6 +60,28 @@ The P&L column in the journal is still gross, and now says so.
 but don't post real fee activities, so on paper this job runs, finds nothing,
 and correctly reports "no fees" rather than inventing them.
 
+## Fidelity: say when the strategy was edited after it traded (2026-08-02)
+
+Every trade already records the config version that produced it. The fidelity
+report now uses that, because without it the comparison can be quietly answering
+the wrong question.
+
+The replay runs the strategy as it stands **today**. Change its universe, its
+sleeve budget, how many positions it may hold, or any entry or exit rule, and
+you are no longer asking "does the backtester reproduce what happened" — you are
+asking "does today's strategy reproduce yesterday's trades". Those look identical
+on screen and mean completely different things.
+
+The report now names exactly what changed: *Universe scanner → basket; Sleeve
+budget 500 → 2000; Exit stop_loss_pct 4 → 6*. A universe change is the obvious
+one, but a wider sleeve or a higher position limit matters just as much — they
+don't change which symbols qualify, they change how many trades fit and how large
+each one is, so the replay takes a different set.
+
+If the trades span **more than one** config version, it says so plainly: the
+strategy was edited mid-window, and no single replay can be faithful to all of
+those trades — not even one using an older config.
+
 ## Fidelity: say WHY nothing matched, instead of blaming the backtester (2026-08-02)
 
 The first real run reported 0% agreement and twenty rows all saying the same

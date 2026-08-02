@@ -463,3 +463,90 @@ def test_the_replay_uses_the_bar_size_the_strategy_needs(client, configured, mon
         r = client.post("/api/fidelity/compare", json={"strategy_id": sid, "days": 30})
     assert r.status_code == 200, r.text
     assert seen["timeframe"] == "15Min", "a VWAP strategy must not be replayed on daily bars"
+
+
+# --- the config that produced the trades ------------------------------------
+
+
+def test_no_config_change_reports_no_drift():
+    """The good case, and it must stay quiet: an empty list is what tells you
+    the comparison is apples to apples."""
+    from qt.services.fidelity import config_drift
+
+    cfg = {"universe": "scanner", "sleeve_usd": 500, "params": {"exit": {"stop_loss_pct": 4}}}
+    assert config_drift(cfg, dict(cfg)) == []
+    assert config_drift(None, cfg) == []   # nothing recorded — say nothing
+
+
+def test_a_changed_universe_is_named():
+    """Werner's case: trades made under one universe, replayed against another.
+    The version snapshot is exactly where that shows up."""
+    from qt.services.fidelity import config_drift
+
+    drift = config_drift(
+        {"universe": "scanner", "symbols": []},
+        {"universe": "basket", "symbols": []},
+    )
+    assert {"field": "Universe", "then": "scanner", "now": "basket"} in drift
+
+
+def test_sleeve_and_position_count_changes_are_named_too():
+    """They don't change WHICH symbols qualify, but they change how many trades
+    fit and how big each is — so the replay takes a different set."""
+    from qt.services.fidelity import config_drift
+
+    drift = config_drift(
+        {"sleeve_usd": 500, "max_positions": 3, "sizing_usd": 100},
+        {"sleeve_usd": 2000, "max_positions": 8, "sizing_usd": 250},
+    )
+    fields = {c["field"] for c in drift}
+    assert {"Sleeve budget", "Max positions", "$ per trade"} <= fields
+
+
+def test_a_changed_rule_inside_params_is_flattened_to_one_row():
+    """A nested blob diff would be unreadable; one row per changed setting is
+    what you can act on."""
+    from qt.services.fidelity import config_drift
+
+    drift = config_drift(
+        {"params": {"exit": {"stop_loss_pct": 4, "trailing_stop_pct": 5}}},
+        {"params": {"exit": {"stop_loss_pct": 6, "trailing_stop_pct": 5}}},
+    )
+    assert drift == [{"field": "Exit stop_loss_pct", "then": 4, "now": 6}]
+
+
+def test_the_report_names_the_config_that_produced_the_trades(client, configured):
+    """End to end: edit the strategy after it traded, and the comparison says so
+    instead of quietly measuring today's settings against yesterday's history."""
+    from datetime import datetime, timedelta, timezone
+    from unittest.mock import AsyncMock, patch
+
+    from qt.broker.alpaca import AlpacaClient
+    from qt.models import StrategyConfigVersion
+
+    sid = client.post("/api/strategies", json=_strategy_body()).json()["id"]
+    with session_scope() as s:
+        version = s.query(StrategyConfigVersion).filter_by(strategy_id=sid).one()
+        s.add(Trade(
+            strategy_id=sid, mode="paper", symbol="NVDA", asset_class="stock",
+            status="closed", qty=10, notional=1000, entry_price=100.0, exit_price=110.0,
+            pnl=100.0, entry_reason="gain 5%", exit_reason="take-profit: +10%",
+            config_version_id=version.id,
+            entry_at=datetime.now(timezone.utc) - timedelta(days=3),
+            exit_at=datetime.now(timezone.utc) - timedelta(days=2),
+        ))
+
+    # Now widen the sleeve — exactly the kind of edit that changes what a replay
+    # would do without changing which symbols qualify.
+    edited = _strategy_body()
+    edited["sleeve_usd"] = 50000
+    client.put(f"/api/strategies/{sid}", json=edited)
+
+    bars = [{"t": (datetime.now(timezone.utc) - timedelta(days=n)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+             "o": 100, "h": 100, "l": 100, "c": 100, "v": 1e6, "vw": 100} for n in (10, 9, 8)]
+    with patch.object(AlpacaClient, "historical_bars", new=AsyncMock(return_value={"NVDA": bars})):
+        body = client.post("/api/fidelity/compare", json={"strategy_id": sid, "days": 30}).json()
+
+    assert body["config"]["versions_used"] == 1
+    fields = {c["field"] for c in body["config"]["drift"]}
+    assert "Sleeve budget" in fields, body["config"]["drift"]

@@ -38,7 +38,7 @@ from qt.api.backtest import (
 from qt.api.market import require_client
 from qt.broker.alpaca import AlpacaClient
 from qt.db import get_session
-from qt.models import Strategy, Trade
+from qt.models import Strategy, StrategyConfigVersion, Trade
 from qt.services import fidelity
 from qt.services.backtest import _day_fn
 
@@ -77,6 +77,25 @@ def _day_of(asset_class: str):
     near midnight lands in a different bucket and reads as a mismatch that never
     happened."""
     return _day_fn("crypto" if asset_class == "crypto" else "stock")
+
+
+def _serialize_current(strategy: Strategy) -> dict:
+    """Today's config in the same shape a version snapshot holds, so the two can
+    be diffed field by field rather than eyeballed."""
+    return {
+        "universe": strategy.universe,
+        "symbols": json.loads(strategy.symbols) if strategy.symbols else [],
+        "basket_id": strategy.basket_id,
+        "rank_by": strategy.rank_by,
+        "top_n": strategy.top_n,
+        "rank_enabled": bool(strategy.rank_enabled),
+        "sizing_usd": strategy.sizing_usd,
+        "sleeve_usd": strategy.sleeve_usd,
+        "max_positions": strategy.max_positions,
+        "swing_mode": strategy.swing_mode,
+        "ignore_regime": strategy.ignore_regime,
+        "params": json.loads(strategy.params),
+    }
 
 
 def _journal_rows(session: Session, strategy: Strategy, days: int, mode: str) -> list[dict]:
@@ -193,6 +212,31 @@ async def compare(
     # screen of "the backtest missed this" into the one sentence that explains
     # all of them at once.
     report["backtest_no_trade_reason"] = (result.get("diagnosis") or {}).get("summary")
+
+    # CONFIG DRIFT. Every trade records the config version that produced it. The
+    # replay uses the strategy as it stands TODAY, so if it was edited since —
+    # a different universe, a bigger sleeve, more positions — the comparison is
+    # answering "does today's strategy reproduce yesterday's trades", which is a
+    # different and much less interesting question. It looks identical on screen,
+    # which is why it has to be stated.
+    version_ids = {r.get("config_version_id") for r in live_rows if r.get("config_version_id")}
+    versions = (
+        session.query(StrategyConfigVersion)
+        .filter(StrategyConfigVersion.id.in_(version_ids))
+        .order_by(StrategyConfigVersion.version_no)
+        .all()
+        if version_ids
+        else []
+    )
+    produced_by = json.loads(versions[-1].snapshot) if versions else None
+    report["config"] = {
+        # More than one means the strategy was edited DURING the window, so no
+        # single replay can be faithful to all of these trades — not even one
+        # using an old config.
+        "versions_used": len(versions),
+        "produced_by_version": versions[-1].version_no if versions else None,
+        "drift": fidelity.config_drift(produced_by, _serialize_current(strategy)),
+    }
     report["strategy_name"] = strategy.name
     report["mode"] = body.mode
     report["days"] = body.days
