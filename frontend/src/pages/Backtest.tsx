@@ -1099,6 +1099,43 @@ export default function Backtest() {
                   did arrive is now cached.
                 </p>
               )}
+            {(result.bar_gaps?.length ?? 0) > 0 && (
+              <p className="hint warn">
+                <IconWarn className="icon-inline" />{" "}
+                <strong>
+                  {result.bar_gaps!.length === 1
+                    ? `${result.bar_gaps![0].days} days of this window had no price data at all`
+                    : `${result.bar_gaps!.reduce((n, g) => n + g.days, 0)} days of this window had no price data at all, across ${result.bar_gaps!.length} gaps`}
+                  .
+                </strong>{" "}
+                The equity line is drawn straight across{" "}
+                {result.bar_gaps!.length === 1 ? "it" : "them"} — that flat stretch isn't the strategy sitting still,
+                it's missing history. Anything held was carried at its last known price and then re-marked all at once
+                when data resumed, which is what the sudden step is. More seriously,{" "}
+                <strong>stops cannot fire without bars</strong>, so a trailing stop or stop-loss that would have closed
+                a position mid-gap never got the chance. Treat this result as unusable until the gap is filled.
+                <br />
+                {result.bar_gaps!.slice(0, 4).map((g) => (
+                  <span key={g.after}>
+                    Nothing between <strong>{g.after}</strong> and <strong>{g.before}</strong> ({g.days} days).{" "}
+                  </span>
+                ))}
+                {result.bar_gaps!.length > 4 ? <>…and {result.bar_gaps!.length - 4} more. </> : null}
+                {result.scanner_replay ? (
+                  <>
+                    Scanner replay only caches bars around the days a symbol was a top riser, so a stretch with no
+                    cached mover-days has nothing to replay. Run a{" "}
+                    <strong>
+                      {strategy?.asset_class === "crypto" ? "crypto sweep + crypto intraday sweep" : "sweep + intraday sweep"}
+                    </strong>{" "}
+                    (Settings → Historical bar cache) covering this period, then re-run.
+                  </>
+                ) : (
+                  <>The bar download returned nothing for those dates — usually a vendor outage or a symbol that wasn't trading yet.</>
+                )}
+              </p>
+            )}
+
             {result.intraday_topped_up && (
               <p className="hint">
                 The 15-minute bars this replay needed weren't cached, so they were downloaded as part of this run —

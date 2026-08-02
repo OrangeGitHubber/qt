@@ -545,6 +545,9 @@ export interface BacktestResult {
   scanner_replay?: boolean;
   replay_intraday?: boolean;
   intraday_topped_up?: boolean; // bars were downloaded during this run
+  // Stretches of the window with NO bars. The chart draws a straight line across
+  // them; positions were marked at a stale price and no stop could fire there.
+  bar_gaps?: { after: string; before: string; days: number }[];
   replay_top_n?: number;
   universe_size?: number; // symbols actually REPLAYED (not merely movers)
   universe_dropped?: string[]; // movers with no bars at the chosen resolution
@@ -837,6 +840,9 @@ export interface OptimizerResult {
   scanner_replay?: boolean;
   replay_intraday?: boolean;
   intraday_topped_up?: boolean; // bars were downloaded during this run
+  // Stretches of the window with NO bars. The chart draws a straight line across
+  // them; positions were marked at a stale price and no stop could fire there.
+  bar_gaps?: { after: string; before: string; days: number }[];
   replay_top_n?: number;
   universe_size?: number; // movers actually SEARCHED (not merely listed)
   universe_dropped?: string[]; // movers with no bars at the chosen resolution

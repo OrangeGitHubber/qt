@@ -523,6 +523,38 @@ def _max_drawdown(equity: list[float]) -> float:
     return round(worst, 2)
 
 
+def _bar_gaps(days_index: list[str], market: str) -> list[dict]:
+    """Stretches of the tested window with NO bars at all.
+
+    The day index is built from days that actually had bars, so a hole doesn't
+    render as a flat line — it renders as nothing, and the equity chart draws a
+    straight segment from the last day before it to the first day after. That
+    looks like "the strategy sat still", which is the one thing it definitely
+    wasn't doing:
+
+      - Open positions keep their last seen price for the whole gap (see the
+        `last_price` carry-forward), so the equity line is frozen at a stale
+        mark and then lurches when real prices reappear. The cliff is the whole
+        gap's move arriving in one step, not a crash.
+      - Worse, stops CANNOT FIRE without bars. A trailing stop or stop-loss that
+        would have closed the position mid-gap never gets the chance, so the
+        result reports losses the live engine would have cut.
+
+    Crypto trades every calendar day, so any skipped day is a real hole. Stocks
+    skip weekends and holidays, so only a run of more than four calendar days is
+    suspicious — that tolerates a long weekend without crying wolf.
+    """
+    tolerance = 1 if market == "crypto" else 4
+    gaps: list[dict] = []
+    for previous, following in zip(days_index, days_index[1:]):
+        a = datetime.fromisoformat(previous).date()
+        b = datetime.fromisoformat(following).date()
+        missing = (b - a).days - 1
+        if (b - a).days > tolerance:
+            gaps.append({"after": previous, "before": following, "days": missing})
+    return gaps
+
+
 def _hold_benchmark(prepared: dict[str, list[dict]], days_index: list[str]) -> list[float | None]:
     """Equal-weight buy-and-hold of the SAME symbols the strategy traded,
     computed from the bars we already downloaded (no extra API calls).
@@ -1010,6 +1042,11 @@ def run_backtest(
         ),
         "equity_days": days_index,
         "equity": [round((v / starting_cash - 1) * 100, 2) for _, v in equity_curve],
+        # Stretches with no bars at all. The chart draws a straight line across
+        # them, which reads as "nothing happened" when in fact positions were
+        # marked at a stale price and no stop could fire — so the run has to say
+        # so rather than let the flat segment speak for itself.
+        "bar_gaps": _bar_gaps(days_index, market),
         "hold_benchmark": _hold_benchmark(prepared, days_index),
         "hold_benchmark_label": (
             list(prepared)[0] if len(prepared) == 1 else f"{len(prepared)} symbols (equal weight)"
@@ -1336,6 +1373,7 @@ def run_portfolio_backtest(
         "strategy_names": [s.get("name", "") for s in strategies],
         "equity_days": days_index,
         "equity": [round((v / starting_cash - 1) * 100, 2) for _, v in equity_curve],
+        "bar_gaps": _bar_gaps(days_index, market),  # see the single-strategy note
         "hold_benchmark": _hold_benchmark(all_symbols, days_index),
         "hold_benchmark_label": (
             list(all_symbols)[0] if len(all_symbols) == 1

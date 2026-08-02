@@ -36,6 +36,33 @@ The P&L column in the journal is still gross, and now says so.
 but don't post real fee activities, so on paper this job runs, finds nothing,
 and correctly reports "no fees" rather than inventing them.
 
+## A flat line on the equity chart could be missing data (2026-08-02)
+
+A backtest showed the strategy line going perfectly flat for six weeks and then
+dropping off a cliff in one step, while the market line kept moving normally.
+
+Neither the flat part nor the cliff was real. **There were no bars for those
+weeks at all.** The equity chart is built from days that actually had price data,
+so a gap isn't stored as a flat stretch — it's simply absent, and the chart draws
+one straight line from the last day before it to the first day after. The
+"sudden drop" is the entire missing period's move arriving at the first day data
+returns, because anything held was carried at its last known price the whole
+time.
+
+The more serious half: **stops cannot fire without bars.** A trailing stop or
+stop-loss that would have closed a position during the gap never got the chance,
+so the run reports losses the live engine would have cut. A result with a hole in
+it isn't a pessimistic result — it's an invalid one.
+
+Backtests now detect these gaps and say so plainly, naming the exact dates and
+how many days are missing, with the explanation above. Weekends and long weekends
+are not flagged for stocks; crypto trades every day, so any skipped day there is
+a real hole.
+
+Where the gaps come from: scanner replay only caches bars around the days a
+symbol was actually a top riser, so a stretch of history with no cached
+mover-days has nothing to replay. The warning points at the sweep that fills it.
+
 ## The optimizer now tells you when it's repeating itself (2026-08-01)
 
 The out-of-sample split is the optimizer's one real defence: the last ~30% of the
