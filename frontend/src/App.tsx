@@ -157,7 +157,10 @@ export default function App() {
       {status.alpaca_configured ? (
         <>
           <nav className="tabs">
-            {(["dashboard", "scanner", "watchlist", "baskets", "strategies", "backtest", "optimizer", "journal", "settings", "about"] as Tab[]).map((t) => (
+            {/* Journal sits second, beside Dashboard: together they're "what is happening"
+                and "what happened" — the two you check most and flip between. The rest
+                are configuration and research, visited far less often. */}
+            {(["dashboard", "journal", "scanner", "watchlist", "baskets", "strategies", "backtest", "optimizer", "settings", "about"] as Tab[]).map((t) => (
               <button key={t} className={tab === t ? "tab active" : "tab"} onClick={() => setTab(t)}>
                 {t.charAt(0).toUpperCase() + t.slice(1)}
               </button>

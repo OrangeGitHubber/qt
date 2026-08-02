@@ -36,6 +36,24 @@ The P&L column in the journal is still gross, and now says so.
 but don't post real fee activities, so on paper this job runs, finds nothing,
 and correctly reports "no fees" rather than inventing them.
 
+## Wider layout, and Journal moved next to Dashboard (2026-08-01)
+
+The app was capped at 1080px, which on a 1920 monitor used barely half the
+screen. That number came from typography — it's roughly the width at which a
+paragraph stays comfortable to read — but QT is mostly **tables and charts**,
+and those were being squeezed to protect prose that takes up a small share of
+the page.
+
+The shell now goes to 1600px (about 85% of a 1920 screen), and long-form text
+keeps its own readable measure instead of stretching with it. Tables get the
+width; sentences don't. Wider still is deliberately not offered — beyond about
+1600px the eye has to travel too far across a row to keep it associated with its
+label.
+
+**Journal now sits second in the menu, next to Dashboard.** Between them they're
+"what is happening" and "what happened" — the two you flip between most. The
+rest are configuration and research.
+
 ## The journal's "All" view hid every actual trade (2026-08-01)
 
 Force-sell a position and it vanished from open positions, showed as sold at

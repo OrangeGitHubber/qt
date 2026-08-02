@@ -25,7 +25,11 @@ body {
 }
 
 .shell {
-  max-width: 1080px;
+  /* 1080 was a READING width — the measure at which a paragraph stays
+     comfortable. But this app is mostly tables and charts, and those were being
+     squeezed into half a monitor to protect prose that occupies a fraction of
+     the page. Widen for the data; the prose keeps its own measure below. */
+  max-width: 1600px;
   margin: 0 auto;
   padding: 1.5rem 1rem 3rem;
 }
@@ -933,6 +937,20 @@ tr.log-gap td {
 }
 .th-sort.active {
   color: var(--text);
+}
+
+/* Long-form text keeps a readable measure even though the shell is now wide: a
+   paragraph spanning 1600px runs to ~200 characters a line, far past the 60-75
+   the eye tracks without losing its place. Tables and charts want the width;
+   sentences don't.
+
+   Block paragraphs only — `.hint` is also used as an inline <span>, where
+   max-width does nothing, so table cells and inline notes are untouched. */
+p.hint,
+p.field-help,
+.save-note,
+.steps li {
+  max-width: 78ch;
 }
 
 /* Short teaching intro at the top of a page. */
