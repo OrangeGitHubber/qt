@@ -179,6 +179,12 @@ export default function Optimizer() {
   const showRsiMin = !!result && result.results.some((r) => (r.params.rsi_min ?? 0) > 0);
   const showRsiExit = !!result && result.results.some((r) => (r.params.exit_rsi_above ?? 0) > 0);
   const showMacd = !!result && result.results.some((r) => (r.params.macd_slow ?? 0) > 0);
+  // The stop columns are mutually exclusive by construction: when the strategy
+  // uses an ATR stop, the fixed stop-loss is inert and isn't searched at all, so
+  // showing an always-empty "Stop" column would read as "the search found
+  // nothing" rather than "this knob doesn't apply here".
+  const showAtrStop = !!result && result.results.some((r) => (r.params.atr_stop_mult ?? 0) > 0);
+  const showStopLoss = !!result && result.results.some((r) => (r.params.stop_loss_pct ?? 0) > 0);
 
   useEffect(() => {
     // A strategy row's "Optimize" button jumps here with that strategy in tow.
@@ -756,7 +762,8 @@ export default function Optimizer() {
                     <th>#</th>
                     <th>Min gain</th>
                     <th>Trail</th>
-                    <th>Stop</th>
+                    {showStopLoss && <th>Stop</th>}
+                    {showAtrStop && <th>ATR stop</th>}
                     <th>Take-profit</th>
                     {showMacd && <th>MACD slow</th>}
                     {showRsiMin && <th>Min RSI</th>}
@@ -773,7 +780,8 @@ export default function Optimizer() {
                       <td>{r.rank}</td>
                       <td>{r.params.min_day_gain_pct}</td>
                       <td>{r.params.trailing_stop_pct}</td>
-                      <td>{r.params.stop_loss_pct}</td>
+                      {showStopLoss && <td>{r.params.stop_loss_pct}</td>}
+                      {showAtrStop && <td>{r.params.atr_stop_mult}×</td>}
                       <td>{r.params.take_profit_pct}</td>
                       {showMacd && <td>{r.params.macd_slow ?? "—"}</td>}
                       {showRsiMin && <td>{r.params.rsi_min || "off"}</td>}

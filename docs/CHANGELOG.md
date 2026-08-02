@@ -36,6 +36,31 @@ The P&L column in the journal is still gross, and now says so.
 but don't post real fee activities, so on paper this job runs, finds nothing,
 and correctly reports "no fees" rather than inventing them.
 
+## Why the new ATR knob wasn't showing up (2026-08-01)
+
+The ATR search shipped earlier today, but running it still showed no ATR
+recommendation. Two separate faults, one visible symptom.
+
+**Your browser was running the previous UI.** `index.html` is the only unhashed
+file in the build, and it names the JavaScript bundle. It was served with no
+caching instructions at all, which does NOT mean "don't cache" — browsers fall
+back to a guess based on the file's timestamp (the container build time), decide
+it's fresh, and reuse the old shell. The old shell then loads the old bundle from
+the browser's own cache, so an updated container quietly runs the **previous UI**
+against the new backend. There's no error and no version warning: a feature you
+just installed simply isn't there. That was visible in the results table — the
+"Stop" column was blank, because the new backend had correctly stopped searching
+the fixed stop-loss, but the old UI had no column to show the ATR stop it
+searched instead. The shell is now marked never-cacheable; the bundles keep
+normal caching, since their filenames change when their contents do. **One hard
+refresh (Ctrl+Shift+R) is needed to pick up this fix** — after that, updates land
+on their own.
+
+**The results table had fixed columns.** Even on the current build it always
+showed "Stop" and never "ATR stop". The two are mutually exclusive — an ATR
+strategy doesn't search the fixed stop at all — so the table now shows whichever
+one was actually searched.
+
 ## The optimizer now tunes your ATR stop (2026-08-01)
 
 Running a search on a strategy that uses an **ATR stop** produced no

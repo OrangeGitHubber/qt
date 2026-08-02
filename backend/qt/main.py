@@ -309,13 +309,34 @@ def _static_dir() -> Path | None:
     return None
 
 
+# index.html must NEVER be cached, because it is the only unhashed file in the
+# build and it is what names the hashed bundles. Served with no Cache-Control it
+# gets HEURISTIC caching: with only Last-Modified to go on — and that timestamp
+# is the docker BUILD time, so it can be days old — browsers invent a freshness
+# lifetime of roughly 10% of the file's age and serve the stale shell without
+# asking. The shell then loads the OLD bundle it names, out of the browser's own
+# cache, so an updated container quietly runs the PREVIOUS UI against the new
+# API. That failure is near-invisible: no error, no version mismatch, just a
+# feature you shipped that isn't there. Assets under /assets are content-hashed,
+# so they keep normal caching — the hash in the filename IS the cache key.
+NO_STORE = {"Cache-Control": "no-store, must-revalidate"}
+
+
+def mount_spa(target: FastAPI, static_dir: Path) -> None:
+    """Serve the built frontend: hashed bundles cacheable, shell never cached."""
+    target.mount("/assets", StaticFiles(directory=static_dir / "assets"), name="assets")
+
+    @target.get("/{full_path:path}", include_in_schema=False)
+    def spa(full_path: str) -> FileResponse:
+        candidate = static_dir / full_path
+        if full_path and candidate.is_file():
+            # Anything reachable here by name (favicon, manifest…) is unhashed
+            # too, so it gets the same treatment — a stale icon is trivial, but
+            # the rule is cheaper to keep than to special-case.
+            return FileResponse(candidate, headers=NO_STORE)
+        return FileResponse(static_dir / "index.html", headers=NO_STORE)
+
+
 static = _static_dir()
 if static:
-    app.mount("/assets", StaticFiles(directory=static / "assets"), name="assets")
-
-    @app.get("/{full_path:path}", include_in_schema=False)
-    def spa(full_path: str) -> FileResponse:
-        candidate = static / full_path
-        if full_path and candidate.is_file():
-            return FileResponse(candidate)
-        return FileResponse(static / "index.html")
+    mount_spa(app, static)

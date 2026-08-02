@@ -762,7 +762,11 @@ export interface OptimizerMetrics {
 export interface OptimizerComboParams {
   min_day_gain_pct: number;
   trailing_stop_pct: number;
-  stop_loss_pct: number;
+  // The two stops are mutually exclusive: an ATR-stop strategy searches the
+  // multiplier INSTEAD of the fixed %, because the ATR stop replaces it outright
+  // (see evaluate_exit) — so exactly one of these is present on any given row.
+  stop_loss_pct?: number;
+  atr_stop_mult?: number;
   take_profit_pct: number;
   rsi_max?: number; // searched only when the strategy uses an RSI entry cap
   rsi_min?: number; // searched only when the strategy uses an RSI entry floor
