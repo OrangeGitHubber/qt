@@ -36,6 +36,45 @@ The P&L column in the journal is still gross, and now says so.
 but don't post real fee activities, so on paper this job runs, finds nothing,
 and correctly reports "no fees" rather than inventing them.
 
+## The optimizer now searches around your own settings (2026-08-01)
+
+Until now every setting was searched against a hand-written list of values —
+trailing stop tried 2, 3, 4, 5, 6, 8, 10 and so on. Three problems with that,
+all fixed by one change.
+
+**The steps were scale-blind.** Moving from 2 to 3 is a 50% change; moving from
+8 to 10 is 25%. So the search had its *coarsest* resolution exactly where a
+setting is most sensitive, and its finest where it barely matters.
+
+**Your own setting usually wasn't on the list.** If your trailing stop was 3.5%,
+the search tried 3 and 4 and never 3.5 — so it never actually evaluated the
+strategy you were running, and "the winner beat your setting" was a comparison
+nobody had run.
+
+**Every new setting needed its own hand-picked list**, argued from scratch each
+time.
+
+Now every setting is searched **relative to what it is now**: four steps up and
+four steps down, each step the same percentage. At the default 15%, a 2%
+trailing stop is tried at 1.14, 1.32, 1.51, 1.74, **2.00**, 2.30, 2.64, 3.04 and
+3.50. Your value is always among them, exactly. A new **Step size** control
+offers ±10% (fine), ±15% (default) and ±25% (wide) — it changes how far the
+search reaches, not how many values it tries, so widening it doesn't quietly
+enlarge the search space.
+
+**Two consequences worth knowing.**
+
+*It only tunes settings you've switched on.* A take-profit of 0 means off, and a
+percentage step from zero is still zero — there's nothing to anchor on. The
+search won't turn a rule on for you, or guess a starting value for one. Switch it
+on with any number and the next search will tune it. This is the same principle
+already applied to RSI, MACD and ATR, now applied everywhere.
+
+*It's a local search.* It refines the strategy you have; it can't discover that a
+completely different setting is better. At ±15% it reaches ×0.57 to ×1.75 of each
+value. To travel further, run the search again on the resulting draft — each run
+re-anchors on the new values, so repeated runs walk.
+
 ## Missing 15-minute bars are now fetched automatically (2026-08-01)
 
 Scanner replay only uses intraday bars when they cover **every** name in the

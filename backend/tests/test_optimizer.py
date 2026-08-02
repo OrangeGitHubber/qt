@@ -194,7 +194,11 @@ def test_winner_is_the_top_ranked_and_validated_out_of_sample():
 def test_neighbourhood_reports_scores_around_the_winner():
     result, _ = _run()
     nb = result["neighbourhood"]
-    assert set(nb) == set(optimizer.PARAM_SPACE)
+    # Every knob the strategy actually uses is reported. Grids are anchored on
+    # the strategy now, so the set is "what's switched on", not a fixed list —
+    # this fixture's take-profit is 0 (off), and a percentage step from zero is
+    # still zero, so it isn't searched and doesn't appear.
+    assert set(nb) == {"min_day_gain_pct", "trailing_stop_pct", "stop_loss_pct"}
     # Each knob reports the winner plus at least one neighbour value.
     for key, points in nb.items():
         assert any(p["is_best"] for p in points)
@@ -275,7 +279,11 @@ def test_macd_speed_searched_only_when_the_strategy_uses_macd():
     assert "macd_slow" in result["neighbourhood"]
     macd = result["best_draft_params"]["macd"]
     assert macd["fast"] < macd["slow"]
-    assert macd["slow"] in optimizer.MACD_PARAM_SPACE["macd_slow"]
+    # The period is a step off the strategy's OWN slow period (26 by default when
+    # the block is null), not a value from a fixed list.
+    assert macd["slow"] in [
+        int(round(v)) for v in optimizer._geometric_grid(26, 0.15, optimizer.KNOB_BOUNDS["macd_slow"])
+    ]
 
     # A plain strategy (no MACD) never searches MACD speed.
     plain, _ = _run()

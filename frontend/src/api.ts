@@ -806,6 +806,7 @@ export interface OptimizerResult {
   results: OptimizerResultRow[];
   best: OptimizerResultRow | null;
   best_draft_params: StrategyParams;
+  relative_step?: number; // the step size every grid was built from
   // The strategy's value for each searched knob AT THE TIME OF THE SEARCH — the
   // "before" of the before/after. in_grid is false when that value wasn't one of
   // the coarse grid values, i.e. the search never actually evaluated it.
@@ -857,6 +858,7 @@ export const startOptimizer = (body: {
   iterations: number;
   starting_cash: number;
   spread_pct: number;
+  relative_step?: number; // 0.15 = each value tried is 15% up or down from the last
 }) => fetch("/api/optimizer", json(body)).then((r) => handle<{ ok: boolean; started: boolean; symbols: string[]; iterations: number; scanner_replay: boolean }>(r));
 
 export const getOptimizerStatus = () =>

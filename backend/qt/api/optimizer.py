@@ -64,6 +64,12 @@ class OptimizeBody(BaseModel):
     iterations: int = Field(default=40, ge=5, le=200)
     starting_cash: float = Field(default=5000, ge=100, le=10_000_000)
     spread_pct: float = Field(default=0.1, ge=0, le=2)
+    # How far apart the values tried for each setting are, as a fraction of the
+    # setting itself: 0.15 = each step is 15% up or down from the last. Bounded
+    # rather than free-form — below ~5% the steps are smaller than the noise in a
+    # few months of history, and above 50% neighbouring values are different
+    # strategies rather than a refinement of one.
+    relative_step: float = Field(default=0.15, ge=0.05, le=0.5)
 
 
 def _resolve_symbols(session: Session, strategy: Strategy) -> list[str]:
@@ -113,6 +119,7 @@ async def _run_search(
     iterations: int,
     starting_cash: float,
     spread_pct: float,
+    relative_step: float = optimizer.RELATIVE_STEP_DEFAULT,
     prebuilt_bars: dict | None = None,
     prebuilt_daily: dict | None = None,
     eligible_by_day: dict | None = None,
@@ -222,6 +229,7 @@ async def _run_search(
             iterations=iterations,
             starting_cash=starting_cash,
             spread_pct=spread_pct,
+            relative_step=relative_step,
             market=market,
             eligible_by_day=eligible_by_day,
             progress=on_progress,
@@ -397,6 +405,7 @@ async def start_optimize(
         _run_search(
             client, strategy_dict, risk, symbols, strategy.asset_class,
             timeframe, body.days, body.iterations, body.starting_cash, body.spread_pct,
+            relative_step=body.relative_step,
             prebuilt_bars=prebuilt_bars, prebuilt_daily=prebuilt_daily,
             eligible_by_day=eligible_by_day, replay_extra=replay_extra,
             replay_ctx=replay_ctx,

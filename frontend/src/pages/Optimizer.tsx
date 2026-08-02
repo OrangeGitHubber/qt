@@ -213,6 +213,7 @@ export default function Optimizer() {
   const [iterations, setIterations] = useState(40);
   const [cash, setCash] = useState(5000);
   const [spread, setSpread] = useState(0.1);
+  const [relStep, setRelStep] = useState(0.15);
 
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState<OptimizerStatus | null>(null);
@@ -409,6 +410,7 @@ export default function Optimizer() {
         days,
         timeframe,
         iterations,
+        relative_step: relStep,
         starting_cash: cash,
         spread_pct: spread,
       });
@@ -490,10 +492,12 @@ export default function Optimizer() {
 
       <div className="card card-form">
         <p className="hint">
-          A <strong>parameter search</strong> — not "AI". It runs the same backtester across many settings for a
-          momentum strategy (min gain, trailing stop, stop-loss, take-profit) so you find configs that actually held up,
-          instead of guessing numbers. Every guard here exists to fight <strong>overfitting</strong>{" "}
-          <InfoTip k="overfitting" />:
+          A <strong>parameter search</strong> — not "AI". It runs the same backtester across many settings so you find
+          configs that actually held up, instead of guessing numbers. Every setting is tried{" "}
+          <strong>relative to what it is now</strong> — a few steps up and down from your own value, each step the same
+          percentage — so the search refines the strategy you have rather than sweeping numbers it invented. Only
+          settings you've switched on are tuned; it won't turn a rule on for you. Every guard here exists to fight{" "}
+          <strong>overfitting</strong> <InfoTip k="overfitting" />:
         </p>
         <ul className="hint">
           <li>
@@ -611,6 +615,18 @@ export default function Optimizer() {
               <NumberField min={5} max={200} step={1} value={iterations} onChange={setIterations} />
             </label>
             <label>
+              <span className="field-cap">Step size</span>
+              <select value={relStep} onChange={(e) => setRelStep(Number(e.target.value))}>
+                <option value={0.1}>±10% per step (fine)</option>
+                <option value={0.15}>±15% per step (default)</option>
+                <option value={0.25}>±25% per step (wide)</option>
+              </select>
+              <span className="field-help">
+                How far apart the values tried for each setting are. Every setting is searched relative to what it is
+                now — a 2% trailing stop is tried at 1.74, 2.00, 2.30 and so on, four steps either way.
+              </span>
+            </label>
+            <label>
               <span className="field-cap">
                 Spread cost per side (%) <InfoTip k="spread_cost" />
               </span>
@@ -664,6 +680,7 @@ export default function Optimizer() {
             <h3>
               {result.strategy_name} · tested{" "}
               <strong>{result.tested_combinations.toLocaleString()} combinations</strong>
+              {result.relative_step ? <> at ±{Math.round(result.relative_step * 100)}% per step</> : null}
               {result.search_space_size ? (
                 <> of ~{result.search_space_size.toLocaleString()} possible</>
               ) : null}{" "}
@@ -828,9 +845,10 @@ export default function Optimizer() {
               <span className="hint">(scores of the values either side of the winner, in-sample)</span>
             </h3>
             <p className="hint">
-              For each knob, the bar in the middle-ish is the winning value; the bars around it are its neighbours. When
-              neighbours score <strong>similarly</strong>, the setting is a dependable plateau. When the winner{" "}
-              <strong>towers alone</strong> over bad neighbours, it's likely a fluke that won't repeat.
+              For each knob, the bar in the middle-ish is the winning value; the bars around it are the values one step
+              either side. When neighbours score <strong>similarly</strong>, the setting is a dependable plateau. When
+              the winner <strong>towers alone</strong> over bad neighbours, it's likely a fluke that won't repeat — and
+              a bigger step size makes that easier to tell apart, because neighbours are further away.
             </p>
             <div className="plateau-grid">
               {KNOB_ORDER.filter((k) => result.neighbourhood[k]).map((k) => (

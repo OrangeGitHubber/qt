@@ -37,123 +37,180 @@ from typing import Callable
 
 from qt.services.backtest import run_backtest
 
-# The coarse grids the random search draws from. Discrete (not continuous) so a
-# "neighbour" is well-defined — the plateau sweep steps to the adjacent value on
-# each grid. Every stop_loss value is > 0: a hard stop is mandatory, so the best
-# draft is always a valid strategy. Exhaustive would be 8*7*6*7 = 2,352 combos;
-# we random-sample a small K of them, then refine locally (coarse-to-fine).
-PARAM_SPACE: dict[str, list[float]] = {
-    "min_day_gain_pct": [1.0, 1.5, 2.0, 3.0, 4.0, 5.0, 7.0, 10.0],
-    "trailing_stop_pct": [2.0, 3.0, 4.0, 5.0, 6.0, 8.0, 10.0],
-    "stop_loss_pct": [2.0, 3.0, 4.0, 5.0, 6.0, 8.0],
-    "take_profit_pct": [0.0, 5.0, 8.0, 10.0, 12.0, 15.0, 20.0],
-}
-
-# RSI/MACD knobs are searched ONLY when the base strategy already uses that
-# signal, so the optimizer tunes the factors you're using rather than inventing
-# new ones. For RSI, 0.0 stays in range so the search can also decide the
-# threshold isn't helping and turn it back off.
-RSI_PARAM_SPACE: dict[str, list[float]] = {
-    "rsi_max": [0.0, 60.0, 65.0, 70.0, 75.0, 80.0],       # entry: skip overbought
-    "rsi_min": [0.0, 30.0, 40.0, 50.0, 55.0, 60.0],       # entry: require some strength
-    "exit_rsi_above": [0.0, 65.0, 70.0, 75.0, 80.0, 85.0],  # exit: sell on froth
-}
-
-# The ATR stop multiplier, searched ONLY when the strategy uses an ATR stop.
-# Same rule as RSI/MACD: tune the factors you're actually using.
+# Every knob is searched on a GEOMETRIC grid anchored on the strategy's own
+# current value: v, v*(1+p), v*(1+p)^2 … and v/(1+p), v/(1+p)^2 … out to
+# STEPS_EACH_WAY in both directions.
 #
-# It matters more than the others, because when stop_mult > 0 the ATR stop
-# REPLACES stop_loss_pct entirely (see evaluate_exit). Without this knob the
-# search spent its whole budget tuning a stop that does nothing on such a
-# strategy, and reported a "best" stop-loss % that changed no result — a
-# plateau chart full of noise, easily read as "the stop doesn't matter here".
+# Fixed absolute grids (2.0, 3.0, 4.0 …) had three problems this fixes:
+#   - They were scale-blind. One step meant +50% at the bottom of the grid and
+#     +12% near the top, so resolution was coarsest exactly where a knob is most
+#     sensitive. A relative step is the same size everywhere by construction.
+#   - Your own setting was usually NOT on the grid, so the search never actually
+#     evaluated the config you were running, and "the winner beat your setting"
+#     was a comparison nobody had run. The anchor is always on the grid now.
+#   - Every knob needed its own hand-chosen list, which had to be re-argued each
+#     time one was added. One rule now covers all of them, including any added
+#     later.
 #
-# 1.0-4.0 covers the useful span: below ~1x ATR the stop sits inside ordinary
-# daily noise and gets hit constantly; above ~4x it's so wide it rarely fires
-# and the trailing stop is doing the work instead.
-#
-# The steps are deliberately UNEVEN — quarters at the tight end, halves through
-# the middle, then a jump to 4.0. With even steps the RELATIVE change shrinks as
-# you climb (1.0->1.5 widens the stop by 50%, 3.0->3.5 by 17%), so equal spacing
-# would be coarsest exactly where the stop is most sensitive and finest where it
-# barely matters. Resolution finer than this isn't earned: the stop is a
-# multiple of a 14-day average that itself moves several percent a day, so
-# separating 1.5x from 1.6x over a few months of history is fitting noise — and
-# every extra value multiplies the space, making a lucky in-sample winner easier
-# to hit while flattening the plateau chart that exists to catch exactly that.
-ATR_PARAM_SPACE: dict[str, list[float]] = {
-    "atr_stop_mult": [1.0, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0, 4.0],
+# The trade-off, stated plainly: this is a LOCAL search. It refines the strategy
+# you have; it cannot discover that a wholly different setting is better. At the
+# default 15% x 4 steps it reaches x0.57 to x1.75 of each value. To travel
+# further, run the search again on the resulting draft — each run re-anchors on
+# the new values, so repeated runs walk.
+RELATIVE_STEP_DEFAULT = 0.15
+STEPS_EACH_WAY = 4
+
+# (floor, ceiling, decimals) per knob — the same limits the strategy schema
+# enforces, so every value the search can propose is one the draft can actually
+# be SAVED with. decimals=0 means the knob is an integer (MACD periods).
+KNOB_BOUNDS: dict[str, tuple[float, float, int]] = {
+    "min_day_gain_pct": (0.05, 100.0, 2),
+    "trailing_stop_pct": (0.05, 50.0, 2),
+    "stop_loss_pct": (0.05, 50.0, 2),
+    "take_profit_pct": (0.05, 500.0, 2),
+    "rsi_max": (1.0, 99.0, 1),
+    "rsi_min": (1.0, 99.0, 1),
+    "exit_rsi_above": (1.0, 99.0, 1),
+    "atr_stop_mult": (0.1, 20.0, 2),
+    "macd_slow": (3, 200, 0),
 }
 
-# MACD tuning = the LAG knob. We search the slow-EMA period (lower = a faster,
-# less-laggy MACD) and derive the fast line from the strategy's own fast/slow
-# ratio, so the whole MACD scales faster/slower while keeping its shape — always
-# valid (fast < slow), one clean numeric knob that fits the plateau report.
-MACD_PARAM_SPACE: dict[str, list[float]] = {
-    "macd_slow": [13.0, 17.0, 21.0, 26.0, 34.0],
-}
 
-# Which strategy-params section each searchable knob belongs to (macd_slow is
-# routed to the `macd` block specially in _apply_combo).
+def _geometric_grid(anchor: float, step: float, bounds: tuple[float, float, int]) -> list[float]:
+    """The values to try for one knob: the anchor, multiplied and divided by
+    (1+step) repeatedly, clamped to the knob's legal range.
+
+    The anchor is kept EXACT (never rounded) so the strategy's current setting is
+    always genuinely among the values tested — that is what makes the before/after
+    comparison real. Rounded neighbours are de-duplicated, which matters for small
+    integers: 15% steps either side of a MACD slow period of 5 land on the same
+    number more than once."""
+    lo, hi, decimals = bounds
+    values: set[float] = set()
+    for k in range(-STEPS_EACH_WAY, STEPS_EACH_WAY + 1):
+        v = anchor * (1.0 + step) ** k
+        v = float(round(v)) if decimals == 0 else round(v, decimals)
+        if k == 0:
+            v = float(anchor)  # exact, so the current config is always evaluated
+        if lo <= v <= hi:
+            values.add(v)
+    return sorted(values)
+
+# Where each searchable knob lives in the strategy's params, so one loop can read
+# every anchor. macd_slow is special-cased (it lives in the `macd` block and is
+# only meaningful when a MACD toggle is on).
 _ENTRY_KNOBS = {"min_day_gain_pct", "rsi_max", "rsi_min"}
+_EXIT_KNOBS = {"trailing_stop_pct", "stop_loss_pct", "take_profit_pct", "exit_rsi_above"}
+# Explicitly ORDERED, never a set union: the key order fixes the order random
+# combos are drawn in, so a set's arbitrary iteration order would make a seeded
+# run unreproducible across processes.
+_CORE_KNOBS = (
+    "min_day_gain_pct",
+    "trailing_stop_pct",
+    "stop_loss_pct",
+    "take_profit_pct",
+    "rsi_min",
+    "rsi_max",
+    "exit_rsi_above",
+)
 
 
-def _active_param_space(base_strategy: dict) -> dict[str, list[float]]:
-    """The knobs to search for THIS strategy: always the core four, plus an RSI
-    knob for each RSI rule it uses and the MACD speed knob if it uses MACD. Keeps
-    a plain (no RSI/MACD) strategy's search — and its tests — byte-identical."""
-    space = dict(PARAM_SPACE)
+def _anchor(params: dict, key: str) -> float:
+    entry = params.get("entry") or {}
+    exit_rules = params.get("exit") or {}
+    if key == "macd_slow":
+        return float((params.get("macd") or {}).get("slow", 26) or 26)
+    if key == "atr_stop_mult":
+        return float((params.get("atr") or {}).get("stop_mult", 0) or 0)
+    src = entry if key in _ENTRY_KNOBS else exit_rules
+    return float(src.get(key, 0) or 0)
+
+
+def _active_param_space(
+    base_strategy: dict, relative_step: float = RELATIVE_STEP_DEFAULT
+) -> dict[str, list[float]]:
+    """The knobs to search for THIS strategy, each on a geometric grid around its
+    current value.
+
+    A knob is searched when it is SWITCHED ON — i.e. its value is above zero.
+    That one rule replaces the per-knob conditions that used to be written out
+    separately for RSI, MACD and ATR, and it follows the principle those already
+    encoded: tune the factors you are actually using rather than inventing new
+    ones. It does mean the search will not turn a rule ON for you — a take-profit
+    of 0 stays 0, because zero has no meaningful percentage step and guessing an
+    anchor would be inventing a rule you didn't ask for. Switch it on with any
+    value and the next search will tune it.
+
+    MACD is the exception to "> 0": its period is always non-zero, so it stays
+    gated on the strategy actually using a MACD signal."""
     params = base_strategy.get("params") or {}
     entry = params.get("entry") or {}
     exit_rules = params.get("exit") or {}
-    if float(entry.get("rsi_max", 0) or 0) > 0:
-        space["rsi_max"] = RSI_PARAM_SPACE["rsi_max"]
-    if float(entry.get("rsi_min", 0) or 0) > 0:
-        space["rsi_min"] = RSI_PARAM_SPACE["rsi_min"]
-    if float(exit_rules.get("exit_rsi_above", 0) or 0) > 0:
-        space["exit_rsi_above"] = RSI_PARAM_SPACE["exit_rsi_above"]
+
+    keys = list(_CORE_KNOBS)
     if entry.get("require_macd_bullish") or exit_rules.get("exit_on_macd_bearish"):
-        space["macd_slow"] = MACD_PARAM_SPACE["macd_slow"]
-    # ATR stop on: search the multiplier, and DROP the fixed stop — it is inert
-    # while the ATR stop is set, so leaving it in would spend iterations proving
-    # a knob does nothing and print a meaningless "best" value beside the ones
-    # that count.
-    if float((params.get("atr") or {}).get("stop_mult", 0) or 0) > 0:
-        space["atr_stop_mult"] = ATR_PARAM_SPACE["atr_stop_mult"]
+        keys.append("macd_slow")
+    if _anchor(params, "atr_stop_mult") > 0:
+        keys.append("atr_stop_mult")
+
+    space: dict[str, list[float]] = {}
+    for key in keys:
+        anchor = _anchor(params, key)
+        if anchor <= 0:
+            continue
+        grid = _geometric_grid(anchor, relative_step, KNOB_BOUNDS[key])
+        # A grid of one value is not a search — it happens when the bounds clamp
+        # everything to a single point. Listing it would put a knob in the report
+        # that no iteration could ever vary.
+        if len(grid) > 1:
+            space[key] = grid
+
+    # ATR stop on: the fixed stop is INERT (evaluate_exit replaces it with
+    # stop_mult x ATR%), so searching it would spend iterations proving a knob
+    # does nothing and print a meaningless "best" beside the values that count.
+    if "atr_stop_mult" in space:
         space.pop("stop_loss_pct", None)
     return space
+
+
+def _combo_is_valid(combo: dict) -> bool:
+    """Whether a combination is one the strategy schema would actually accept.
+
+    The RSI band is the case that bites: rsi_min and rsi_max are searched
+    independently, so with a wide step rsi_min can be stepped UP past a rsi_max
+    that stepped DOWN — an entry band with no width, which the strategy model
+    rejects ("RSI min must be below RSI max"). A search that evaluated those
+    would eventually report a winner whose draft cannot be saved, which is a
+    dead end presented as a recommendation. Skipped before evaluation rather
+    than clamped, so the reported combo is always exactly what was run.
+
+    The anchor combination is always valid — the base strategy passed the same
+    validation — so the search can never be left with nothing to try."""
+    lo, hi = combo.get("rsi_min"), combo.get("rsi_max")
+    return not (lo is not None and hi is not None and lo >= hi)
+
 
 def _baseline_values(base_strategy: dict, space: dict[str, list[float]]) -> dict[str, dict]:
     """What the strategy is set to TODAY for each searched knob, so the result can
     show before -> after.
 
     Read from the base strategy the search actually ran against — NOT from
-    whatever the UI happens to have loaded — so editing the strategy after a run
-    can't silently rewrite the "before" and make the search look like it proposed
+    whatever the UI has loaded — so editing the strategy after a run can't
+    silently rewrite the "before" and make the search look like it proposed
     something it didn't.
 
-    `in_grid` is False when the current value isn't one of the values the search
-    could draw from. That matters: the grid is coarse, so a strategy sitting at
-    3.5% when the grid holds 3.0 and 4.0 was never actually evaluated at its own
-    setting, and "the search picked 4.0 over your 3.5" would be a claim nobody
-    tested."""
+    `in_grid` says whether that value was itself among the values tried. With
+    grids anchored on the strategy it is always true, and the field is kept
+    deliberately: it is the UI's guarantee that "your 3.5 vs the winner's 4.0" is
+    a comparison that was actually run, and it should keep telling the truth if
+    the grids ever change again."""
     params = base_strategy.get("params") or {}
-    entry = params.get("entry") or {}
-    exit_rules = params.get("exit") or {}
     out: dict[str, dict] = {}
     for key, values in space.items():
-        if key == "macd_slow":
-            raw = (params.get("macd") or {}).get("slow", 26)
-        elif key == "atr_stop_mult":
-            raw = (params.get("atr") or {}).get("stop_mult")
-        elif key in _ENTRY_KNOBS:
-            raw = entry.get(key)
-        else:
-            raw = exit_rules.get(key)
-        current = None if raw is None else float(raw)
+        current = _anchor(params, key)
         out[key] = {
             "value": current,
-            "in_grid": current is not None and any(abs(current - v) < 1e-9 for v in values),
+            "in_grid": any(abs(current - v) < 1e-9 for v in values),
         }
     return out
 
@@ -309,6 +366,7 @@ def optimize(
     market: str = "stock",
     in_sample_frac: float = 0.7,
     min_trades: int = 3,
+    relative_step: float = RELATIVE_STEP_DEFAULT,
     top_n_validate: int = 6,
     seed: int | None = None,
     eligible_by_day: dict[str, set[str]] | None = None,
@@ -395,7 +453,7 @@ def optimize(
     # ---- 1 & 2: random search over the coarse grid (in-sample only) ----
     # The active space is the core four knobs plus an RSI knob per RSI rule the
     # strategy already uses (non-RSI strategies search exactly as before).
-    space = _active_param_space(base_strategy)
+    space = _active_param_space(base_strategy, relative_step)
     keys = list(space)
     evaluated: dict[tuple, dict] = {}  # combo-tuple -> {combo, score, in_sample metrics}
 
@@ -433,6 +491,8 @@ def optimize(
     while len([e for e in evaluated]) < target and attempts < target * 20:
         attempts += 1
         combo = {k: rng.choice(space[k]) for k in keys}
+        if not _combo_is_valid(combo):
+            continue  # counted as an attempt, so the loop always terminates
         evaluate(combo)
 
     if not evaluated:  # pathological (empty grid) — cannot happen with the constants
@@ -456,7 +516,8 @@ def optimize(
                 if 0 <= j < len(values):
                     neighbour = dict(pivot["combo"])
                     neighbour[key] = values[j]
-                    evaluate(neighbour)
+                    if _combo_is_valid(neighbour):
+                        evaluate(neighbour)
         leader = current_best()
         if leader is pivot:  # no neighbour improved on the pivot — settled
             break
@@ -534,7 +595,12 @@ def optimize(
     )
     no_trade_reason = None
     if total_in_sample_trades == 0 and evaluated:
-        most_permissive = min(evaluated.values(), key=lambda e: e["combo"]["min_day_gain_pct"])
+        # .get, not [...]: min_day_gain_pct is only in the combo when it was
+        # searched, and with anchored grids a strategy whose min-gain is 0 (no
+        # minimum) doesn't have that knob at all.
+        most_permissive = min(
+            evaluated.values(), key=lambda e: e["combo"].get("min_day_gain_pct", 0)
+        )
         no_trade_reason = most_permissive.get("no_trade_reason")
 
     return {
@@ -543,6 +609,9 @@ def optimize(
         # reads as a deliberate coarse-to-fine SAMPLE, not the whole space. It's
         # the product of every active knob's value count (grows fast with knobs).
         "search_space_size": space_size,
+        # The step size every grid was built from, so the UI can say what "one
+        # step either way" on the plateau chart actually means.
+        "relative_step": relative_step,
         "no_trade_reason": no_trade_reason,
         "iterations": iterations,
         "in_sample_window": _window(t0, boundary),

@@ -36,11 +36,12 @@ def test_it_reports_the_strategys_current_value_for_each_knob():
     assert b["stop_loss_pct"]["value"] == 4
 
 
-def test_zero_is_reported_as_zero_not_as_missing():
-    """take_profit_pct 0 means "off" — a real, deliberate setting. Reporting it
-    as absent would render "not set" and hide that the search turned it ON."""
+def test_a_switched_off_knob_is_not_searched_and_gets_no_baseline():
+    """take_profit_pct 0 means "off", and a percentage step from zero is still
+    zero — there is no grid to build. So it is not searched, and reports no
+    before/after rather than a row implying it was considered."""
     b = _baseline(_strategy())
-    assert b["take_profit_pct"]["value"] == 0
+    assert "take_profit_pct" not in b
 
 
 def test_it_covers_exactly_the_knobs_that_were_searched():
@@ -65,20 +66,24 @@ def test_an_on_grid_value_is_flagged_as_actually_tested():
     assert b["trailing_stop_pct"]["in_grid"] is True
 
 
-def test_an_off_grid_value_is_flagged_as_never_tested():
-    """3.5 sits between the grid's 3.0 and 4.0. The search could not have tried
-    it, so the UI must not imply the winner beat it."""
-    s = _strategy(exit={"trailing_stop_pct": 3.5, "stop_loss_pct": 4, "take_profit_pct": 0})
-    assert _baseline(s)["trailing_stop_pct"]["in_grid"] is False
+def test_any_value_at_all_is_on_its_own_grid():
+    """The old fixed grids held 3.0 and 4.0, so a strategy sitting at 3.5 was
+    never actually evaluated at its own setting and "the winner beat your 3.5"
+    was a comparison nobody had run. Anchored grids make that impossible: the
+    value the strategy is on is always one of the values tried, whatever it is."""
+    for odd in (3.5, 0.07, 12.345, 49.9):
+        s = _strategy(exit={"trailing_stop_pct": odd, "stop_loss_pct": 4, "take_profit_pct": 0})
+        b = _baseline(s)
+        assert b["trailing_stop_pct"]["value"] == odd
+        assert b["trailing_stop_pct"]["in_grid"] is True
 
 
-def test_a_missing_knob_is_reported_as_unset_rather_than_guessed():
-    """An older strategy row may simply not carry a key. "not set" is honest;
-    inventing a default would fabricate the before-value of a comparison."""
+def test_a_missing_knob_is_simply_not_searched():
+    """An older strategy row may not carry a key at all. Absent reads the same as
+    off — there is nothing to anchor a grid on, so it is left alone rather than
+    given an invented starting value."""
     s = _strategy(exit={"trailing_stop_pct": 5, "stop_loss_pct": 4})
-    b = _baseline(s)
-    assert b["take_profit_pct"]["value"] is None
-    assert b["take_profit_pct"]["in_grid"] is False
+    assert "take_profit_pct" not in _baseline(s)
 
 
 def test_the_macd_baseline_reads_the_period_not_the_toggle():
