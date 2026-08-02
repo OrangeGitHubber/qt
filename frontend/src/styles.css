@@ -969,6 +969,26 @@ form.card.editor {
   max-width: 62rem;
 }
 
+/* Prose inside a RESULT card.
+ *
+ * Output cards deliberately keep the shell's full width (see above) so tables,
+ * charts and stat rows can use it. That is right for those, and wrong for the
+ * sentences between them: at 1600px a paragraph runs past 200 characters a
+ * line, and the eye loses its place tracking back to the next one. The fix is
+ * to cap the MEASURE, not the card — the table beside it keeps every pixel.
+ *
+ * Direct children only, so a <p> nested inside a grid cell or a legend keeps
+ * whatever width its own layout gives it.
+ *
+ * 75ch, measured rather than assumed: `ch` is the width of the "0" glyph, which
+ * in this proportional font is narrower than the average character, so 75ch
+ * renders as ~88 actual characters — the top of the comfortable band. (The
+ * uncapped paragraphs measured 212.) */
+.card > p,
+.card > .verdicts > p {
+  max-width: 75ch;
+}
+
 /* Short teaching intro at the top of a page. */
 .page-intro {
   max-width: 70ch;

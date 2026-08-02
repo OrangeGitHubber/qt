@@ -78,8 +78,8 @@ def test_optimizer_rejects_intraday_for_a_macd_strategy(client, configured):
     sid = client.post("/api/strategies", json=_strategy(macd=True, price_exits=False)).json()["id"]
     r = _optimize(client, sid, "1Hour")
     assert r.status_code == 422
-    detail = r.json()["detail"]
-    assert "MACD" in detail and "daily" in detail
+    detail = r.json()["detail"].lower()
+    assert "macd" in detail and "daily" in detail
 
 
 def test_optimizer_rejects_intraday_for_an_rsi_strategy(client, configured):
@@ -88,7 +88,7 @@ def test_optimizer_rejects_intraday_for_an_rsi_strategy(client, configured):
     ).json()["id"]
     r = _optimize(client, sid, "15Min")
     assert r.status_code == 422
-    assert "daily" in r.json()["detail"]
+    assert "daily" in r.json()["detail"].lower()
 
 
 def test_optimizer_runs_mixed_resolution_for_a_macd_strategy_with_stops(client, configured, monkeypatch):

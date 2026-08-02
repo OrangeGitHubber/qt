@@ -590,6 +590,32 @@ def _has_price_triggered_exit(params: dict) -> bool:
     ) or float(atr.get("stop_mult", 0) or 0) > 0
 
 
+def daily_signal_names(params: dict) -> str:
+    """Which daily-only signals a strategy actually uses, for error messages.
+
+    The guards below used to say "MACD/RSI" because those were the only two.
+    Adding ATR made that wording wrong in the one place it matters most: a user
+    with an ATR scalper and no MACD anywhere gets told their strategy uses MACD,
+    goes looking for it, and finds nothing. Name what is really there."""
+    entry = params.get("entry") or {}
+    exit_rules = params.get("exit") or {}
+    atr = params.get("atr") or {}
+    names: list[str] = []
+    if entry.get("require_macd_bullish") or exit_rules.get("exit_on_macd_bearish"):
+        names.append("MACD")
+    if (
+        float(entry.get("rsi_min", 0) or 0) > 0
+        or float(entry.get("rsi_max", 0) or 0) > 0
+        or float(exit_rules.get("exit_rsi_above", 0) or 0) > 0
+    ):
+        names.append("RSI")
+    if float(atr.get("stop_mult", 0) or 0) > 0:
+        names.append("the ATR stop")
+    if float(atr.get("risk_usd", 0) or 0) > 0:
+        names.append("ATR position sizing")
+    return " and ".join(names) if names else "daily signals"
+
+
 def _mixed_resolution(params: dict) -> bool:
     """The strategy that needs BOTH resolutions at once: its signals are daily
     (MACD/RSI — the live engine reads them off completed daily closes) but its
@@ -649,13 +675,20 @@ async def run_portfolio(
             status_code=422,
             detail="A selected strategy uses the VWAP rule, which needs intraday bars — pick 1Hour or 15Min.",
         )
-    if body.timeframe in ("15Min", "1Hour") and any(
-        _uses_daily_only_signals(json.loads(s.params)) for s in strategies
-    ):
+    daily_signalled = [
+        s for s in strategies if _uses_daily_only_signals(json.loads(s.params))
+    ]
+    if body.timeframe in ("15Min", "1Hour") and daily_signalled:
+        culprit = daily_signalled[0]
+        # A portfolio replays ONE bar stream shared by every strategy, so it has
+        # no mixed-resolution escape hatch the way a single-strategy run does.
         raise HTTPException(
             status_code=422,
-            detail="A selected strategy uses MACD/RSI, which are daily signals — on intraday bars "
-            "they whipsaw and won't match the live engine. Use 1 Day.",
+            detail=f"\"{culprit.name}\" uses {daily_signal_names(json.loads(culprit.params))}, "
+            "which the live engine reads off completed DAILY bars — on intraday bars it would be "
+            "measured over hours instead of days and wouldn't match live. Use 1 Day, or backtest "
+            "that strategy on its own (a single-strategy run replays intraday bars while still "
+            "taking those signals from daily ones).",
         )
 
     # Resolve each strategy's own universe, then fetch bars ONCE per asset class.
@@ -798,8 +831,9 @@ async def run(
         # replay intraday precisely BECAUSE the signals stay daily.
         raise HTTPException(
             status_code=422,
-            detail="This strategy uses MACD/RSI, which are daily signals — on intraday bars they "
-            "whipsaw and won't match the live engine. Use 1 Day.",
+            detail=f"This strategy uses {daily_signal_names(params)}, which the live engine reads "
+            "off completed DAILY bars — on intraday bars it would be measured over hours instead of "
+            "days and wouldn't match live. Use 1 Day.",
         )
 
     # Fetch WARM-UP history before the window when the strategy uses daily

@@ -60,6 +60,25 @@ The P&L column in the journal is still gross, and now says so.
 but don't post real fee activities, so on paper this job runs, finds nothing,
 and correctly reports "no fees" rather than inventing them.
 
+## Review pass: accurate warnings, readable line lengths (2026-08-02)
+
+Two things caught while reviewing the week's changes.
+
+**A warning named the wrong thing.** When a strategy can't be backtested on
+intraday bars, the app said "this strategy uses MACD/RSI" — wording from when
+those were the only two daily signals. Now that ATR counts as one, an ATR
+scalper with no MACD anywhere was told it used MACD, sending you looking for
+something that isn't there. The message now names what your strategy actually
+uses ("the ATR stop", "MACD and RSI"), and in a portfolio it names which
+strategy is responsible and points out that running that one on its own gets
+the intraday replay a portfolio can't do.
+
+**Explanatory text ran too wide.** Result cards deliberately use the full
+window so tables and charts can — but the sentences between them inherited that
+width, running past 200 characters a line, where the eye loses its place
+tracking back. Prose in those cards is now capped at about 88 characters while
+the tables beside it keep every pixel. Measured, not eyeballed.
+
 ## Held days now get real 15-minute bars, not a daily stand-in (2026-08-02)
 
 Covering a held position's missing days with its daily bar stopped the replay

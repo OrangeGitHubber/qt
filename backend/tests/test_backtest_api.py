@@ -376,7 +376,7 @@ def test_macd_strategy_with_no_stops_rejects_intraday_bars(client, configured):
         "timeframe": "1Hour", "starting_cash": 5000, "spread_pct": 0})
     assert r.status_code == 422
     detail = r.json()["detail"]
-    assert "MACD" in detail and "daily" in detail
+    assert "macd" in detail.lower() and "daily" in detail.lower()
 
     fetch = AsyncMock(side_effect=[{"NVDA": BARS}, {"SPY": BARS}])
     with patch.object(AlpacaClient, "historical_bars", new=fetch):
@@ -398,7 +398,7 @@ def test_rsi_exit_strategy_with_no_stops_rejects_intraday_bars(client, configure
         "strategy_id": sid, "symbols": ["NVDA"], "days": 30,
         "timeframe": "15Min", "starting_cash": 5000, "spread_pct": 0})
     assert r.status_code == 422
-    assert "daily" in r.json()["detail"]
+    assert "daily" in r.json()["detail"].lower()
 
 
 def test_macd_strategy_with_stops_runs_mixed_resolution(client, configured):

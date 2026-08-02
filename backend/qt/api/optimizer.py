@@ -410,15 +410,20 @@ async def start_optimize(
         # and the search drifts toward stops that would whipsaw for real. Such a
         # strategy replays 15-minute bars with MACD/RSI still taken from completed
         # daily closes — the same deal the backtest gives it.
-        from qt.api.backtest import _mixed_resolution, _uses_daily_only_signals
+        from qt.api.backtest import (
+            _mixed_resolution,
+            _uses_daily_only_signals,
+            daily_signal_names,
+        )
 
         params = json.loads(strategy.params)
         mixed = _mixed_resolution(params)
         if body.timeframe in ("15Min", "1Hour") and _uses_daily_only_signals(params) and not mixed:
             raise HTTPException(
                 status_code=422,
-                detail="This strategy uses MACD/RSI, which are daily signals — an intraday search "
-                "whipsaws and won't match the live engine. Use 1 Day.",
+                detail=f"This strategy uses {daily_signal_names(params)}, which the live engine "
+                "reads off completed DAILY bars — an intraday search would measure it over hours "
+                "instead of days and wouldn't match live. Use 1 Day.",
             )
         if mixed:
             # A property of the STRATEGY, not of what was asked for: the replay is
