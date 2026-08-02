@@ -17,6 +17,7 @@ which lives for the whole session, so two tests sharing a name would serve each
 other's prices.
 """
 
+import asyncio
 import json
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, patch
@@ -200,6 +201,101 @@ def test_a_trade_that_crosses_a_boundary_is_counted_and_its_exit_set_aside(clien
     # percentages say "no data" rather than "0% agreement".
     assert decision["same_exit_day_pct"] is None
     assert decision["same_exit_rule_pct"] is None
+
+
+def test_an_edit_before_the_first_trade_does_not_crash_the_comparison(client, configured):
+    """The exact shape of a strategy's first hour: create it, tweak it twice,
+    and it trades later that afternoon.
+
+    The window opens at midnight and is cut at each edit, so the FIRST stretch
+    ends at the morning's edit — before the engine ever traded. The replay is
+    held back to the bar containing the first trade, and that moment lands in a
+    LATER stretch than the first, which the clamp assumed could never happen. It
+    pinned the hold-back onto stretch one anyway and asked the backtest to replay
+    a window ending four hours before it starts — a 500 at the exact moment a
+    user is checking whether their brand-new strategy works."""
+    body = {
+        **_strategy_body(3, ["SEGEARLY"], name="edited before trading"),
+        "swing_mode": False,
+    }
+    # An intraday strategy: the hold-back is then a 15-minute bar rather than
+    # midnight, which is what puts it PAST the morning edit. On a daily replay
+    # the floor is midnight and the collision cannot occur — so a stock/daily
+    # fixture would pass here while the user's crypto intraday one still broke.
+    body["params"]["entry"]["require_above_vwap"] = True
+    sid = client.post("/api/strategies", json=body).json()["id"]
+    client.put(f"/api/strategies/{sid}", json={**body, "sizing_usd": 900})
+
+    midday = NOW.replace(hour=14, minute=5, second=0, microsecond=0)
+    with session_scope() as s:
+        rows = (
+            s.query(StrategyConfigVersion)
+            .filter_by(strategy_id=sid)
+            .order_by(StrategyConfigVersion.version_no)
+            .all()
+        )
+        rows[0].created_at = midday - timedelta(hours=6)   # created in the morning
+        rows[1].created_at = midday - timedelta(hours=4)   # edited, still before any trade
+    with session_scope() as s:
+        s.add(Trade(
+            strategy_id=sid, mode="paper", symbol="SEGEARLY", asset_class="stock",
+            status="open", qty=10, notional=1000, entry_price=100.0,
+            entry_reason="gain", entry_at=midday,
+        ))
+
+    bars = {"SEGEARLY": _bars(1, 104.0)}
+    with patch.object(AlpacaClient, "historical_bars", new=AsyncMock(return_value=bars)):
+        r = client.post("/api/fidelity/compare", json={"strategy_id": sid})
+    assert r.status_code == 200, r.text
+    report = r.json()
+    # The real trade is still in scope — the dropped stretches were the empty
+    # ones, not the one the strategy actually traded in.
+    assert report["decision"]["live_trades"] == 1
+    assert report["window"]["start"][:10] == midday.strftime("%Y-%m-%d")
+    # The two dead stretches are DROPPED, not replayed-and-skipped. Asserting on
+    # the absence of a skip error is what separates that from the guard inside
+    # _replay_segments, which would otherwise catch the same crash and let a
+    # broken clamp look fixed. Only one segment survives, so the comparison
+    # isn't presented as split at all.
+    cfg = report["config"]
+    assert [s["error"] for s in cfg["segments"]] == []
+    assert cfg["segmented"] is False
+
+
+def test_a_stretch_that_ends_before_its_replay_starts_is_skipped_not_fatal(client, configured):
+    """The belt to the clamp's braces, tested on its own because the two hide
+    each other: any future caller handing _replay_segments a backwards window
+    must get a skipped segment, not a pydantic error escaping as a 500."""
+    from datetime import timedelta as _td
+
+    from qt.api.fidelity import _replay_segments, _Segment
+
+    now = NOW
+    seg = _Segment(
+        start=now - _td(hours=6), end=now - _td(hours=4),
+        config={"universe": "custom", "symbols": ["X"], "asset_class": "stock",
+                "swing_mode": True, "sizing_usd": 100, "sleeve_usd": 1000,
+                "max_positions": 1, "params": {"entry": {}, "exit": {}}},
+        version_no=1, symbols=["X"], scanner_replay=False, universe_known=True,
+    )
+    seg.replay_start = now - _td(hours=2)   # after the stretch already ended
+
+    with session_scope() as s:
+        strat = Strategy(
+            name="backwards window", asset_class="stock", universe="custom",
+            symbols=json.dumps(["X"]), preset="custom",
+            params=json.dumps({"entry": {}, "exit": {}}),
+            sizing_usd=100, sleeve_usd=1000, max_positions=1,
+        )
+        s.add(strat)
+        s.flush()
+        asyncio.run(_replay_segments(
+            [seg], strat, spread_pct=0.1, session=s, client=object(),
+        ))
+        s.query(Strategy).filter(Strategy.id == strat.id).delete()
+
+    assert seg.result is None
+    assert seg.error and "before the replay could start" in seg.error
 
 
 def test_too_many_edits_declines_to_split_and_says_why(client, configured):

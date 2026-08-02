@@ -715,12 +715,20 @@ async def _replay_segments(
     replayed fine."""
     for segment in segments:
         config = replay_strategy(segment.config)
+        start = segment.replay_start or segment.start
+        if start >= segment.end:
+            # Nothing to replay, and the backtest refuses such a window outright
+            # — as a pydantic error, which surfaces as a 500 rather than as
+            # anything a user could act on. Recorded like any other segment
+            # failure so the rest of the comparison still runs.
+            segment.error = "This stretch ends before the replay could start, so it was skipped."
+            continue
         try:
             segment.result = await replay(
                 BacktestBody(
                     strategy_id=strategy.id,
                     symbols=segment.symbols,
-                    window_start=segment.replay_start or segment.start,
+                    window_start=start,
                     window_end=segment.end,
                     scanner_replay=segment.scanner_replay,
                     timeframe=_timeframe_for(config["params"]),
@@ -892,9 +900,21 @@ async def compare(
         else []
     )
     if segments and replay_from > segments[0].start:
-        # Only the first stretch can straddle go-live; every later boundary is an
-        # edit, and the engine was already running through those.
-        segments[0].replay_start = replay_from
+        # The hold-back lands wherever go-live falls, which is NOT necessarily
+        # the first stretch: create a strategy in the morning, tweak it twice,
+        # and it first trades that afternoon — three stretches, all but the last
+        # ending before the engine ever acted. Pinning the hold-back to stretch
+        # one then asked for a window ending hours before it began, which
+        # pydantic refused and the user saw as a 500.
+        #
+        # Stretches that end at or before the hold-back are dropped rather than
+        # replayed. They cannot contain a trade — the hold-back is floored to the
+        # bar containing the FIRST one — so replaying them could only invent
+        # trades in a period the engine was not yet running, which is the exact
+        # false verdict the hold-back exists to prevent.
+        segments[:] = [s for s in segments if s.end > replay_from] or segments[-1:]
+        if segments[0].start < replay_from < segments[0].end:
+            segments[0].replay_start = replay_from
     too_many = len(segments) > MAX_SEGMENTS
     segmented = 1 < len(segments) <= MAX_SEGMENTS
     not_segmented_reason = (

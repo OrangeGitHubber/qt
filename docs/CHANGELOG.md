@@ -3,6 +3,26 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Fixed: a strategy edited before its first trade crashed the fidelity report (2026-08-02)
+
+The exact shape of a new strategy's first hour — create it, tweak it once or
+twice, watch it trade that afternoon — produced a **500**.
+
+The window is cut at every configuration change, so those morning edits ended a
+stretch before the engine had ever traded. The replay is separately held back to
+the bar containing the first real trade, and that hold-back was pinned to the
+FIRST stretch on the assumption that only the first could straddle go-live. With
+an edit in between it doesn't: go-live lands in a later stretch, and stretch one
+was asked to replay a window ending hours before it began. The backtest refuses
+that outright, as a validation error, which reached the user as an unexplained
+server error.
+
+Stretches that end before the hold-back are now dropped rather than replayed —
+they cannot contain a trade, so replaying them could only invent trades in a
+period the engine wasn't running, which is the very thing the hold-back exists to
+prevent. And a stretch whose replay would start after it ended is now recorded as
+a skipped stretch instead of escaping as a 500.
+
 ## "Nothing happened" is now an answer, not an error (2026-08-02)
 
 Enable a strategy, open the fidelity report, and it refused: *no trades, nothing
