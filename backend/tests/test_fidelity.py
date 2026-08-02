@@ -603,3 +603,117 @@ def test_a_changed_basket_shows_up_even_though_the_strategy_never_changed(client
 
     assert "Basket members" in drift, body["config"]["drift"]
     assert "MSFT" in drift["Basket members"]["now"]   # named, not just counted
+
+
+def test_a_basket_edited_mid_window_is_reported_even_if_it_ends_up_unchanged(client, configured):
+    """Membership resolves to the exact moment — an edit at 14:32 is recorded at
+    14:32, not rounded to a day. But a change that later reverts looks identical
+    from any two points in time, so comparing "then" against "now" can't see it.
+    The count of edits made while these trades were happening can.
+
+    This is the case that matters: trades in the middle of the window ran on a
+    universe neither endpoint shows."""
+    from datetime import datetime, timedelta, timezone
+    from unittest.mock import AsyncMock, patch
+
+    from qt.broker.alpaca import AlpacaClient
+    from qt.models import Basket, BasketItem, BasketVersion
+
+    bid = client.post("/api/baskets", json={"name": "Churn Banking"}).json()["id"]
+    client.post(f"/api/baskets/{bid}/items", json={"symbol": "NVDA", "asset_class": "stock"})
+
+    strat = _strategy_body()
+    strat.update({"universe": "basket", "basket_id": bid, "symbols": []})
+    sid = client.post("/api/strategies", json=strat).json()["id"]
+
+    with session_scope() as s:
+        s.query(BasketVersion).filter_by(basket_id=bid).one().created_at = (
+            datetime.now(timezone.utc) - timedelta(days=10)
+        )
+        s.add(Trade(
+            strategy_id=sid, mode="paper", symbol="NVDA", asset_class="stock",
+            status="closed", qty=10, notional=1000, entry_price=100.0, exit_price=110.0,
+            pnl=100.0, entry_reason="gain 5%", exit_reason="take-profit: +10%",
+            entry_at=datetime.now(timezone.utc) - timedelta(days=8),
+            exit_at=datetime.now(timezone.utc) - timedelta(days=7),
+        ))
+
+    # Added mid-window, then removed again: the endpoints match, the middle did not.
+    client.post(f"/api/baskets/{bid}/items", json={"symbol": "MSFT", "asset_class": "stock"})
+    client.delete(f"/api/baskets/{bid}/items/stock/MSFT")
+
+    bars = [{"t": (datetime.now(timezone.utc) - timedelta(days=n)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+             "o": 100, "h": 100, "l": 100, "c": 100, "v": 1e6, "vw": 100} for n in (12, 11, 10)]
+    with patch.object(AlpacaClient, "historical_bars", new=AsyncMock(return_value={"NVDA": bars})):
+        body = client.post("/api/fidelity/compare", json={"strategy_id": sid, "days": 30}).json()
+
+    cfg = body["config"]
+    with session_scope() as s:
+        s.query(BasketVersion).filter_by(basket_id=bid).delete()
+        s.query(BasketItem).filter_by(basket_id=bid).delete()
+        s.query(Basket).filter_by(id=bid).delete()
+
+    # No net difference between the endpoints…
+    assert not [c for c in cfg["drift"] if c["field"] == "Basket members"]
+    # …but the universe did move underneath those trades, twice.
+    assert cfg["basket_changes_during_window"] == 2
+
+
+def test_a_basket_edit_between_two_trades_is_caught_by_anchoring_on_the_first(client, configured):
+    """Why the anchor is the EARLIEST trade and not the latest.
+
+    Basket holds NVDA; trade A happens; MSFT is added; trade B happens. Anchored
+    on the LATEST trade, the membership then is identical to today's, so the
+    report would say nothing changed — while trade A ran on a universe that
+    didn't contain MSFT at all. Anchored on the first, the difference is visible."""
+    from datetime import datetime, timedelta, timezone
+    from unittest.mock import AsyncMock, patch
+
+    from qt.broker.alpaca import AlpacaClient
+    from qt.models import Basket, BasketItem, BasketVersion
+
+    bid = client.post("/api/baskets", json={"name": "Split Banking"}).json()["id"]
+    client.post(f"/api/baskets/{bid}/items", json={"symbol": "NVDA", "asset_class": "stock"})
+
+    strat = _strategy_body()
+    strat.update({"universe": "basket", "basket_id": bid, "symbols": []})
+    sid = client.post("/api/strategies", json=strat).json()["id"]
+
+    now = datetime.now(timezone.utc)
+    with session_scope() as s:
+        s.query(BasketVersion).filter_by(basket_id=bid).one().created_at = now - timedelta(days=10)
+        for days_ago, sym in ((8, "NVDA"), (4, "NVDA")):
+            s.add(Trade(
+                strategy_id=sid, mode="paper", symbol=sym, asset_class="stock",
+                status="closed", qty=10, notional=1000, entry_price=100.0, exit_price=110.0,
+                pnl=100.0, entry_reason="gain 5%", exit_reason="take-profit: +10%",
+                entry_at=now - timedelta(days=days_ago),
+                exit_at=now - timedelta(days=days_ago - 1),
+            ))
+
+    # The edit lands BETWEEN the two trades.
+    client.post(f"/api/baskets/{bid}/items", json={"symbol": "MSFT", "asset_class": "stock"})
+    with session_scope() as s:
+        newest = (
+            s.query(BasketVersion)
+            .filter_by(basket_id=bid)
+            .order_by(BasketVersion.version_no.desc())
+            .first()
+        )
+        newest.created_at = now - timedelta(days=6)
+
+    bars = [{"t": (now - timedelta(days=n)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+             "o": 100, "h": 100, "l": 100, "c": 100, "v": 1e6, "vw": 100} for n in (12, 11, 10)]
+    with patch.object(AlpacaClient, "historical_bars", new=AsyncMock(return_value={"NVDA": bars, "MSFT": bars})):
+        body = client.post("/api/fidelity/compare", json={"strategy_id": sid, "days": 30}).json()
+
+    cfg = body["config"]
+    with session_scope() as s:
+        s.query(BasketVersion).filter_by(basket_id=bid).delete()
+        s.query(BasketItem).filter_by(basket_id=bid).delete()
+        s.query(Basket).filter_by(id=bid).delete()
+
+    members = [c for c in cfg["drift"] if c["field"] == "Basket members"]
+    assert members, "anchoring on the latest trade would have reported no change here"
+    assert "MSFT" in members[0]["now"]
+    assert cfg["basket_changes_during_window"] == 1

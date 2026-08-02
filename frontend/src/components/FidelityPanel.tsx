@@ -115,6 +115,20 @@ export default function FidelityPanel() {
             </p>
           )}
 
+          {(report.config?.basket_changes_during_window ?? 0) > 0 && (
+            <p className="hint warn">
+              <IconWarn className="icon-inline" />{" "}
+              <strong>
+                The basket was edited {report.config!.basket_changes_during_window} time
+                {report.config!.basket_changes_during_window === 1 ? "" : "s"} while these trades were being made.
+              </strong>{" "}
+              Trades from before an edit ran on a different list of symbols than the replay uses, so some mismatches
+              below are that rather than a fault in the backtester. Membership is tracked to the moment, not the day —
+              but a single replay can only use one list, and a change that later reverted wouldn't show as a
+              difference at all, which is why this is counted separately.
+            </p>
+          )}
+
           {(report.config?.drift.length ?? 0) > 0 && (
             <p className="hint warn">
               <IconWarn className="icon-inline" />{" "}

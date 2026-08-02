@@ -60,6 +60,27 @@ The P&L column in the journal is still gross, and now says so.
 but don't post real fee activities, so on paper this job runs, finds nothing,
 and correctly reports "no fees" rather than inventing them.
 
+## Basket changes are tracked to the moment, not the day (2026-08-02)
+
+Basket membership is recorded with a full timestamp. An edit at 14:32 is stored
+at 14:32 — a trade at 14:00 resolves to the old list, one at 15:00 to the new.
+Nothing is rounded to end-of-day or start-of-next.
+
+Using it well took two corrections.
+
+**The comparison now anchors on the first trade, not the last.** Say the basket
+holds NVDA, a trade happens, MSFT is added, another trade happens. Measured
+against the most recent trade, membership then is identical to today's — so the
+report would say nothing changed, while the earlier trade ran on a universe
+without MSFT in it. Measured from the first, the difference is visible.
+
+**And it counts the edits made during the window.** A basket that changed and
+then changed back looks identical from any two points in time, so no
+before-and-after comparison can see it — but the trades in the middle ran on a
+list neither endpoint shows. The count is the only thing that can say so, and it
+is reported separately because "the basket was edited 3 times while these trades
+were being made" is a different claim from "these two lists differ".
+
 ## Baskets are versioned now too (2026-08-02)
 
 A strategy's config version records **which** basket it uses — never **who** is

@@ -1261,6 +1261,10 @@ export interface FidelityReport {
     versions_used: number;
     produced_by_version: number | null;
     drift: { field: string; then: unknown; now: unknown }[];
+    // Basket edits made WHILE these trades were happening. Separate from drift:
+    // membership that changed and changed back looks identical from any two
+    // points in time, so only a count can reveal it.
+    basket_changes_during_window?: number;
   };
   backtest_only: { symbol: string; day: string; sim_entry: number | null; sim_exit_reason: string }[];
   rails_blocked: { symbol: string; day: string; blocked_by: string | null }[];
