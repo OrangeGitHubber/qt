@@ -6,13 +6,16 @@ import { IconWarn } from "../components/icons";
 
 /** Does the backtester actually reproduce what really happened?
  *
- *  Lives in Settings rather than the main navigation because the DECISION half
- *  is a validation instrument: once the replay is trusted it should agree every
- *  time, and a panel that always says "100%" does not deserve a tab. The
- *  EXECUTION half is different — what your fills really cost depends on your
- *  broker, your symbols and your order sizes, so it never becomes settled, and
- *  the number it produces is meant to go straight into the backtest's spread
- *  setting.
+ *  Sits at the foot of the Backtest page, because that is what it is about: it
+ *  exists to say whether the numbers above it can be believed, and it is not a
+ *  setting. Collapsed, and last, because the question "can I trust this?" only
+ *  means anything once there is a result to ask it of.
+ *
+ *  The two halves age differently. The DECISION half is a validation instrument:
+ *  once the replay is trusted it agrees every time and this goes quiet. The
+ *  EXECUTION half never settles — what your fills cost depends on your broker,
+ *  your symbols and your order sizes — and the number it produces is meant to go
+ *  straight into the spread setting on the form above.
  */
 export default function FidelityPanel() {
   const [strategies, setStrategies] = useState<StrategyRow[]>([]);

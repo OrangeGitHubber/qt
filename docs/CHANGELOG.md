@@ -139,6 +139,16 @@ The P&L column in the journal is still gross, and now says so.
 but don't post real fee activities, so on paper this job runs, finds nothing,
 and correctly reports "no fees" rather than inventing them.
 
+## Backtest fidelity moved to the Backtest page (2026-08-02)
+
+It was in Settings, which was the wrong place: it exists to say whether your
+backtests can be believed, and that is not a setting.
+
+It now sits at the foot of the Backtest page, collapsed. Last on the page on
+purpose — "can I trust this?" only means anything once there is a result to ask
+it of, and the measured trading cost it produces is meant to go straight into the
+spread setting on the form above it.
+
 ## Fidelity: show the edits next to the trades, and offer a window worth using (2026-08-02)
 
 Running the comparison over 90 days of a strategy edited 21 times produced 1.5%

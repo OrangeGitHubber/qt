@@ -29,7 +29,6 @@ import {
   syncAssets,
   testSlack,
 } from "../api";
-import FidelityPanel from "../components/FidelityPanel";
 import InfoTip from "../components/InfoTip";
 import NumberField from "../components/NumberField";
 import { IconWarn } from "../components/icons";
@@ -662,8 +661,6 @@ export default function Settings() {
             day.
           </p>
         </details>
-
-      <FidelityPanel />
       </details>
 
       <details className="card fold">

@@ -10,6 +10,7 @@ import {
   runPortfolioBacktest,
   StrategyRow,
 } from "../api";
+import FidelityPanel from "../components/FidelityPanel";
 import InfoTip from "../components/InfoTip";
 import LineChart, { benchmarkColor, ChartMarker, DayHolding, HOLD_COLOR } from "../components/LineChart";
 import NumberField from "../components/NumberField";
@@ -1608,6 +1609,10 @@ export default function Backtest() {
       )}
       </>
       )}
+
+      {/* Last, and collapsed: this answers "can I trust what I just read?",
+          which only means anything after the result it is talking about. */}
+      <FidelityPanel />
     </>
   );
 }
