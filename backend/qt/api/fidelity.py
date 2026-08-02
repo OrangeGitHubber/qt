@@ -573,27 +573,53 @@ def activated_at(session: Session, strategy: Strategy) -> datetime | None:
     "neither of us did anything" is a real agreement rather than an error.
 
     Two sources, in order of trust. `enabled_at` is the record (migration 0014)
-    and is null only for strategies switched on before it existed. For those,
-    the audit log is the sole surviving evidence — it is matched on the message
-    the toggle writes, which means a strategy renamed since then will not be
-    found. That is a miss, not a wrong answer: the report says the moment is
-    unknown rather than inventing one, which is the only acceptable failure for
-    a feature whose whole job is measuring accuracy.
+    and belongs to the row, so nothing done to the strategy afterwards — renaming
+    included — can affect it.
+
+    It is null only for strategies switched on before that column existed, and
+    for those the audit line the toggle wrote is the sole surviving evidence.
+    That line embeds the name the strategy had AT THE TIME, so matching today's
+    name alone would lose the moment for anything renamed since. Every name the
+    strategy has ever carried is recoverable from its config snapshots, so all
+    of them are tried.
 
     Returns None when nothing was ever enabled, or when a legacy activation
-    can't be recovered."""
+    genuinely cannot be recovered (no audit line survives). Unknown is the right
+    answer there: a confident wrong go-live time would shift every verdict in a
+    report whose entire job is measuring accuracy."""
     if strategy.enabled_at is not None:
         return _aware(strategy.enabled_at)
     row = (
         session.query(AuditLog)
         .filter(
             AuditLog.category == "strategy",
-            AuditLog.message == f"Strategy '{strategy.name}' ENABLED",
+            AuditLog.message.in_(
+                [f"Strategy '{n}' ENABLED" for n in _historical_names(session, strategy)]
+            ),
         )
         .order_by(AuditLog.at)
         .first()
     )
     return _aware(row.at) if row else None
+
+
+def _historical_names(session: Session, strategy: Strategy) -> list[str]:
+    """Every name this strategy has been known by, today's included.
+
+    A config version is written on every save, and each snapshot carries the name
+    as it stood — so the rename history is already recorded, just never read
+    before now."""
+    names = {strategy.name}
+    for (snapshot,) in session.query(StrategyConfigVersion.snapshot).filter(
+        StrategyConfigVersion.strategy_id == strategy.id
+    ):
+        try:
+            name = json.loads(snapshot).get("name")
+        except Exception:  # noqa: BLE001 — an unreadable snapshot is just one fewer name
+            continue
+        if name:
+            names.add(name)
+    return sorted(names)
 
 
 def _journal_rows(

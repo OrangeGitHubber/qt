@@ -409,9 +409,11 @@ def test_switching_a_strategy_on_records_the_moment_and_that_record_wins(client,
 def test_a_strategy_enabled_before_the_column_existed_falls_back_to_the_audit_log(client, configured):
     """Migration 0014 leaves enabled_at null on strategies already running, and
     those are exactly the ones a user checks first. The audit line the toggle
-    wrote is the only surviving evidence, so it is read — and NOT guessed at when
-    even that is missing, because a confident wrong go-live time under a fidelity
-    report is worse than an admitted unknown."""
+    wrote is the only surviving evidence, so it is read — including after a
+    RENAME, since that line embeds whatever the strategy was called at the time
+    and every past name is recoverable from the config snapshots. Still NOT
+    guessed at when no line survives: a confident wrong go-live time under a
+    fidelity report is worse than an admitted unknown."""
     from datetime import datetime, timedelta, timezone
 
     from qt.api.fidelity import activated_at
@@ -432,9 +434,19 @@ def test_a_strategy_enabled_before_the_column_existed_falls_back_to_the_audit_lo
         assert found is not None
         assert abs((found - then).total_seconds()) < 2
 
-        # Renamed since: the audit line no longer matches, and the honest answer
-        # is "unknown" rather than the wrong moment or today's date.
-        strat.name = "renamed since"
+    # Renamed since. The audit line still says the OLD name, and the moment must
+    # survive that — losing it would mean the report silently re-dates itself
+    # because someone tidied a label.
+    client.put(f"/api/strategies/{sid}", json={**body, "name": "fid activation renamed"})
+    with session_scope() as s:
+        strat = s.get(Strategy, sid)
+        strat.enabled_at = None
+        s.flush()
+        found = activated_at(s, strat)
+        assert found is not None and abs((found - then).total_seconds()) < 2
+
+        # No audit line at all: unknown, not a guess.
+        s.query(AuditLog).filter(AuditLog.category == "strategy").delete()
         s.flush()
         assert activated_at(s, strat) is None
 

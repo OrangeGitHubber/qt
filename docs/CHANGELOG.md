@@ -20,9 +20,10 @@ It also says **when the strategy went live**, to the minute, as the first row of
 the timeline, and starts the window there. Nothing recorded that moment before —
 enabling flipped a boolean, and a boolean has no timestamp — so strategies now
 record it (migration 0014). Ones already running when this shipped have no such
-record; for those the moment is recovered from the audit log, and if the strategy
-has been renamed since, the report says the moment is unknown rather than
-inventing one.
+record; for those the moment is recovered from the audit log — including after a
+rename, since every name a strategy has ever carried is already in its config
+snapshots. Only when no audit line survives at all does the report say the moment
+is unknown, rather than inventing one.
 
 ## The scanner-replay cache now builds and prunes itself (2026-08-02)
 
