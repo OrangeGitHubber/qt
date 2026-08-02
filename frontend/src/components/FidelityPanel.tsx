@@ -144,6 +144,17 @@ export default function FidelityPanel() {
             <InfoTip k="fidelity_buckets" /> Of the trades both sides took, {pct(d.same_exit_rule_pct)} left for the
             same reason and {pct(d.same_exit_day_pct)} left on the same day.
           </p>
+          {d.manual_exits > 0 && (
+            <p className="hint">
+              <strong>
+                {d.manual_exits} {d.manual_exits === 1 ? "trade was" : "trades were"} ended by hand
+              </strong>{" "}
+              — a force exit, an account reset, or reconciliation finding the broker no longer holding it. Those aren't
+              strategy decisions, so the backtest had no way to make them: their entries still count above, but every
+              exit number here skips them, and so does the trading cost below. Comparing your button press against a
+              rule would measure the gap between two different decisions and call it slippage.
+            </p>
+          )}
           {!d.enough_to_judge && (
             <p className="hint warn">
               <IconWarn className="icon-inline" /> <strong>Only {d.matched} matched trades.</strong> Below about 30

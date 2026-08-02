@@ -60,6 +60,33 @@ The P&L column in the journal is still gross, and now says so.
 but don't post real fee activities, so on paper this job runs, finds nothing,
 and correctly reports "no fees" rather than inventing them.
 
+## Fidelity: a trade you closed by hand isn't a backtest failure (2026-08-02)
+
+Force-exiting a position from the dashboard is *your* decision, not a strategy
+rule — the backtester has no way to know you pressed sell on a Tuesday. Left
+alone, the fidelity report would have punished it for that twice.
+
+The obvious harm: the exit would count as a disagreement, dragging down
+"left for the same reason" and "left on the same day" as though the replay's exit
+logic were broken, when the replay was never consulted.
+
+The harm that actually mattered: the gap between your discretionary exit price
+and the rule-based one was landing in the **measured trading cost** — the number
+meant to be typed into the backtest's spread setting. That gap isn't slippage,
+it's the distance between two different decisions, and letting it in would push
+every future backtest wrong on the strength of a button press. One hand-closed
+winner could have moved the suggested cost from a fraction of a percent to tens
+of percent.
+
+Now the **entry still counts** — it was a genuine strategy decision and its fill
+is real slippage — while every exit-side number skips it: exit rule, exit day,
+exit price and the P&L comparison. The report says how many trades this applied
+to, so if most of your exits were by hand you can see that the exit half is
+describing very little.
+
+The same treatment covers the other endings no strategy chose: an account reset,
+and reconciliation finding the broker no longer holding the position.
+
 ## Check the backtester against what really happened (2026-08-02)
 
 Settings now has a **Backtest fidelity** panel: point the backtester at a stretch

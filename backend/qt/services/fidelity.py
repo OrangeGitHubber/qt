@@ -43,6 +43,35 @@ def _pct_delta(live: float | None, sim: float | None) -> float | None:
     return round((sim - live) / live * 100, 4)
 
 
+# Exits the replay CANNOT reproduce, because no strategy rule produced them:
+# you pressed a button, the account was reset, or reconciliation found the broker
+# no longer holding the position. The engine writes each with a fixed prefix.
+_NON_STRATEGY_EXITS = ("force-closed", "manual liquidation", "reconciled:")
+
+
+def _is_strategy_exit(reason: str | None) -> bool:
+    """Whether an exit came from the strategy's own rules.
+
+    A force exit is a HUMAN decision. The backtester has no way to know you
+    clicked sell on a Tuesday, so it will always disagree — and counting that as
+    a disagreement is doubly wrong:
+
+      - it drags the exit-rule and exit-day agreement down as though the replay's
+        exit logic were faulty, when the replay never had a chance;
+      - and far worse, the price difference between your discretionary exit and
+        the rule-based one lands in the SLIPPAGE median. That number exists to be
+        typed into the backtest's spread setting, so polluting it with a
+        different decision would push every future backtest wrong on the basis of
+        a button press.
+
+    The ENTRY of such a trade is untouched by this: it was a genuine strategy
+    decision and its fill is real slippage. Only the exit half is set aside."""
+    if not reason:
+        return True  # nothing recorded — treat as ordinary rather than special-case it away
+    low = reason.strip().lower()
+    return not any(low.startswith(p) for p in _NON_STRATEGY_EXITS)
+
+
 def _key(symbol: str, day: str | None) -> tuple[str, str]:
     return (symbol.upper(), day or "")
 
@@ -117,6 +146,9 @@ def compare(
                 "sim_pnl": sim.get("pnl"),
                 "live_exit_reason": live.get("exit_reason"),
                 "sim_exit_reason": sim.get("exit_reason"),
+                # False when a human or the broker ended this trade, not a rule.
+                # The entry still counts; every exit-side comparison skips it.
+                "exit_comparable": _is_strategy_exit(live.get("exit_reason")),
                 # Reasons are prose with numbers in them, so compare the RULE
                 # that fired (its first few words), not the whole sentence.
                 "exit_reason_matches": _same_rule(
@@ -190,9 +222,12 @@ def _decision_stats(matched: list[dict], live_only: list[dict], backtest_only: l
     made, so a replay that finds the right trades but also invents ten others
     cannot score well by ignoring its own inventions."""
     total = len(matched) + len(live_only) + len(backtest_only)
-    exits = [m for m in matched if m["live_exit_reason"] and m["sim_exit_reason"]]
+    # Only exits a RULE produced. A force exit is a human decision the replay
+    # could never have made, so scoring it would measure your button presses.
+    comparable = [m for m in matched if m["exit_comparable"]]
+    exits = [m for m in comparable if m["live_exit_reason"] and m["sim_exit_reason"]]
     same_rule = [m for m in exits if m["exit_reason_matches"]]
-    same_day = [m for m in matched if m["exit_day_matches"]]
+    same_day = [m for m in comparable if m["exit_day_matches"]]
     return {
         "live_trades": len(matched) + len(live_only),
         "backtest_trades": len(matched) + len(backtest_only),
@@ -201,7 +236,12 @@ def _decision_stats(matched: list[dict], live_only: list[dict], backtest_only: l
         "invented_by_backtest": len(backtest_only),
         "match_rate_pct": round(len(matched) / total * 100, 1) if total else None,
         "same_exit_rule_pct": round(len(same_rule) / len(exits) * 100, 1) if exits else None,
-        "same_exit_day_pct": round(len(same_day) / len(matched) * 100, 1) if matched else None,
+        "same_exit_day_pct": round(len(same_day) / len(comparable) * 100, 1) if comparable else None,
+        # Trades whose EXIT was a force-close, an account reset or a
+        # reconciliation. Surfaced rather than silently dropped: if most of your
+        # exits were by hand, the exit half of this report is describing very
+        # little, and you should know that before trusting it.
+        "manual_exits": len(matched) - len(comparable),
         # Below this, differences are anecdotes. The same "count the coins"
         # discipline the optimizer applies to its own winners.
         "enough_to_judge": len(matched) >= 30,
@@ -216,12 +256,21 @@ def _execution_stats(matched: list[dict], assumed_spread_pct: float, assumed_fee
     a mean somewhere unrepresentative, and the point of this number is to be
     used as a setting.
     """
+    # ENTRY deltas come from every matched trade — the entry was a strategy
+    # decision even when the exit was yours.
     entry_deltas = [m["entry_delta_pct"] for m in matched if m["entry_delta_pct"] is not None]
-    exit_deltas = [m["exit_delta_pct"] for m in matched if m["exit_delta_pct"] is not None]
+    # EXIT deltas only from rule-driven exits. Comparing a discretionary sell
+    # against the rule-based one measures the gap between two different
+    # decisions, not the cost of executing one — and this median is the number
+    # the backtest's spread setting is meant to take.
+    comparable = [m for m in matched if m["exit_comparable"]]
+    exit_deltas = [m["exit_delta_pct"] for m in comparable if m["exit_delta_pct"] is not None]
     both = entry_deltas + exit_deltas
+    # Same reasoning for the P&L gap: a hand-closed trade's profit was decided by
+    # when you pressed the button, so it says nothing about the backtest's bias.
     pnl_pairs = [
         (m["live_pnl"], m["sim_pnl"])
-        for m in matched
+        for m in comparable
         if m["live_pnl"] is not None and m["sim_pnl"] is not None
     ]
     # The headline: over the trades that DID match, how much better did the

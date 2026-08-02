@@ -1230,6 +1230,7 @@ export interface FidelityMatch {
   live_exit_reason: string | null;
   sim_exit_reason: string | null;
   exit_reason_matches: boolean | null;
+  exit_comparable: boolean;
 }
 
 export interface FidelityReport {
@@ -1255,6 +1256,10 @@ export interface FidelityReport {
     match_rate_pct: number | null;
     same_exit_rule_pct: number | null;
     same_exit_day_pct: number | null;
+    // Trades ended by a force-close, an account reset or a reconciliation. Their
+    // ENTRY still counts; every exit-side number skips them, because the replay
+    // was never given the chance to make that decision.
+    manual_exits: number;
     enough_to_judge: boolean;
   };
   execution: {

@@ -174,6 +174,95 @@ def test_the_pnl_gap_shows_which_way_the_backtest_leans():
     assert out["execution"]["backtest_pnl_optimism_usd"] == 6.0  # (14-3) - (10-5)
 
 
+# --- exits nobody's strategy chose ------------------------------------------
+
+
+def test_a_force_exit_still_counts_as_a_matched_entry():
+    """You pressed sell. The ENTRY was still a genuine strategy decision, and
+    dropping the whole trade would throw away a real data point."""
+    out = compare(
+        [_live("NVDA", "2026-05-05", exit_reason="force-closed by hand (market order)")],
+        _result([_sim("NVDA", "2026-05-05", exit_reason="take-profit: +10%")]),
+    )
+    assert out["decision"]["matched"] == 1
+    assert out["matched"][0]["exit_comparable"] is False
+
+
+def test_a_force_exit_is_not_scored_as_an_exit_disagreement():
+    """The replay had no way to know you clicked sell on a Tuesday. Counting it
+    would report the exit logic as broken when it was never consulted."""
+    out = compare(
+        [_live("NVDA", "2026-05-05", exit_reason="force-closed by hand (market order)")],
+        _result([_sim("NVDA", "2026-05-05", exit_reason="take-profit: +10%")]),
+    )
+    assert out["decision"]["same_exit_rule_pct"] is None   # nothing comparable to score
+    assert out["decision"]["same_exit_day_pct"] is None
+    assert out["decision"]["manual_exits"] == 1
+
+
+def test_a_force_exit_never_pollutes_the_measured_trading_cost():
+    """THE one that matters. The cost median is meant to be typed into the
+    backtest's spread setting. A hand-closed trade's exit price differs from the
+    rule-based one because it was a DIFFERENT DECISION, not because of slippage —
+    letting it in would push every future backtest wrong on the strength of a
+    button press."""
+    forced = _live("AAA", "2026-05-05", entry=100.0, exit_price=200.0,
+                   exit_reason="force-closed by hand (market order)")
+    normal = _live("BBB", "2026-05-05", entry=100.0, exit_price=110.0)
+    out = compare(
+        [forced, normal],
+        _result([
+            _sim("AAA", "2026-05-05", entry=100.1, exit_price=110.0),   # 45% "delta"
+            _sim("BBB", "2026-05-05", entry=100.1, exit_price=110.11),
+        ]),
+        assumed_spread_pct=0.1,
+    )
+    # Two entries and ONE exit compared — the forced exit is set aside.
+    assert out["execution"]["fills_compared"] == 3
+    # …so the suggestion stays in slippage territory instead of being dragged to 45%.
+    assert out["execution"]["suggested_spread_pct"] < 0.5
+
+
+def test_a_force_exit_is_kept_out_of_the_pnl_gap_too():
+    """Its profit was decided by when you pressed the button, so it says nothing
+    about which way the backtest leans."""
+    forced = _live("AAA", "2026-05-05", pnl=1000.0,
+                   exit_reason="force-closed by hand (market order)")
+    normal = _live("BBB", "2026-05-05", pnl=10.0)
+    out = compare(
+        [forced, normal],
+        _result([_sim("AAA", "2026-05-05", pnl=5.0), _sim("BBB", "2026-05-05", pnl=14.0)]),
+    )
+    assert out["execution"]["backtest_pnl_optimism_usd"] == 4.0  # 14 - 10, BBB only
+
+
+def test_the_other_exits_no_strategy_chose_are_treated_the_same_way():
+    """An account reset and a reconciliation are equally outside the replay's
+    reach — the position was ended by something that isn't a rule."""
+    for reason in (
+        "manual liquidation (account reset)",
+        "reconciled: position no longer held at broker",
+        "force-closed by hand (shadow — no order was ever placed)",
+    ):
+        out = compare(
+            [_live("NVDA", "2026-05-05", exit_reason=reason)],
+            _result([_sim("NVDA", "2026-05-05", exit_reason="take-profit: +10%")]),
+        )
+        assert out["matched"][0]["exit_comparable"] is False, reason
+        assert out["decision"]["manual_exits"] == 1, reason
+
+
+def test_an_ordinary_rule_exit_is_still_compared():
+    """The guard must not swallow the normal case it is protecting."""
+    out = compare(
+        [_live("NVDA", "2026-05-05", exit_reason="trailing stop: -5% from high")],
+        _result([_sim("NVDA", "2026-05-05", exit_reason="trailing stop: -5% from high")]),
+    )
+    assert out["matched"][0]["exit_comparable"] is True
+    assert out["decision"]["manual_exits"] == 0
+    assert out["decision"]["same_exit_rule_pct"] == 100.0
+
+
 # --- the endpoint ----------------------------------------------------------
 
 import pytest
