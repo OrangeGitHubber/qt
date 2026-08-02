@@ -32,6 +32,7 @@ const KNOB_LABELS: Record<string, string> = {
   rsi_min: "Min RSI (entry)",
   exit_rsi_above: "Sell if RSI above",
   macd_slow: "MACD speed (slow EMA — lower = faster)",
+  atr_stop_mult: "ATR stop (× ATR)",
 };
 // RSI/MACD knobs are searched only when the strategy uses that signal; the
 // plateau grid filters by presence in the neighbourhood, so they simply don't
@@ -44,6 +45,7 @@ const KNOB_ORDER = [
   "rsi_max",
   "rsi_min",
   "exit_rsi_above",
+  "atr_stop_mult",
   "macd_slow",
 ];
 

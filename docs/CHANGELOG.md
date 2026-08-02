@@ -36,6 +36,28 @@ The P&L column in the journal is still gross, and now says so.
 but don't post real fee activities, so on paper this job runs, finds nothing,
 and correctly reports "no fees" rather than inventing them.
 
+## The optimizer now tunes your ATR stop (2026-08-01)
+
+Running a search on a strategy that uses an **ATR stop** produced no
+recommendation for it — and, worse, quietly wasted the search on a setting that
+does nothing.
+
+When the ATR stop is on, it **replaces** the fixed stop-loss (the app now says so
+in the strategy editor). But the optimizer still searched `Stop-loss (%)` across
+six values, none of which could change a single result. It then reported a
+confident "best" stop-loss beside the settings that do matter, and the plateau
+chart for it was pure noise — easy to read as "the stop doesn't matter for this
+strategy", which is close to the opposite of the truth.
+
+The search now includes **ATR stop (× ATR)** whenever a strategy uses one, across
+1.0–4.0, and drops the fixed stop-loss from the search for those strategies since
+it can't affect anything. That follows the rule the optimizer already applied to
+RSI and MACD: tune the factors you're actually using.
+
+Your ATR **period** and **risk-per-trade sizing** are left exactly as you set
+them — the search tunes how wide the stop sits, not how volatility is measured or
+how positions are sized.
+
 ## The chart stopped jittering under the cursor (2026-08-01)
 
 Sweeping the mouse across the comparison chart made the whole page jump. Not a

@@ -59,6 +59,22 @@ RSI_PARAM_SPACE: dict[str, list[float]] = {
     "exit_rsi_above": [0.0, 65.0, 70.0, 75.0, 80.0, 85.0],  # exit: sell on froth
 }
 
+# The ATR stop multiplier, searched ONLY when the strategy uses an ATR stop.
+# Same rule as RSI/MACD: tune the factors you're actually using.
+#
+# It matters more than the others, because when stop_mult > 0 the ATR stop
+# REPLACES stop_loss_pct entirely (see evaluate_exit). Without this knob the
+# search spent its whole budget tuning a stop that does nothing on such a
+# strategy, and reported a "best" stop-loss % that changed no result — a
+# plateau chart full of noise, easily read as "the stop doesn't matter here".
+#
+# 1.0-4.0 covers the useful span: below ~1x ATR the stop sits inside ordinary
+# daily noise and gets hit constantly; above ~4x it's so wide it rarely fires
+# and the trailing stop is doing the work instead.
+ATR_PARAM_SPACE: dict[str, list[float]] = {
+    "atr_stop_mult": [1.0, 1.5, 2.0, 2.5, 3.0, 4.0],
+}
+
 # MACD tuning = the LAG knob. We search the slow-EMA period (lower = a faster,
 # less-laggy MACD) and derive the fast line from the strategy's own fast/slow
 # ratio, so the whole MACD scales faster/slower while keeping its shape — always
@@ -88,6 +104,13 @@ def _active_param_space(base_strategy: dict) -> dict[str, list[float]]:
         space["exit_rsi_above"] = RSI_PARAM_SPACE["exit_rsi_above"]
     if entry.get("require_macd_bullish") or exit_rules.get("exit_on_macd_bearish"):
         space["macd_slow"] = MACD_PARAM_SPACE["macd_slow"]
+    # ATR stop on: search the multiplier, and DROP the fixed stop — it is inert
+    # while the ATR stop is set, so leaving it in would spend iterations proving
+    # a knob does nothing and print a meaningless "best" value beside the ones
+    # that count.
+    if float((params.get("atr") or {}).get("stop_mult", 0) or 0) > 0:
+        space["atr_stop_mult"] = ATR_PARAM_SPACE["atr_stop_mult"]
+        space.pop("stop_loss_pct", None)
     return space
 
 ProgressFn = Callable[[int, int], None]
@@ -170,6 +193,14 @@ def _apply_combo(base_strategy: dict, combo: dict) -> dict:
             slow = int(value)
             fast = max(2, min(slow - 1, round(slow * ratio)))
             m["fast"], m["slow"], m["signal"] = fast, slow, int(m.get("signal", 9) or 9)
+        elif key == "atr_stop_mult":
+            # Lives in its own params block, alongside the period and risk sizing
+            # the user set — those are left exactly as configured.
+            a = params.get("atr") or {}
+            params["atr"] = a
+            a["stop_mult"] = value
+            a.setdefault("period", 14)
+            a.setdefault("risk_usd", 0)
         elif key in _ENTRY_KNOBS:
             entry[key] = value
         else:
