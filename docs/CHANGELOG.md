@@ -36,6 +36,47 @@ The P&L column in the journal is still gross, and now says so.
 but don't post real fee activities, so on paper this job runs, finds nothing,
 and correctly reports "no fees" rather than inventing them.
 
+## ATR strategies were being tested on the wrong bars (2026-08-01)
+
+Two changes, one of which is a real correctness fix rather than a refinement.
+
+**Finer ATR steps where they matter.** The ATR stop is now searched across 1.0,
+1.25, 1.5, 1.75, 2.0, 2.5, 3.0 and 4.0. The spacing is deliberately uneven —
+quarters at the tight end, halves through the middle. With even steps the
+*relative* change shrinks as you climb (1.0→1.5 widens the stop by 50%, 3.0→3.5
+by 17%), so equal spacing would be coarsest exactly where the stop is most
+sensitive. Finer than this isn't earned: the stop is a multiple of a 14-day
+average that itself moves several percent a day, so separating 1.5× from 1.6×
+over a few months of history is fitting noise — and every extra value makes a
+lucky in-sample winner easier to hit.
+
+**ATR wasn't being treated as a daily indicator.** The app knew that MACD and RSI
+are computed from daily bars and must be backtested accordingly. ATR is exactly
+the same, and more sharply so — a "14-period ATR" measured on 15-minute bars
+covers three and a half *hours* of range instead of fourteen days, so it comes
+out a fraction of the real figure and every stop built on it lands far too tight.
+But ATR was missing from that rule, with two consequences:
+
+- An ATR strategy was locked to daily bars, where a stop can only trigger at the
+  daily close. A 2% trailing stop looks nearly free under those conditions, when
+  in reality it would fire constantly. That undercut the whole ATR search added
+  earlier today: the multiplier is a *price-triggered* stop, and it was being
+  scored on a replay that could barely trigger it.
+- Scanner-replay strategies had no route to daily bars at all, so they were stuck
+  with one resolution: daily (correct ATR, unrealistic stops) or intraday
+  (realistic stops, ATR measured over hours). This affected the **backtest** as
+  well as the optimizer.
+
+Both now run **mixed resolution** — signals from the daily series, entries and
+exits replayed on 15-minute bars — which is what MACD and RSI strategies have
+been getting. Scanner replays also load daily history reaching back before the
+window, so the indicator is alive on the window's first day instead of dead for
+its first weeks.
+
+**Expect different numbers.** ATR strategies backtested or optimized before this
+were scored against stops that couldn't fire properly. The new results are
+lower-flattering and more honest.
+
 ## Optimizer results now show before and after (2026-08-01)
 
 "Winning settings" used to be a bare list of numbers, which left the most useful

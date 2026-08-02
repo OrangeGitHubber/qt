@@ -95,6 +95,14 @@ class ScannerReplayDataset:
     replayed: list[str]
     dropped: list[str]
     intraday_covered: int
+    # The DAILY series for the same names, reaching back over the warm-up before
+    # the window — the indicator SOURCE, never the replay timeline. MACD, RSI and
+    # ATR are daily signals live, so on an intraday replay they must come from
+    # here rather than from 15-minute bars (a "14-period ATR" on 15-minute bars
+    # measures 3.5 hours). Callers pass it only when the strategy has such a
+    # signal; run_backtest keeps it look-ahead-safe via _daily_frontier, which
+    # only ever reads daily bars completed BEFORE each replay bar's own day.
+    daily: dict[str, list[dict]]
 
 
 def load_scanner_replay_dataset(
@@ -158,11 +166,25 @@ def load_scanner_replay_dataset(
         intraday_bars = barcache.cached_intraday_bars(cache, union, start_day, model=intraday_model)
         intraday_covered = sorted(s for s in union if intraday_bars.get(s))
         used_intraday = len(intraday_covered) == len(union) and bool(union)
+        # The daily series is loaded either way, and always reaches back over the
+        # warm-up: it is the replay timeline when there is no intraday coverage,
+        # and the indicator source when there is. Costs almost nothing — daily
+        # bars are one row per symbol per day, already in the cache — and without
+        # the warm-up prefix every daily indicator is dead for the window's first
+        # ~35 days, which on a 180-day replay is a fifth of the test.
+        warm_start = (
+            datetime.strptime(start_day, "%Y-%m-%d") - timedelta(days=WARMUP_DAYS)
+        ).strftime("%Y-%m-%d")
+        daily = barcache.cached_daily_bars(
+            cache, union, warm_start, model=daily_model, stamp=daily_stamp
+        )
         if used_intraday:
             bars = intraday_bars
             timeframe = "15Min"
         else:
-            bars = barcache.cached_daily_bars(cache, union, start_day, model=daily_model, stamp=daily_stamp)
+            bars = {
+                s: [b for b in series if b["t"][:10] >= start_day] for s, series in daily.items()
+            }
             timeframe = "1Day"
         # Whatever the resolution, a symbol with no bars can't be replayed. Name
         # them rather than quietly shrinking the universe under the user.
@@ -175,7 +197,7 @@ def load_scanner_replay_dataset(
         bars=bars, eligible_by_day=eligible_by_day, timeframe=timeframe,
         used_intraday=used_intraday, union=union, market=market,
         benchmark_class=market, benchmark_symbol=benchmark_symbol,
-        start_day=start_day, days_replayed=len(movers),
+        start_day=start_day, days_replayed=len(movers), daily=daily,
         replayed=replayed, dropped=dropped, intraday_covered=len(intraday_covered),
     )
 
@@ -231,14 +253,23 @@ def _strategy_symbols(session: Session, strategy: Strategy) -> list[str]:
 
 
 def _uses_daily_only_signals(params: dict) -> bool:
-    """MACD or RSI gate on, and NOT the (intraday-only) VWAP rule. The live engine
-    computes MACD/RSI from COMPLETED DAILY bars, so an intraday backtest computes
+    """MACD, RSI or ATR on, and NOT the (intraday-only) VWAP rule. The live engine
+    computes all three from COMPLETED DAILY bars, so an intraday backtest computes
     them on intraday closes — twitchy and unlike live. Such a strategy must be
     backtested on 1Day. (If VWAP is also on, the strategy is misconfigured; the
     VWAP guard — which needs intraday — takes precedence and this one stands down
-    so the two don't deadlock.)"""
+    so the two don't deadlock.)
+
+    ATR belongs here for the same reason as MACD/RSI, and more sharply: a
+    "14-period ATR" over 15-minute bars measures three and a half HOURS of range,
+    not fourteen days, so it comes out a fraction of the real figure and every
+    stop derived from it lands absurdly tight. _needs_warmup has always counted
+    ATR as a daily indicator; this function disagreeing with it was the bug —
+    ATR strategies were fetched warm-up history and then classified as if they
+    had no daily signal at all."""
     entry = params.get("entry", {})
     exit_rules = params.get("exit", {})
+    atr = params.get("atr") or {}
     if entry.get("require_above_vwap"):
         return False
     macd = bool(entry.get("require_macd_bullish") or exit_rules.get("exit_on_macd_bearish"))
@@ -247,19 +278,27 @@ def _uses_daily_only_signals(params: dict) -> bool:
         or float(entry.get("rsi_max", 0) or 0) > 0
         or float(exit_rules.get("exit_rsi_above", 0) or 0) > 0
     )
-    return macd or rsi
+    # Either ATR feature: the volatility stop, or ATR-based position sizing.
+    atr_on = float(atr.get("stop_mult", 0) or 0) > 0 or float(atr.get("risk_usd", 0) or 0) > 0
+    return macd or rsi or atr_on
 
 
 def _has_price_triggered_exit(params: dict) -> bool:
     """Whether any exit fires off the PRICE itself — stop-loss, trailing stop or
     take-profit. These are the rules a once-a-day daily replay cannot simulate:
     it checks them at the close, so a position that dipped through its stop and
-    recovered is scored a winner."""
+    recovered is scored a winner.
+
+    The ATR stop counts too — it IS a stop, just one whose distance is set by
+    volatility instead of a fixed percentage. It has to be named explicitly
+    because it REPLACES stop_loss_pct, so a strategy could carry a zero fixed
+    stop and still exit on price."""
     x = params.get("exit") or {}
+    atr = params.get("atr") or {}
     return any(
         float(x.get(k, 0) or 0) > 0
         for k in ("stop_loss_pct", "trailing_stop_pct", "take_profit_pct")
-    )
+    ) or float(atr.get("stop_mult", 0) or 0) > 0
 
 
 def _mixed_resolution(params: dict) -> bool:
@@ -601,6 +640,12 @@ async def _scanner_replay(
     )
 
     _report("Replaying history…", 0)
+    # MACD/RSI/ATR come from the DAILY series, never from the replay stream. On an
+    # intraday replay that is the difference between a real indicator and one
+    # measured over 15-minute bars; on a daily replay it adds the warm-up so the
+    # signal isn't dead for the window's first weeks. Omitted entirely for a
+    # strategy with no daily signal, so its replay is untouched.
+    replay_daily = ds.daily if _needs_warmup(strategy_dict["params"]) else None
     result = await asyncio.to_thread(
         backtest.run_backtest,
         strategy_dict, ds.bars, get_risk(session),
@@ -609,6 +654,7 @@ async def _scanner_replay(
             body.fee_pct if body.fee_pct is not None else DEFAULT_FEE_PCT.get(strategy.asset_class, 0.0)
         ),
         eligible_by_day=ds.eligible_by_day, market=ds.market,
+        daily_bars_by_symbol=replay_daily,
         progress=_replay_progress,
     )
     if "error" in result:
@@ -631,6 +677,12 @@ async def _scanner_replay(
     result["strategy_name"] = strategy.name
     result["scanner_replay"] = True
     result["replay_intraday"] = ds.used_intraday
+    # Mixed = the replay ran on intraday bars while the signals came from daily
+    # ones. Only true when BOTH are the case; a daily replay has one resolution,
+    # and a strategy with no daily signal never reads the daily series.
+    result["mixed_resolution"] = bool(ds.used_intraday and replay_daily)
+    if result["mixed_resolution"]:
+        result["signal_timeframe"] = "1Day"
     result["replay_top_n"] = body.replay_top_n
     result["universe_size"] = len(ds.replayed)  # what was TESTED
     result["universe_dropped"] = ds.dropped

@@ -114,6 +114,7 @@ async def _run_search(
     starting_cash: float,
     spread_pct: float,
     prebuilt_bars: dict | None = None,
+    prebuilt_daily: dict | None = None,
     eligible_by_day: dict | None = None,
     replay_extra: dict | None = None,
     mixed: bool = False,
@@ -143,6 +144,9 @@ async def _run_search(
     try:
         if prebuilt_bars is not None:
             bars = prebuilt_bars
+            # Scanner replay: the daily series read from the same cache, used as
+            # the INDICATOR source only (never split, never the replay timeline).
+            daily_bars = prebuilt_daily
         else:
             # Read-through the bar cache: only the missing recent edge is actually
             # downloaded, and any cache trouble degrades to a plain fetch.
@@ -239,6 +243,7 @@ async def start_optimize(
     # their bars OFFLINE from the bar cache; the fixed-universe mode resolves a
     # symbol list and downloads bars from Alpaca in the background task.
     prebuilt_bars: dict | None = None
+    prebuilt_daily: dict | None = None
     eligible_by_day: dict | None = None
     replay_extra: dict | None = None
     timeframe = body.timeframe
@@ -261,6 +266,16 @@ async def start_optimize(
         prebuilt_bars = ds.bars
         eligible_by_day = ds.eligible_by_day
         timeframe = ds.timeframe  # 15Min if intraday cached, else 1Day — from the cache
+        # Same rule as the scanner-replay backtest: MACD/RSI/ATR are daily signals
+        # live, so they come from the daily series, never from the replay stream.
+        # This is what makes a scanner strategy's search MIXED — previously the
+        # replay path had no route to the daily bars at all, so an intraday replay
+        # computed a "14-period ATR" over 15-minute bars and a daily replay checked
+        # every searched stop once a day at the close.
+        from qt.api.backtest import _needs_warmup as _nw
+
+        prebuilt_daily = ds.daily if _nw(json.loads(strategy.params)) else None
+        mixed = bool(ds.used_intraday and prebuilt_daily)
         # Names that made a top-N list AND actually have bars (offline: no 25 cap).
         # Searching over ds.union would hand the optimizer symbols with no data —
         # silently dropped downstream, exactly the way the backtest used to drop
@@ -351,7 +366,8 @@ async def start_optimize(
         _run_search(
             client, strategy_dict, risk, symbols, strategy.asset_class,
             timeframe, body.days, body.iterations, body.starting_cash, body.spread_pct,
-            prebuilt_bars=prebuilt_bars, eligible_by_day=eligible_by_day, replay_extra=replay_extra,
+            prebuilt_bars=prebuilt_bars, prebuilt_daily=prebuilt_daily,
+            eligible_by_day=eligible_by_day, replay_extra=replay_extra,
             mixed=mixed,
         )
     )

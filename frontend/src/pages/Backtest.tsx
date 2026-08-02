@@ -73,7 +73,7 @@ function qty(q: number): string {
   return q.toFixed(dp).replace(/\.?0+$/, "");
 }
 
-// Which bar size a strategy's signals demand: VWAP → intraday; MACD/RSI → daily.
+// Which bar size a strategy's signals demand: VWAP → intraday; MACD/RSI/ATR → daily.
 function stratWantsIntraday(s: StrategyRow): boolean {
   return !!s.params?.entry.require_above_vwap;
 }
@@ -86,7 +86,11 @@ function stratWantsDaily(s: StrategyRow): boolean {
     !!x?.exit_on_macd_bearish ||
     (e?.rsi_min ?? 0) > 0 ||
     (e?.rsi_max ?? 0) > 0 ||
-    (x?.exit_rsi_above ?? 0) > 0
+    (x?.exit_rsi_above ?? 0) > 0 ||
+    // ATR is a daily indicator too — a "14-period ATR" on 15-minute bars spans
+    // 3.5 hours, not 14 days, so every stop derived from it lands far too tight.
+    (s.params?.atr?.stop_mult ?? 0) > 0 ||
+    (s.params?.atr?.risk_usd ?? 0) > 0
   );
 }
 
@@ -94,7 +98,14 @@ function stratWantsDaily(s: StrategyRow): boolean {
 // the rules a once-a-day daily replay simply cannot simulate.
 function stratHasPriceExit(s: StrategyRow): boolean {
   const x = s.params?.exit;
-  return (x?.stop_loss_pct ?? 0) > 0 || (x?.trailing_stop_pct ?? 0) > 0 || (x?.take_profit_pct ?? 0) > 0;
+  return (
+    (x?.stop_loss_pct ?? 0) > 0 ||
+    (x?.trailing_stop_pct ?? 0) > 0 ||
+    (x?.take_profit_pct ?? 0) > 0 ||
+    // The ATR stop is a stop: it REPLACES stop_loss_pct, so a strategy can exit
+    // on price with the fixed percentage sitting at zero.
+    (s.params?.atr?.stop_mult ?? 0) > 0
+  );
 }
 
 // MIXED RESOLUTION: daily signals AND a price-triggered exit. One bar stream

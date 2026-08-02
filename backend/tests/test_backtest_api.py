@@ -490,3 +490,80 @@ def test_partial_intraday_coverage_falls_back_instead_of_dropping_movers(
     assert body["intraday_covered"] == 1
     assert body["universe_size"] == 2          # what was actually TESTED
     assert body["universe_dropped"] == []
+
+
+def test_scanner_replay_runs_mixed_for_an_atr_strategy(client, configured, monkeypatch):
+    """The gap this closes: the scanner-replay path had no route to the daily
+    bars at all, so an intraday replay computed ATR from 15-minute bars — 14
+    periods spanning 3.5 hours instead of 14 days — and every stop derived from
+    it came out a fraction of its real width. The replay now takes its signals
+    from the cached daily series while the exits run on intraday bars."""
+    eng = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    barcache.CacheBase.metadata.create_all(eng)
+    Sess = sessionmaker(bind=eng, expire_on_commit=False)
+    monkeypatch.setattr(barcache, "_engine", eng)
+    monkeypatch.setattr(barcache, "_Session", Sess)
+    d0 = (datetime.now(timezone.utc) - timedelta(days=6)).strftime("%Y-%m-%d")
+    d1 = (datetime.now(timezone.utc) - timedelta(days=5)).strftime("%Y-%m-%d")
+    warm = (datetime.now(timezone.utc) - timedelta(days=40)).strftime("%Y-%m-%d")
+
+    def ib(ts, c):
+        return {"t": ts, "o": c, "h": c, "l": c, "c": c, "v": 1e5, "vw": c}
+
+    with Sess() as s:
+        barcache.save_intraday_bars(s, "BTC/USD", [
+            ib(f"{d0}T12:00:00Z", 100), ib(f"{d0}T18:00:00Z", 100),
+            ib(f"{d1}T12:00:00Z", 104), ib(f"{d1}T18:00:00Z", 106),
+        ], model=barcache.CryptoIntradayBar)
+        # Daily history for the ATR — including a bar from before the window.
+        barcache.save_daily_bars(s, "BTC/USD", [
+            {"t": f"{warm}T00:00:00Z", "o": 90, "h": 95, "l": 88, "c": 92, "v": 1e6, "vw": 92},
+            {"t": f"{d0}T00:00:00Z", "o": 100, "h": 102, "l": 98, "c": 100, "v": 1e6, "vw": 100},
+            {"t": f"{d1}T00:00:00Z", "o": 104, "h": 107, "l": 103, "c": 106, "v": 1e6, "vw": 106},
+        ], model=barcache.CryptoDailyBar)
+        barcache.store_movers(s, d1, [("BTC/USD", 6.0, 106.0, 1e8)], model=barcache.CryptoDailyMover)
+        s.commit()
+
+    strat = _strategy("crypto")
+    strat["params"]["atr"] = {"period": 14, "stop_mult": 1.5, "risk_usd": 0}
+    sid = client.post("/api/strategies", json=strat).json()["id"]
+    fetch = AsyncMock(side_effect=Exception("no benchmark"))
+    with patch.object(AlpacaClient, "historical_bars", new=fetch):
+        body = client.post("/api/backtest", json={
+            "strategy_id": sid, "scanner_replay": True, "days": 30,
+            "starting_cash": 5000, "spread_pct": 0}).json()
+    assert body["replay_intraday"] is True
+    assert body["mixed_resolution"] is True     # daily signals, intraday exits
+    assert body["signal_timeframe"] == "1Day"
+    assert body["timeframe"] == "15Min"
+
+
+def test_scanner_replay_without_daily_signals_is_not_mixed(client, configured, monkeypatch):
+    """A strategy with no daily indicator never reads the daily series, so its
+    intraday replay is single-resolution — and must not claim otherwise."""
+    eng = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    barcache.CacheBase.metadata.create_all(eng)
+    Sess = sessionmaker(bind=eng, expire_on_commit=False)
+    monkeypatch.setattr(barcache, "_engine", eng)
+    monkeypatch.setattr(barcache, "_Session", Sess)
+    d0 = (datetime.now(timezone.utc) - timedelta(days=6)).strftime("%Y-%m-%d")
+    d1 = (datetime.now(timezone.utc) - timedelta(days=5)).strftime("%Y-%m-%d")
+
+    def ib(ts, c):
+        return {"t": ts, "o": c, "h": c, "l": c, "c": c, "v": 1e5, "vw": c}
+
+    with Sess() as s:
+        barcache.save_intraday_bars(s, "BTC/USD", [
+            ib(f"{d0}T12:00:00Z", 100), ib(f"{d1}T12:00:00Z", 106),
+        ], model=barcache.CryptoIntradayBar)
+        barcache.store_movers(s, d1, [("BTC/USD", 6.0, 106.0, 1e8)], model=barcache.CryptoDailyMover)
+        s.commit()
+
+    sid = _make(client, "crypto")  # plain momentum: no MACD/RSI/ATR
+    fetch = AsyncMock(side_effect=Exception("no benchmark"))
+    with patch.object(AlpacaClient, "historical_bars", new=fetch):
+        body = client.post("/api/backtest", json={
+            "strategy_id": sid, "scanner_replay": True, "days": 30,
+            "starting_cash": 5000, "spread_pct": 0}).json()
+    assert body["replay_intraday"] is True
+    assert body["mixed_resolution"] is False

@@ -63,7 +63,7 @@ function wantsIntradayRules(s: StrategyRow | undefined): boolean {
   return !!(e?.require_above_vwap || (e?.entry_window_start && e?.entry_window_end));
 }
 
-// MACD/RSI are DAILY signals — the live engine reads them off completed daily closes.
+// MACD/RSI/ATR are DAILY signals — the live engine reads them off completed daily closes.
 function wantsDailySignals(s: StrategyRow | undefined): boolean {
   if (!s || wantsIntradayRules(s)) return false;
   const e = s.params?.entry;
@@ -73,7 +73,11 @@ function wantsDailySignals(s: StrategyRow | undefined): boolean {
     x?.exit_on_macd_bearish ||
     (e?.rsi_min ?? 0) > 0 ||
     (e?.rsi_max ?? 0) > 0 ||
-    (x?.exit_rsi_above ?? 0) > 0
+    (x?.exit_rsi_above ?? 0) > 0 ||
+    // ATR belongs with them: computed from DAILY bars live, and meaningless on
+    // an intraday series (14 periods of 15-minute bars is 3.5 hours of range).
+    (s.params?.atr?.stop_mult ?? 0) > 0 ||
+    (s.params?.atr?.risk_usd ?? 0) > 0
   );
 }
 
@@ -82,7 +86,14 @@ function wantsDailySignals(s: StrategyRow | undefined): boolean {
 // at the close, so on daily bars a tight stop looks nearly free.
 function hasPriceExit(s: StrategyRow | undefined): boolean {
   const x = s?.params?.exit;
-  return (x?.stop_loss_pct ?? 0) > 0 || (x?.trailing_stop_pct ?? 0) > 0 || (x?.take_profit_pct ?? 0) > 0;
+  return (
+    (x?.stop_loss_pct ?? 0) > 0 ||
+    (x?.trailing_stop_pct ?? 0) > 0 ||
+    (x?.take_profit_pct ?? 0) > 0 ||
+    // The ATR stop counts — it replaces the fixed percentage rather than adding
+    // to it, so the fixed one can legitimately be zero.
+    (s?.params?.atr?.stop_mult ?? 0) > 0
+  );
 }
 
 // MIXED RESOLUTION: daily signals AND a price-triggered exit. One bar stream

@@ -71,8 +71,18 @@ RSI_PARAM_SPACE: dict[str, list[float]] = {
 # 1.0-4.0 covers the useful span: below ~1x ATR the stop sits inside ordinary
 # daily noise and gets hit constantly; above ~4x it's so wide it rarely fires
 # and the trailing stop is doing the work instead.
+#
+# The steps are deliberately UNEVEN — quarters at the tight end, halves through
+# the middle, then a jump to 4.0. With even steps the RELATIVE change shrinks as
+# you climb (1.0->1.5 widens the stop by 50%, 3.0->3.5 by 17%), so equal spacing
+# would be coarsest exactly where the stop is most sensitive and finest where it
+# barely matters. Resolution finer than this isn't earned: the stop is a
+# multiple of a 14-day average that itself moves several percent a day, so
+# separating 1.5x from 1.6x over a few months of history is fitting noise — and
+# every extra value multiplies the space, making a lucky in-sample winner easier
+# to hit while flattening the plateau chart that exists to catch exactly that.
 ATR_PARAM_SPACE: dict[str, list[float]] = {
-    "atr_stop_mult": [1.0, 1.5, 2.0, 2.5, 3.0, 4.0],
+    "atr_stop_mult": [1.0, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0, 4.0],
 }
 
 # MACD tuning = the LAG knob. We search the slow-EMA period (lower = a faster,
