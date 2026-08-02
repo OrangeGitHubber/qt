@@ -48,9 +48,14 @@ rendering glitch — a feedback loop:
    day** — with a different trade count, which resized the panel again.
 
 Measured at **204 pixels** of movement per hovered day. The panel now has a fixed
-height and scrolls internally when a day has more trades than fit, which takes it
-to **zero**. A minimum/maximum range wasn't enough — that still left 100px, and
-any variability at all keeps the loop running.
+height, which takes it to **zero**. A minimum/maximum range wasn't enough — that
+still left 100px, and any variability at all keeps the loop running.
+
+The height is measured rather than guessed: an ordinary day (date, bought, sold,
+and the holdings line with its divider) comes to 121px, so the first attempt at
+112px put a scrollbar on the *common* case. It's now 144px, which clears both a
+normal day and a busy comparison. A day with more than that scrolls inside its
+own box.
 
 It's the same rule the readout strip above the chart already followed: its height
 is constant so the chart never moves. The panel below was left free to grow,
