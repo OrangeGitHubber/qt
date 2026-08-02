@@ -6,6 +6,18 @@ interface Series {
   values: (number | null)[];
 }
 
+/** A benchmark line means the same thing on every chart: SPY is green, BTC is
+ *  orange. It was hardcoded green on the backtest, so a crypto run drew BTC in
+ *  the colour the dashboard uses for SPY — the same line, two colours, depending
+ *  which page you were on. */
+export function benchmarkColor(symbol: string | null | undefined): string {
+  return (symbol ?? "").toUpperCase().startsWith("BTC") ? "var(--warn)" : "var(--ok)";
+}
+
+/** Buy-and-hold of the TESTED symbols — a third thing, so a third colour. It
+ *  used to share orange with BTC, which collided on every crypto backtest. */
+export const HOLD_COLOR = "#22d3ee";
+
 export interface ChartMarker {
   index: number;
   kind: "buy" | "sell";
@@ -78,6 +90,23 @@ export default function LineChart({
   const [drag, setDrag] = useState<{ x0: number; x1: number } | null>(null);
   const svgRef = useRef<SVGSVGElement>(null);
 
+  // The trade panel's height is RATCHETED: it grows to the tallest day you've
+  // hovered and never shrinks back.
+  //
+  // Left free, its height changed with every day's trade count, which reflowed
+  // the page under the cursor — the chart shifted, the same pixel became a
+  // different day, and that day resized the panel again. Measured at 204px of
+  // movement per hover. A fixed height stopped it but no constant works: an
+  // ordinary day needs ~121px and a busy comparison day (both strategies, a
+  // dozen entries) needs several times that, so any constant either clips the
+  // busy case behind a scrollbar or wastes half a screen on the quiet one.
+  //
+  // Ratcheting settles after the first tall day and then never moves again: no
+  // scrollbar, no jitter. It resets when a new result arrives so a big compare
+  // run doesn't leave a permanent gap under a small one.
+  const detailRef = useRef<HTMLDivElement>(null);
+  const [detailFloor, setDetailFloor] = useState(0);
+
   const W = 900;
   const H = 300;
   const padL = 52;
@@ -114,8 +143,19 @@ export default function LineChart({
   // the previous run's window.
   useEffect(() => {
     setZoom(null);
+    setDetailFloor(0); // and a fresh run re-learns its own tallest day
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [labels.length, labels[0], labels[labels.length - 1]]);
+
+  // Grow-only. The floor is applied to the INNER wrapper and measured on that
+  // same element, so the two agree: a short day renders exactly at the floor and
+  // nothing changes. Measuring the padded outer box while setting min-height on
+  // it instead fed the padding back in on every pass — the panel crept 16px
+  // taller each hover and never settled.
+  useEffect(() => {
+    const h = detailRef.current?.getBoundingClientRect().height ?? 0;
+    if (h > detailFloor + 0.5) setDetailFloor(h);
+  });
 
   if (!model) return <p className="hint">Not enough data yet — the chart grows one point per day.</p>;
 
@@ -296,6 +336,7 @@ export default function LineChart({
           pushes the legend down, never the chart. */}
       {(hasTradeData || holdings) && (
         <div className="chart-trade-detail">
+          <div ref={detailRef} style={detailFloor ? { minHeight: detailFloor } : undefined}>
           {hover === null ? (
             <span className="cr-trade-empty">
               {hasTradeData ? "Hover a day to see the trades made that day." : "Hover a day for detail."}
@@ -370,6 +411,7 @@ export default function LineChart({
                 </div>
               );
             })()}
+          </div>
         </div>
       )}
 

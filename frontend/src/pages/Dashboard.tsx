@@ -20,7 +20,7 @@ import AccountSelect from "../components/AccountSelect";
 import ColumnPicker, { useColumnPrefs } from "../components/ColumnPicker";
 import ConfirmDialog from "../components/ConfirmDialog";
 import InfoTip from "../components/InfoTip";
-import LineChart, { ChartMarker, DayHolding } from "../components/LineChart";
+import LineChart, { benchmarkColor, ChartMarker, DayHolding } from "../components/LineChart";
 import StackedPnlBars, { PnlSeries } from "../components/StackedPnlBars";
 import { IconWarn } from "../components/icons";
 
@@ -685,8 +685,9 @@ function ScoreboardCard() {
           labels={board.days}
           series={[
             { label: "QT bot", color: "var(--accent)", values: board.bot },
-            { label: "Buy & hold SPY", color: "var(--ok)", values: board.spy },
-            { label: "Buy & hold BTC", color: "var(--warn)", values: board.btc },
+            // Same helper the backtest uses, so these two lines can't drift apart.
+            { label: "Buy & hold SPY", color: benchmarkColor("SPY"), values: board.spy },
+            { label: "Buy & hold BTC", color: benchmarkColor("BTC/USD"), values: board.btc },
           ]}
           markers={boardMarkers}
           holdings={attribution}

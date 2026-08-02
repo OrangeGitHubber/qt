@@ -51,11 +51,27 @@ Measured at **204 pixels** of movement per hovered day. The panel now has a fixe
 height, which takes it to **zero**. A minimum/maximum range wasn't enough — that
 still left 100px, and any variability at all keeps the loop running.
 
-The height is measured rather than guessed: an ordinary day (date, bought, sold,
-and the holdings line with its divider) comes to 121px, so the first attempt at
-112px put a scrollbar on the *common* case. It's now 144px, which clears both a
-normal day and a busy comparison. A day with more than that scrolls inside its
-own box.
+No fixed height works, though: an ordinary day needs ~121px and a busy
+comparison day (both strategies, a dozen exits) needs three times that, so any
+constant either hides the busy case behind a scrollbar or wastes half a screen
+on the quiet one. Two attempts did exactly that.
+
+Instead the panel **grows to the tallest day you've hovered and never shrinks
+back**. It settles after the first tall day and then never moves again — no
+scrollbar, no jitter — and resets when a new backtest runs so a big comparison
+doesn't leave a permanent gap under a small one.
+
+## Benchmark lines keep their colours everywhere (2026-08-01)
+
+**SPY is green and BTC/USD is orange**, on every chart. The backtest drew its
+"broad market" line green whatever the symbol, so a crypto run showed BTC in the
+colour the dashboard uses for SPY — the same line meaning different things
+depending on which page you were on.
+
+Buy-and-hold of the *tested* symbols also had orange, which collided with BTC on
+every crypto backtest. It now has its own colour, so the five lines you can see
+at once — two strategies, the broad market, buy-and-hold, and your equity — are
+all distinguishable.
 
 It's the same rule the readout strip above the chart already followed: its height
 is constant so the chart never moves. The panel below was left free to grow,

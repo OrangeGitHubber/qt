@@ -11,7 +11,7 @@ import {
   StrategyRow,
 } from "../api";
 import InfoTip from "../components/InfoTip";
-import LineChart, { ChartMarker, DayHolding } from "../components/LineChart";
+import LineChart, { benchmarkColor, ChartMarker, DayHolding, HOLD_COLOR } from "../components/LineChart";
 import NumberField from "../components/NumberField";
 import RunStatus from "../components/RunStatus";
 import UniverseChips, { resolveUniverse } from "../components/UniverseChips";
@@ -732,7 +732,7 @@ export default function Backtest() {
                       ? [
                           {
                             label: `Buy & hold ${portfolioResult.hold_benchmark_label}`,
-                            color: "var(--warn)",
+                            color: HOLD_COLOR,
                             values: portfolioResult.hold_benchmark,
                           },
                         ]
@@ -1308,7 +1308,7 @@ export default function Backtest() {
                   ? [
                       {
                         label: `Buy & hold ${result.hold_benchmark_label}`,
-                        color: "var(--warn)",
+                        color: HOLD_COLOR,
                         values: result.hold_benchmark,
                       },
                     ]
@@ -1317,7 +1317,7 @@ export default function Backtest() {
                   ? [
                       {
                         label: `Broad market (${result.benchmark_symbol})`,
-                        color: "var(--ok)",
+                        color: benchmarkColor(result.benchmark_symbol),
                         values: result.benchmark,
                       },
                     ]

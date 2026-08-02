@@ -2083,8 +2083,11 @@ button.linklike {
      to 121px, and 7rem = 112px put a scrollbar on the ordinary case. 9rem = 144px
      clears both that and a busy compare day. A day that still overflows scrolls,
      which is the right trade against a chart that moves under the cursor. */
-  height: 9rem;
-  overflow-y: auto;
+  /* No fixed height and no scrollbar: the component ratchets a min-height up to
+     the tallest day it has rendered (see LineChart). A constant can't serve both
+     an ordinary day (~121px) and a busy comparison one, which is what put a
+     scrollbar on the common case. */
+  min-height: 7.5rem;
 }
 
 /* Collapsible cards (Settings etc.): the title row is always visible with a
