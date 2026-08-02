@@ -228,6 +228,15 @@ class _Segment:
     # basket with no snapshot that old, or a watchlist, which is not versioned at
     # all. The segment is still replayed, with today's list, and says so.
     universe_known: bool = True
+    # Where the REPLAY is allowed to start trading, when that differs from where
+    # this stretch begins for the purpose of filing trades. They differ exactly
+    # once: on the day the strategy went live. Trades are matched by DAY, so the
+    # stretch has to open at midnight or that day's real trades fall outside it —
+    # but a replay that also opens at midnight gets the morning to itself and
+    # buys things the engine, not yet running, never saw. Those land as "the
+    # backtest invented a trade", which is the exact false verdict this window
+    # exists to prevent.
+    replay_start: datetime | None = None
     live: list[dict] = field(default_factory=list)
     result: dict | None = None
     error: str | None = None
@@ -500,6 +509,33 @@ def _parse(stamp: str | None) -> datetime | None:
         return None
 
 
+def _bar_floor(moment: datetime, timeframe: str) -> datetime:
+    """The start of the bar containing `moment`.
+
+    This is where a replay may begin trading when the engine went live partway
+    through a day, and both edges matter:
+
+    Start at MIDNIGHT and the replay gets the whole morning to itself. If the
+    symbol looked better at 10:00 than it did at 14:30, the backtest buys the
+    10:00 opportunity the engine — not yet running — never saw, and the report
+    calls it a trade the backtest invented. That is the same false verdict the
+    window exists to prevent, merely compressed into day one.
+
+    Start at the exact fill time and it is worse in the other direction: the bar
+    that CAUSED that first trade began before the fill, so gating at 14:30:07
+    skips it and the replay misses the very trade it is being judged against.
+
+    The bar containing the moment is the only bound that admits the triggering
+    bar and nothing earlier. On a daily replay the bar IS the day, so this
+    reduces to midnight — and no head start is possible there, because a daily
+    replay only gets one decision point for the whole day anyway."""
+    if timeframe == "1Day":
+        return moment.replace(hour=0, minute=0, second=0, microsecond=0)
+    minutes = 60 if timeframe == "1Hour" else 15
+    floored = moment.replace(second=0, microsecond=0)
+    return floored - timedelta(minutes=floored.minute % minutes)
+
+
 def first_trade_at(session: Session, strategy: Strategy, mode: str) -> datetime | None:
     """When this strategy first did anything in this mode.
 
@@ -520,12 +556,7 @@ def first_trade_at(session: Session, strategy: Strategy, mode: str) -> datetime 
         _aware(session.query(func.min(Trade.created_at)).filter(*filters).scalar()),
     ]
     known = [s for s in stamps if s is not None]
-    if not known:
-        return None
-    # Floored to the START of that day. Trades are matched and placed by DAY, so
-    # a window beginning at the exact fill time (say 15:42) would put that day's
-    # own trades — parsed to midnight — before the window and lose them.
-    return min(known).replace(hour=0, minute=0, second=0, microsecond=0)
+    return min(known) if known else None
 
 
 def _journal_rows(
@@ -626,7 +657,7 @@ async def _replay_segments(
                 BacktestBody(
                     strategy_id=strategy.id,
                     symbols=segment.symbols,
-                    window_start=segment.start,
+                    window_start=segment.replay_start or segment.start,
                     window_end=segment.end,
                     scanner_replay=segment.scanner_replay,
                     timeframe=_timeframe_for(config["params"]),
@@ -717,7 +748,12 @@ async def compare(
     elif body.days is not None:
         since = until - timedelta(days=body.days)
     elif began is not None:
-        since = began
+        # The DAY the strategy went live, so that day's own trades — matched by
+        # day, and therefore parsed to midnight — fall inside the window. The
+        # replay is held back to the exact moment separately, below: opening
+        # both at midnight would hand the backtest the morning before go-live and
+        # score whatever it bought there as a trade it invented.
+        since = began.replace(hour=0, minute=0, second=0, microsecond=0)
     else:
         # No history at all. Any window is empty; the 422 below explains it
         # better than an arbitrary number would.
@@ -728,9 +764,10 @@ async def compare(
     # Clamped even when asked for more: replaying before the strategy existed
     # scores every trade the backtest takes there as one it invented — dozens of
     # them, none about the backtester, burying the days that are.
-    clamped = bool(began and began > since)
+    clamped = bool(began and began.replace(hour=0, minute=0, second=0, microsecond=0) > since)
     if clamped:
-        since = began
+        since = began.replace(hour=0, minute=0, second=0, microsecond=0)
+    replay_from = max(since, _bar_floor(began, _timeframe_for(json.loads(strategy.params)))) if began else since
     if until <= since:
         raise HTTPException(
             status_code=422,
@@ -776,6 +813,10 @@ async def compare(
         if body.imported_trades is None
         else []
     )
+    if segments and replay_from > segments[0].start:
+        # Only the first stretch can straddle go-live; every later boundary is an
+        # edit, and the engine was already running through those.
+        segments[0].replay_start = replay_from
     too_many = len(segments) > MAX_SEGMENTS
     segmented = 1 < len(segments) <= MAX_SEGMENTS
     not_segmented_reason = (
@@ -822,8 +863,10 @@ async def compare(
                 strategy_id=strategy.id,
                 # The window is passed explicitly, so `days` — which only ever
                 # means "back from now" — would be redundant here, and wrong once
-                # the window ends in the past.
-                window_start=since,
+                # the window ends in the past. The REPLAY starts at the moment the
+                # engine went live, not at that day's midnight: the difference is
+                # a morning of trades it could not have taken.
+                window_start=replay_from,
                 window_end=until,
                 symbols=symbols,
                 scanner_replay=scanner_replay,

@@ -139,6 +139,26 @@ The P&L column in the journal is still gross, and now says so.
 but don't post real fee activities, so on paper this job runs, finds nothing,
 and correctly reports "no fees" rather than inventing them.
 
+## The replay no longer gets a head start on go-live day (2026-08-02)
+
+If a strategy went live at 14:30, a replay that opened at midnight had the whole
+morning to itself. When a symbol looked better at 10:00 than it did at 14:30, the
+backtest bought the 10:00 setup — which the engine, not yet running, never saw —
+and the report called it a trade the backtest invented. The same false verdict
+the window was meant to prevent, compressed into day one.
+
+It could not simply start at 14:30 either, for two reasons pulling opposite ways.
+Trades are matched by DAY, so a window opening at 14:30 puts that day's real
+trades outside itself and loses them. And the bar that *caused* the first trade
+opened before the fill, so gating at 14:33:12 skips it and the replay misses the
+very trade it is being judged against.
+
+They are two different bounds and are now treated as such: the compared stretch
+opens at midnight so the day's trades count, while the replay may only trade from
+**the bar the engine first acted in**. That admits the triggering bar and nothing
+earlier. On a daily replay it makes no difference — one decision point covers the
+whole day, so there is no morning to steal.
+
 ## The fidelity window is worked out, not asked for (2026-08-02)
 
 The "History (days)" box is gone. Once the window was being clamped to the

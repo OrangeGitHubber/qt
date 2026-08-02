@@ -516,3 +516,62 @@ def test_the_window_defaults_to_the_strategys_whole_trading_life(client, configu
     assert body["window"]["days"] >= 199, "did not reach back to the strategy's first trade"
     assert body["window"]["clamped_to_first_trade"] is False  # nothing to clamp — it IS the start
     assert body["decision"]["live_trades"] == 2, "the oldest trade fell outside the window"
+
+
+def test_the_replay_cannot_trade_the_morning_before_the_engine_went_live():
+    """Werner's case. The strategy goes live at 14:30. The same symbol looked
+    BETTER at 10:00 that morning — so a replay opening at midnight buys the 10:00
+    setup, which the engine, not yet running, never saw, and the report calls it a
+    trade the backtest invented.
+
+    The window still has to OPEN at midnight, because trades are matched by day
+    and the go-live day's real trades would otherwise fall outside it. So the two
+    bounds are separate: the stretch opens at midnight, the replay starts at the
+    bar the engine first acted in."""
+    from qt.api.fidelity import _bar_floor
+
+    live_at = datetime(2026, 7, 29, 14, 33, 12, tzinfo=timezone.utc)
+    assert _bar_floor(live_at, "15Min") == datetime(2026, 7, 29, 14, 30, tzinfo=timezone.utc)
+    # Not midnight — that is the six hours of trades the engine never saw...
+    assert _bar_floor(live_at, "15Min").hour == 14
+    # ...and not the fill time either: the bar that CAUSED the trade opened at
+    # 14:30, so gating at 14:33:12 would skip it and lose the trade being judged.
+    assert _bar_floor(live_at, "15Min") < live_at
+
+
+def test_the_bar_floor_matches_the_replays_own_bar_size():
+    from qt.api.fidelity import _bar_floor
+
+    live_at = datetime(2026, 7, 29, 14, 47, 30, tzinfo=timezone.utc)
+    assert _bar_floor(live_at, "1Hour") == datetime(2026, 7, 29, 14, 0, tzinfo=timezone.utc)
+    # A daily replay gets one decision point for the whole day, so there is no
+    # morning to steal a march on — the bar IS the day.
+    assert _bar_floor(live_at, "1Day") == datetime(2026, 7, 29, 0, 0, tzinfo=timezone.utc)
+
+
+def test_the_window_still_opens_at_midnight_so_that_days_trades_count(client, configured):
+    """The other half. If the WINDOW moved to 14:30 as well, that day's own
+    trades — matched by day, so parsed to midnight — would fall outside it and be
+    lost, which is the failure this pair of bounds was introduced to avoid."""
+    from unittest.mock import AsyncMock, patch
+
+    from qt.broker.alpaca import AlpacaClient
+
+    sid = client.post("/api/strategies", json=_strategy_body(3, ["GOLV"], "go live")).json()["id"]
+    now = datetime.now(timezone.utc)
+    first = (now - timedelta(days=5)).replace(hour=14, minute=33, second=12, microsecond=0)
+    with session_scope() as s:
+        s.add(Trade(
+            strategy_id=sid, mode="paper", symbol="GOLV", asset_class="stock",
+            status="closed", qty=10, notional=1000, entry_price=100.0, exit_price=110.0,
+            pnl=100.0, entry_reason="gain 5%", exit_reason="take-profit: +10%",
+            entry_at=first, exit_at=first + timedelta(days=1),
+        ))
+
+    bars = [{"t": (now - timedelta(days=n)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+             "o": 100, "h": 100, "l": 100, "c": 100, "v": 1e6, "vw": 100} for n in (8, 7, 6)]
+    with patch.object(AlpacaClient, "historical_bars", new=AsyncMock(return_value={"GOLV": bars})):
+        body = client.post("/api/fidelity/compare", json={"strategy_id": sid}).json()
+
+    assert body["window"]["start"].endswith("T00:00:00+00:00"), "the go-live day's trades would be lost"
+    assert body["decision"]["live_trades"] == 1
