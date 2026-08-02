@@ -316,6 +316,19 @@ export default function FidelityPanel() {
             </details>
           )}
 
+          {report.window?.clamped_to_first_trade && (
+            <p className="hint">
+              <strong>
+                Compared {report.window.start.slice(0, 10)} to {report.window.end.slice(0, 10)} ({report.window.days}{" "}
+                days), not the {days} you asked for.
+              </strong>{" "}
+              This strategy's first {report.mode} activity was{" "}
+              {report.window.first_trade_at?.slice(0, 10)} — replaying before that would score every trade the
+              backtest took in a period the strategy didn't exist as one it invented, which says nothing about the
+              backtester and buries the days that do.
+            </p>
+          )}
+
           <h4>
             Did it pick the same trades? <InfoTip k="decision_fidelity" />
           </h4>
@@ -405,40 +418,32 @@ export default function FidelityPanel() {
             </p>
           )}
 
-          {(report.live_only.length > 0 || report.backtest_only.length > 0) && (
+          {report.log.length > 0 && (
             <>
-              <h4>The disagreements</h4>
+              <h4>Trade by trade</h4>
+              <p className="hint">
+                Every decision either side made, in the order it happened. This is the part that names a bug: "the
+                replay held a day longer" is something to go and fix, where a percentage is not.
+              </p>
               <div className="table-scroll">
                 <table>
                   <thead>
                     <tr>
                       <th>Day</th>
                       <th>Symbol</th>
+                      <th>Verdict</th>
                       <th>What happened</th>
-                      <th>Why it matters</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {report.live_only.map((r) => (
-                      <tr key={`l-${r.day}-${r.symbol}`}>
+                    {report.log.map((r, i) => (
+                      <tr key={`${r.day}-${r.symbol}-${i}`}>
                         <td>{r.day}</td>
                         <td>{r.symbol}</td>
-                        <td className="down">Traded for real, not replayed</td>
-                        <td className="hint">
-                          {r.in_replayed_universe === false
-                            ? "Not in the universe the replay covered — it was never looking for this symbol."
-                            : "The replay saw this symbol and passed on it: either it had no bars for that day, or its view of the day differed."}
+                        <td className={r.verdict === "match" ? "up" : r.verdict === "entry matched" ? "" : "down"}>
+                          {r.verdict}
                         </td>
-                      </tr>
-                    ))}
-                    {report.backtest_only.map((r) => (
-                      <tr key={`b-${r.day}-${r.symbol}`}>
-                        <td>{r.day}</td>
-                        <td>{r.symbol}</td>
-                        <td className="down">Replayed, never happened</td>
-                        <td className="hint">
-                          The backtest thinks this was tradable when it wasn't — the mismatch to worry about.
-                        </td>
+                        <td className="hint">{r.detail}</td>
                       </tr>
                     ))}
                   </tbody>

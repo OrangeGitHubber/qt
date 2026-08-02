@@ -139,6 +139,37 @@ The P&L column in the journal is still gross, and now says so.
 but don't post real fee activities, so on paper this job runs, finds nothing,
 and correctly reports "no fees" rather than inventing them.
 
+## Fidelity now reads as a comparison, and stops replaying history that never happened (2026-08-02)
+
+Two problems, and the second was making the first look worse than it was.
+
+**The window no longer starts before the strategy did.** Asking for 90 days of a
+strategy that has been running for five replays 85 days in which it did not
+exist — and every trade the backtest takes in that stretch is counted as one it
+"invented". There can be dozens, none of them say anything about the backtester,
+and they bury the handful of days that do. The comparison now begins at the
+strategy's first recorded activity in that mode, and says so. Ask for a window
+that ends before the strategy existed and it refuses outright rather than
+comparing an empty period against a replay with 90 days to fill.
+
+**And the result is now a trade-by-trade account, in order, in words:**
+
+> *2026-07-29 · XYZ · **match** — Both bought XYZ (live 14:14, replay 14:00) and
+> both sold on 2026-07-30 — take-profit: +10%.*
+>
+> *2026-07-29 · ABC · **exit timing differs** — Both bought ABC (live 15:35,
+> replay 15:30). You sold on 2026-07-31 (trailing stop: -4%); the replay held
+> until 2026-08-01 (stop-loss: -10%).*
+>
+> *2026-07-30 · QQQ · **replay missed it** — You bought QQQ at 10:02. The replay
+> did not. It wasn't in the universe the replay covered, so it was never looking
+> for it.*
+
+That second line is a bug report. "1.5% agreement" is not. The totals are still
+there above it, but the log is the part to read — it distinguishes an exit fired
+a day late from a symbol the replay was never watching, and those are completely
+different problems.
+
 ## Backtest fidelity moved to the Backtest page (2026-08-02)
 
 It was in Settings, which was the wrong place: it exists to say whether your

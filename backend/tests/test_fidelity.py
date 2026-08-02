@@ -717,3 +717,66 @@ def test_a_basket_edit_between_two_trades_is_caught_by_anchoring_on_the_first(cl
     assert members, "anchoring on the latest trade would have reported no change here"
     assert "MSFT" in members[0]["now"]
     assert cfg["basket_changes_during_window"] == 1
+
+
+# --- the readable comparison -------------------------------------------------
+
+
+def _at(day, clock):
+    return f"{day}T{clock}:00Z"
+
+
+def test_the_log_reads_as_a_comparison_not_a_bucket_count():
+    """A screen of totals says nothing you can act on. The log says what happened
+    to each trade, in order, in words."""
+    out = compare(
+        [_live("XYZ", "2026-07-29", entry=100.0) | {"entry_at": _at("2026-07-29", "14:14")}],
+        _result([_sim("XYZ", "2026-07-29", entry=100.0) | {"entry_at": _at("2026-07-29", "14:00")}]),
+    )
+    row = out["log"][0]
+    assert row["verdict"] == "match"
+    assert "14:14" in row["detail"] and "14:00" in row["detail"]
+
+
+def test_an_exit_a_day_late_is_named_as_such():
+    """The case Werner described: same entry, the replay holds a day longer.
+    That is a timing bug and must not be filed as a plain mismatch."""
+    out = compare(
+        [_live("ABC", "2026-07-29", exit_day="2026-07-31", exit_reason="trailing stop: -4%")],
+        _result([_sim("ABC", "2026-07-29", exit_day="2026-08-01", exit_reason="stop-loss: -10%")]),
+    )
+    row = out["log"][0]
+    assert row["verdict"] == "exit timing differs"
+    assert "2026-07-31" in row["detail"] and "2026-08-01" in row["detail"]
+
+
+def test_a_missed_trade_says_whether_the_replay_was_even_looking():
+    """The difference between "not in the universe" and "saw it and passed" is
+    the difference between a setup problem and a real bug."""
+    out = compare(
+        [_live("AMC", "2026-07-20"), _live("MS", "2026-07-20")],
+        _result(),
+        replayed_symbols=["MS"],
+    )
+    by_symbol = {r["symbol"]: r for r in out["log"]}
+    assert "never looking" in by_symbol["AMC"]["detail"]
+    assert "real bug" in by_symbol["MS"]["detail"]
+
+
+def test_a_hand_closed_trade_says_its_exit_is_not_compared():
+    out = compare(
+        [_live("NVDA", "2026-07-29", exit_reason="force-closed by hand (market order)")],
+        _result([_sim("NVDA", "2026-07-29", exit_reason="take-profit: +10%")]),
+    )
+    row = out["log"][0]
+    assert row["verdict"] == "entry matched"
+    assert "by hand" in row["detail"]
+
+
+def test_the_log_is_in_time_order():
+    """It is meant to be read top to bottom as the run unfolded."""
+    out = compare(
+        [_live("B", "2026-07-30"), _live("A", "2026-07-28")],
+        _result([_sim("B", "2026-07-30"), _sim("A", "2026-07-28")]),
+    )
+    assert [r["day"] for r in out["log"]] == ["2026-07-28", "2026-07-30"]

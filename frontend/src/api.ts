@@ -1245,6 +1245,19 @@ export interface FidelityReport {
   // False for paper: the broker simulates those fills, so the cost half would be
   // measuring a simulation rather than a market.
   execution_is_measurable: boolean;
+  // The comparison told trade by trade, in order, in plain words. The buckets
+  // summarise; this is the part you read.
+  log: { day: string; at: string | null; symbol: string; verdict: string; detail: string }[];
+  // The window actually compared — clamped to the strategy's own lifetime, since
+  // replaying history it never lived through scores every trade the replay takes
+  // there as one it invented.
+  window?: {
+    start: string;
+    end: string;
+    days: number;
+    clamped_to_first_trade: boolean;
+    first_trade_at: string | null;
+  };
   matched: FidelityMatch[];
   live_only: {
     symbol: string;

@@ -495,6 +495,34 @@ def _parse(stamp: str | None) -> datetime | None:
         return None
 
 
+def first_trade_at(session: Session, strategy: Strategy, mode: str) -> datetime | None:
+    """When this strategy first did anything in this mode.
+
+    The window must not begin before it. A 90-day comparison of a strategy that
+    has been running for five days replays 85 days in which it did not exist,
+    and every trade the replay takes in that stretch is counted as one it
+    "invented" — dozens of them, all of which say nothing about the backtester
+    and drown the handful of days that do."""
+    # When the strategy ACTED, not when the row was written. They differ for a
+    # trade reconciled after the fact, and `created_at` alone would then place
+    # the strategy's first activity later than it really was and clip the window
+    # past the trades it is supposed to include.
+    filters = (Trade.strategy_id == strategy.id, Trade.mode == mode)
+    stamps = [
+        _aware(session.query(func.min(Trade.entry_at)).filter(*filters).scalar()),
+        # Rejected rows never filled, so entry_at is null on exactly the rows
+        # that prove the engine was running and being refused.
+        _aware(session.query(func.min(Trade.created_at)).filter(*filters).scalar()),
+    ]
+    known = [s for s in stamps if s is not None]
+    if not known:
+        return None
+    # Floored to the START of that day. Trades are matched and placed by DAY, so
+    # a window beginning at the exact fill time (say 15:42) would put that day's
+    # own trades — parsed to midnight — before the window and lose them.
+    return min(known).replace(hour=0, minute=0, second=0, microsecond=0)
+
+
 def _journal_rows(
     session: Session, strategy: Strategy, since: datetime, until: datetime, mode: str
 ) -> list[dict]:
@@ -525,6 +553,12 @@ def _journal_rows(
                 "status": t.status,
                 "entry_day": day_of(t.entry_at) if t.entry_at else None,
                 "exit_day": day_of(t.exit_at) if t.exit_at else None,
+                # Timestamps as well as days: matching is by day (a fill at
+                # 14:03 and a 14:00 bar are the same decision), but the report
+                # has to SHOW the times or "the backtest bought it a day late"
+                # is indistinguishable from "an hour late".
+                "entry_at": _iso(_aware(t.entry_at)),
+                "exit_at": _iso(_aware(t.exit_at)),
                 # The exact moments, not just the days. Matching stays day-based
                 # (see the module docstring in qt.services.fidelity), but SPLITTING
                 # the window at a config edit needs to know which side of 14:32 a
@@ -672,6 +706,22 @@ async def compare(
     until = _aware(body.window_end) or datetime.now(timezone.utc)
     if until <= since:
         raise HTTPException(status_code=422, detail="The window ends before it starts.")
+
+    # CLAMPED to the strategy's own lifetime. Asking for 90 days of a strategy
+    # that has been running for five replays 85 days in which it did not exist,
+    # and every trade the replay takes there is scored as one it invented. Those
+    # are not backtester faults, there can be dozens of them, and they bury the
+    # few days that actually carry information.
+    began = None if body.imported_trades is not None else first_trade_at(session, strategy, body.mode)
+    clamped = bool(began and began > since)
+    if clamped:
+        since = began
+    if until <= since:
+        raise HTTPException(
+            status_code=422,
+            detail=f"\"{strategy.name}\" has no {body.mode} history before that window ends — "
+            "there is nothing in it to compare.",
+        )
 
     live_rows = (
         body.imported_trades
@@ -849,6 +899,14 @@ async def compare(
         "segments_with_unknown_universe": (
             sum(1 for s in segments if not s.universe_known) if segmented else 0
         ),
+    }
+    report["window"] = {
+        "start": _iso(since),
+        "end": _iso(until),
+        "days": max(1, round((until - since).total_seconds() / 86400)),
+        # True when the request asked for more history than the strategy has.
+        "clamped_to_first_trade": clamped,
+        "first_trade_at": _iso(began),
     }
     report["strategy_name"] = strategy.name
     report["mode"] = body.mode

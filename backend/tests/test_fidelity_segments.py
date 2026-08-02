@@ -429,3 +429,55 @@ def test_a_backwards_window_is_refused(client, configured):
         "window_end": (now - timedelta(days=10)).isoformat(),
     })
     assert r.status_code == 422 and "ends before it starts" in r.json()["detail"]
+
+
+def test_the_window_never_starts_before_the_strategy_traded(client, configured):
+    """Asking for 90 days of a strategy that has run for five replays 85 days in
+    which it did not exist — and every trade the replay takes there is scored as
+    one it invented. Dozens of them, none about the backtester, burying the days
+    that are."""
+    from unittest.mock import AsyncMock, patch
+
+    from qt.broker.alpaca import AlpacaClient
+
+    sid = client.post("/api/strategies", json=_strategy_body(3, ["CLMP"], "clamped")).json()["id"]
+    now = datetime.now(timezone.utc)
+    with session_scope() as s:
+        s.add(Trade(
+            strategy_id=sid, mode="paper", symbol="CLMP", asset_class="stock",
+            status="closed", qty=10, notional=1000, entry_price=100.0, exit_price=110.0,
+            pnl=100.0, entry_reason="gain 5%", exit_reason="take-profit: +10%",
+            entry_at=now - timedelta(days=5), exit_at=now - timedelta(days=4),
+        ))
+
+    bars = [{"t": (now - timedelta(days=n)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+             "o": 100, "h": 100, "l": 100, "c": 100, "v": 1e6, "vw": 100} for n in (7, 6, 5)]
+    with patch.object(AlpacaClient, "historical_bars", new=AsyncMock(return_value={"CLMP": bars})):
+        body = client.post("/api/fidelity/compare", json={"strategy_id": sid, "days": 90}).json()
+
+    assert body["window"]["clamped_to_first_trade"] is True
+    assert body["window"]["days"] <= 7, "replayed history the strategy never lived through"
+    # The window opens on the DAY of the first trade, not at its exact fill time:
+    # trades are placed by day, so a mid-afternoon start would drop that day.
+    assert body["window"]["start"].endswith("T00:00:00+00:00")
+
+
+def test_a_window_ending_before_the_strategy_existed_is_refused(client, configured):
+    """Better a clear refusal than a comparison of an empty period against a
+    replay that had 90 days to invent trades in."""
+    sid = client.post("/api/strategies", json=_strategy_body(3, ["CLMP"], "too early")).json()["id"]
+    now = datetime.now(timezone.utc)
+    with session_scope() as s:
+        s.add(Trade(
+            strategy_id=sid, mode="paper", symbol="CLMP", asset_class="stock",
+            status="closed", qty=10, notional=1000, entry_price=100.0, exit_price=110.0,
+            pnl=100.0, entry_reason="gain 5%", exit_reason="take-profit: +10%",
+            entry_at=now - timedelta(days=2), exit_at=now - timedelta(days=1),
+        ))
+    r = client.post("/api/fidelity/compare", json={
+        "strategy_id": sid,
+        "window_start": (now - timedelta(days=60)).isoformat(),
+        "window_end": (now - timedelta(days=30)).isoformat(),
+    })
+    assert r.status_code == 422
+    assert "no paper history" in r.json()["detail"]
