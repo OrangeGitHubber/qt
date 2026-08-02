@@ -20,6 +20,7 @@ boring to lose.
 
 from __future__ import annotations
 
+import json
 import logging
 from datetime import datetime, timedelta, timezone
 
@@ -27,7 +28,13 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from qt.api.backtest import BacktestBody, _strategy_symbols, run
+from qt.api.backtest import (
+    BacktestBody,
+    _mixed_resolution,
+    _strategy_symbols,
+    _uses_daily_only_signals,
+    run,
+)
 from qt.api.market import require_client
 from qt.broker.alpaca import AlpacaClient
 from qt.db import get_session
@@ -145,13 +152,27 @@ async def compare(
     # would replay a different set of names than the one that produced these
     # trades — and then every mismatch would be an artefact of the substitution.
     symbols = [] if scanner_replay else _strategy_symbols(session, strategy)
+    # The bar size the STRATEGY demands, not a hardcoded one. Asking for daily
+    # bars on a strategy that needs intraday ones gets every entry rejected, and
+    # the report would then read "the backtest missed all 20 trades" when the
+    # truth is that it was handed the wrong resolution to make any.
+    params = json.loads(strategy.params)
+    entry = params.get("entry") or {}
+    wants_intraday = bool(
+        entry.get("require_above_vwap")
+        or (entry.get("entry_window_start") and entry.get("entry_window_end"))
+    )
+    if _mixed_resolution(params) or (wants_intraday and not _uses_daily_only_signals(params)):
+        timeframe = "15Min"
+    else:
+        timeframe = "1Day"
     result = await run(
         BacktestBody(
             strategy_id=strategy.id,
             symbols=symbols,
             days=body.days,
             scanner_replay=scanner_replay,
-            timeframe="1Day",
+            timeframe=timeframe,
             starting_cash=max(strategy.sleeve_usd, 100),
             spread_pct=spread_pct,
             fee_pct=fee_pct,
@@ -165,7 +186,13 @@ async def compare(
         result,
         assumed_spread_pct=spread_pct,
         assumed_fee_pct=result.get("fee_pct_per_side") or 0.0,
+        replayed_symbols=result.get("symbols") or [],
     )
+    # When the replay traded NOTHING, the backtester already knows why — it
+    # counts every rejection reason as it goes. Passing that through turns a
+    # screen of "the backtest missed this" into the one sentence that explains
+    # all of them at once.
+    report["backtest_no_trade_reason"] = (result.get("diagnosis") or {}).get("summary")
     report["strategy_name"] = strategy.name
     report["mode"] = body.mode
     report["days"] = body.days

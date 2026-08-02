@@ -82,6 +82,7 @@ def compare(
     *,
     assumed_spread_pct: float = 0.0,
     assumed_fee_pct: float = 0.0,
+    replayed_symbols: list[str] | None = None,
 ) -> dict:
     """Diff what really happened against what the replay says would have.
 
@@ -93,6 +94,9 @@ def compare(
     Every number is rounded where it is produced, so the API layer has nothing
     to decide and the UI cannot render 14 decimal places of false precision.
     """
+    universe = (
+        {s.upper() for s in replayed_symbols} if replayed_symbols else None
+    )
     sim_trades = list(backtest_result.get("trade_list") or [])
     sim_open = list(backtest_result.get("open_positions") or [])
 
@@ -122,6 +126,15 @@ def compare(
                     "entry_price": live.get("entry_price"),
                     "pnl": live.get("pnl"),
                     "entry_reason": live.get("entry_reason"),
+                    # Whether the replay was even LOOKING at this symbol. A name
+                    # outside the replayed universe was never going to be found,
+                    # so calling it "the backtest missed a trade" blames the
+                    # replay for being pointed somewhere else — usually because
+                    # the strategy's universe was edited after these trades, or
+                    # the comparison resolved a different one.
+                    "in_replayed_universe": (
+                        None if universe is None else live.get("symbol", "").upper() in universe
+                    ),
                 }
             )
             continue
@@ -192,6 +205,9 @@ def compare(
         "backtest_only": sorted(backtest_only, key=lambda r: (r["day"], r["symbol"])),
         "rails_blocked": sorted(rails_blocked, key=lambda r: (r["day"], r["symbol"])),
         "decision": _decision_stats(matched, live_only, backtest_only),
+        # What the replay was actually pointed at. Without this a universe
+        # mismatch is invisible and reads as a broken backtest.
+        "replayed_symbols": sorted(universe) if universe else [],
         "execution": _execution_stats(matched, assumed_spread_pct, assumed_fee_pct),
     }
 
@@ -234,6 +250,12 @@ def _decision_stats(matched: list[dict], live_only: list[dict], backtest_only: l
         "matched": len(matched),
         "missed_by_backtest": len(live_only),
         "invented_by_backtest": len(backtest_only),
+        # Of the trades the replay didn't find, how many it could never have
+        # found because the symbol wasn't in the universe it replayed. A high
+        # number here means the comparison is mismatched, not the backtester.
+        "missed_outside_universe": sum(
+            1 for r in live_only if r.get("in_replayed_universe") is False
+        ),
         "match_rate_pct": round(len(matched) / total * 100, 1) if total else None,
         "same_exit_rule_pct": round(len(same_rule) / len(exits) * 100, 1) if exits else None,
         "same_exit_day_pct": round(len(same_day) / len(comparable) * 100, 1) if comparable else None,

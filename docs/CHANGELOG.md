@@ -60,6 +60,38 @@ The P&L column in the journal is still gross, and now says so.
 but don't post real fee activities, so on paper this job runs, finds nothing,
 and correctly reports "no fees" rather than inventing them.
 
+## Fidelity: say WHY nothing matched, instead of blaming the backtester (2026-08-02)
+
+The first real run reported 0% agreement and twenty rows all saying the same
+thing: "traded for real, not replayed — usually missing bars." That guess was
+wrong, and the report had the information to know better.
+
+The giveaway was in the buckets: **invented by the backtest = 0**. If the replay
+had picked *different* trades that number would be non-zero. Zero meant it took
+no trades at all — so it was never a matching problem.
+
+Two causes, both now handled.
+
+**It asked for the wrong bar size.** The comparison always requested daily bars.
+A strategy whose rules need intraday ones then rejects every entry, trades
+nothing, and gets reported as having "missed" all your real trades — when it was
+simply handed a resolution it couldn't trade on. It now uses the bar size the
+strategy actually demands, exactly as the backtest page does.
+
+**It couldn't tell a mismatched comparison from a broken backtester.** If your
+real trades are in symbols the replay was never pointed at — usually because the
+strategy's universe was edited after those trades were made — then no replay
+could ever find them. The report now checks each missing trade against the
+universe it actually replayed and says so: "18 of the 20 traded symbols aren't in
+the universe the replay was pointed at (MS, AIG, ALL…)". That is a fixable setup
+problem, not a fault in the backtester, and the two need opposite responses.
+
+When the replay takes no trades at all, the panel now leads with that fact plus
+the backtester's own account of why — it counts every rejection reason as it goes
+— rather than making you infer it from a screen of identical rows. And a row
+whose symbol genuinely was in the universe no longer asserts "missing bars" as
+though that were established.
+
 ## Fidelity: a trade you closed by hand isn't a backtest failure (2026-08-02)
 
 Force-exiting a position from the dashboard is *your* decision, not a strategy

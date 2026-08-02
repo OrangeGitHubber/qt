@@ -115,6 +115,27 @@ export default function FidelityPanel() {
             </p>
           )}
 
+          {d.backtest_trades === 0 && (
+            <p className="hint warn">
+              <IconWarn className="icon-inline" /> <strong>The backtest took no trades at all</strong> over this
+              window, so nothing below is a comparison — every real trade is listed as "missed" because there was
+              nothing to match it against.{" "}
+              {report.backtest_no_trade_reason ? <>{report.backtest_no_trade_reason}</> : null}{" "}
+              {d.missed_outside_universe > 0 && (
+                <>
+                  <strong>
+                    {d.missed_outside_universe} of the {d.missed_by_backtest} traded symbols aren't in the universe the
+                    replay was pointed at
+                  </strong>{" "}
+                  ({report.replayed_symbols.slice(0, 8).join(", ")}
+                  {report.replayed_symbols.length > 8 ? ", …" : ""}). That normally means the strategy's universe was
+                  changed after those trades were made, so today's settings are being compared against a different
+                  strategy's history. Fix the comparison before reading anything into it.
+                </>
+              )}
+            </p>
+          )}
+
           <h4>
             Did it pick the same trades? <InfoTip k="decision_fidelity" />
           </h4>
@@ -223,7 +244,11 @@ export default function FidelityPanel() {
                         <td>{r.day}</td>
                         <td>{r.symbol}</td>
                         <td className="down">Traded for real, not replayed</td>
-                        <td className="hint">The replay's view of that day was wrong — usually missing bars.</td>
+                        <td className="hint">
+                          {r.in_replayed_universe === false
+                            ? "Not in the universe the replay covered — it was never looking for this symbol."
+                            : "The replay saw this symbol and passed on it: either it had no bars for that day, or its view of the day differed."}
+                        </td>
                       </tr>
                     ))}
                     {report.backtest_only.map((r) => (

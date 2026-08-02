@@ -1244,7 +1244,16 @@ export interface FidelityReport {
   // measuring a simulation rather than a market.
   execution_is_measurable: boolean;
   matched: FidelityMatch[];
-  live_only: { symbol: string; day: string; entry_price: number | null; entry_reason: string }[];
+  live_only: {
+    symbol: string;
+    day: string;
+    entry_price: number | null;
+    entry_reason: string;
+    in_replayed_universe: boolean | null;
+  }[];
+  replayed_symbols: string[];
+  // The backtester's own account of why it opened nothing, when it opened nothing.
+  backtest_no_trade_reason?: string | null;
   backtest_only: { symbol: string; day: string; sim_entry: number | null; sim_exit_reason: string }[];
   rails_blocked: { symbol: string; day: string; blocked_by: string | null }[];
   decision: {
@@ -1260,6 +1269,9 @@ export interface FidelityReport {
     // ENTRY still counts; every exit-side number skips them, because the replay
     // was never given the chance to make that decision.
     manual_exits: number;
+    // Of the trades the replay didn't find, how many it could never have found
+    // because the symbol wasn't in the universe it replayed at all.
+    missed_outside_universe: number;
     enough_to_judge: boolean;
   };
   execution: {

@@ -174,6 +174,40 @@ def test_the_pnl_gap_shows_which_way_the_backtest_leans():
     assert out["execution"]["backtest_pnl_optimism_usd"] == 6.0  # (14-3) - (10-5)
 
 
+# --- telling a mismatched comparison from a broken backtester ---------------
+
+
+def test_a_symbol_outside_the_replayed_universe_is_flagged_as_such():
+    """The failure that produced a screen of 20 identical "the backtest missed
+    this" rows: the replay was pointed at a different set of names entirely, so
+    it was never going to find them. That is a mismatched comparison, not a
+    faulty backtester, and the two need completely different responses."""
+    out = compare(
+        [_live("AMC", "2026-07-20"), _live("MS", "2026-07-27")],
+        _result(),
+        replayed_symbols=["MS", "AIG", "ALL"],
+    )
+    by_symbol = {r["symbol"]: r for r in out["live_only"]}
+    assert by_symbol["AMC"]["in_replayed_universe"] is False
+    assert by_symbol["MS"]["in_replayed_universe"] is True
+    assert out["decision"]["missed_outside_universe"] == 1
+
+
+def test_without_a_known_universe_it_says_unknown_rather_than_guessing():
+    """No universe supplied (an imported export, say) must not silently report
+    every symbol as in-universe — that would hide the exact problem above."""
+    out = compare([_live("AMC", "2026-07-20")], _result())
+    assert out["live_only"][0]["in_replayed_universe"] is None
+    assert out["decision"]["missed_outside_universe"] == 0
+
+
+def test_the_replayed_universe_is_reported_back():
+    """So the screen can name what it was actually pointed at instead of leaving
+    you to infer it."""
+    out = compare([], _result(), replayed_symbols=["msft", "MS"])
+    assert out["replayed_symbols"] == ["MS", "MSFT"]
+
+
 # --- exits nobody's strategy chose ------------------------------------------
 
 
@@ -389,3 +423,43 @@ def test_an_imported_export_is_compared_instead_of_local_history(client, configu
     body = r.json()
     assert body["imported"] is True
     assert body["decision"]["live_trades"] == 1
+
+
+def test_the_replay_uses_the_bar_size_the_strategy_needs(client, configured, monkeypatch):
+    """It used to ask for daily bars regardless. A strategy needing intraday ones
+    then rejected every entry, took no trades, and the report blamed the
+    backtester for "missing" every real trade — when it had simply been handed a
+    resolution it could not trade on."""
+    from unittest.mock import AsyncMock, patch
+
+    from qt.api import backtest as backtest_api
+    from qt.broker.alpaca import AlpacaClient
+
+    strat = _strategy_body()
+    strat["params"]["entry"]["require_above_vwap"] = True   # intraday-only rule
+    sid = client.post("/api/strategies", json=strat).json()["id"]
+
+    from datetime import datetime, timedelta, timezone
+    with session_scope() as s:
+        s.add(Trade(
+            strategy_id=sid, mode="paper", symbol="NVDA", asset_class="stock",
+            status="closed", qty=10, notional=1000, entry_price=100.0, exit_price=110.0,
+            pnl=100.0, entry_reason="gain 5%", exit_reason="take-profit: +10%",
+            entry_at=datetime.now(timezone.utc) - timedelta(days=3),
+            exit_at=datetime.now(timezone.utc) - timedelta(days=2),
+        ))
+
+    seen: dict = {}
+    real_run = backtest_api.run
+
+    async def spy(body, **kw):
+        seen["timeframe"] = body.timeframe
+        return await real_run(body, **kw)
+
+    bars = [{"t": (datetime.now(timezone.utc) - timedelta(days=n)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+             "o": 100, "h": 100, "l": 100, "c": 100, "v": 1e6, "vw": 100} for n in (10, 9, 8)]
+    monkeypatch.setattr("qt.api.fidelity.run", spy)
+    with patch.object(AlpacaClient, "historical_bars", new=AsyncMock(return_value={"NVDA": bars})):
+        r = client.post("/api/fidelity/compare", json={"strategy_id": sid, "days": 30})
+    assert r.status_code == 200, r.text
+    assert seen["timeframe"] == "15Min", "a VWAP strategy must not be replayed on daily bars"
