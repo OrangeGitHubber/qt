@@ -945,25 +945,20 @@ tr.log-gap td {
    leftover space to the tracks — so widening made the forms HARDER to scan
    while leaving a void beside the text. Tables, charts and result panels still
    run the full width, which is what the extra room was for. */
-.backtest-form,
-form.editor,
-form.filters,
-.settings-form {
+/* An INPUT card holds a comfortable column; its content fills it.
+ *
+ * Two earlier attempts got this wrong and are worth naming. Letting the form
+ * stretch to the full 1600px put "Spread cost" 800px from "History" — auto-fit
+ * hands leftover space to the tracks. Capping the TEXT instead left a narrow
+ * column of prose inside a full-width bordered card, with half the card empty:
+ * worse again, because now the emptiness was framed.
+ *
+ * The card is the thing that should be bounded. Everything inside then fills it
+ * naturally, and OUTPUT — tables, charts, results — keeps the full shell width,
+ * which is what widening was for. */
+.card-form,
+form.card.editor {
   max-width: 62rem;
-}
-
-/* Long-form text keeps a readable measure even though the shell is now wide: a
-   paragraph spanning 1600px runs to ~200 characters a line, far past the 60-75
-   the eye tracks without losing its place. Tables and charts want the width;
-   sentences don't.
-
-   Block paragraphs only — `.hint` is also used as an inline <span>, where
-   max-width does nothing, so table cells and inline notes are untouched. */
-p.hint,
-p.field-help,
-.save-note,
-.steps li {
-  max-width: 78ch;
 }
 
 /* Short teaching intro at the top of a page. */

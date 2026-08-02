@@ -412,7 +412,7 @@ export default function Optimizer() {
         </h2>
       </div>
 
-      <div className="card">
+      <div className="card card-form">
         <p className="hint">
           A <strong>parameter search</strong> — not "AI". It runs the same backtester across many settings for a
           momentum strategy (min gain, trailing stop, stop-loss, take-profit) so you find configs that actually held up,

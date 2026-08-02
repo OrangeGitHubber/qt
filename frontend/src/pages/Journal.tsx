@@ -241,8 +241,13 @@ export default function Journal() {
                               </p>
                               <p className="hint">
                                 Closes the buy of {r.qty} {r.symbol} @ {money(r.entry_price)} entered{" "}
-                                {when(r.entry_at)} · P&L {r.pnl == null ? "—" : `$${r.pnl.toFixed(2)}`} · config v
-                                {r.config_version_id ?? "?"}
+                                {when(r.entry_at)} ·{" "}
+                                {/* A label and its number must not be split across a line —
+                                    keep them welded whatever the column width. */}
+                                <span className="nowrap">
+                                  P&amp;L {r.pnl == null ? "—" : `$${r.pnl.toFixed(2)}`}
+                                </span>{" "}
+                                · config v{r.config_version_id ?? "?"}
                               </p>
                             </>
                           ) : (

@@ -46,15 +46,17 @@ the page.
 
 The shell now goes to 1600px (about 85% of a 1920 screen), with the extra room
 going where it helps: **output — tables, charts, result panels — runs the full
-width; input doesn't.**
+width. Input pages keep a comfortable ~1030px card**, contents filling it edge to
+edge.
 
-That second half matters as much as the first. A form stretched across 1600px
-puts "Spread cost" 800 pixels from "History", which is harder to scan, not
-easier, and leaves the explanatory text as a lonely column with a void beside
-it. Forms now hold a comfortable ~990px column at any screen size, and long-form
-text keeps its own reading measure. Wider than 1600 isn't offered at all — past
-that the eye travels too far across a table row to keep a value with its
-heading.
+That second half took two tries to get right. Letting the form stretch across
+1600px put "Spread cost" 800 pixels from "History". Capping the *text* instead
+was worse — a narrow column of prose inside a full-width bordered card, with half
+the card empty and framed. Bounding the **card** is the answer; everything inside
+then fills it naturally.
+
+Wider than 1600 isn't offered at all: past that the eye travels too far across a
+table row to keep a value with its heading.
 
 **Journal now sits second in the menu, next to Dashboard.** Between them they're
 "what is happening" and "what happened" — the two you flip between most. The

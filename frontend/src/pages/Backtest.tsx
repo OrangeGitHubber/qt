@@ -554,7 +554,7 @@ export default function Backtest() {
 
       {mode === "portfolio" && (
         <>
-          <div className="card">
+          <div className="card card-form">
             <p className="hint">
               Runs <strong>several strategies at once over the same period, sharing ONE account</strong> and the same
               global risk rails the live engine enforces — max total positions, exposure capped at your equity (no
