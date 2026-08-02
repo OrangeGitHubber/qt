@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import { FidelityReport, getStrategies, runFidelity, StrategyRow } from "../api";
 import InfoTip from "../components/InfoTip";
-import NumberField from "../components/NumberField";
 import { IconWarn } from "../components/icons";
 
 /** Does the backtester actually reproduce what really happened?
@@ -20,13 +19,13 @@ import { IconWarn } from "../components/icons";
 export default function FidelityPanel() {
   const [strategies, setStrategies] = useState<StrategyRow[]>([]);
   const [strategyId, setStrategyId] = useState<number | null>(null);
-  const [days, setDays] = useState(90);
   const [mode, setMode] = useState("paper");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [report, setReport] = useState<FidelityReport | null>(null);
   // An explicit stretch, set by taking up the suggestion below. Null = use the
-  // "History (days)" box, which always ends now.
+  // suggested stable stretch. Null = the strategy's whole trading life, which
+  // the server works out from the journal.
   const [window, setWindow] = useState<{ start: string; end: string } | null>(null);
 
   useEffect(() => {
@@ -48,7 +47,6 @@ export default function FidelityPanel() {
       setReport(
         await runFidelity({
           strategy_id: strategyId,
-          days,
           mode,
           ...(window ? { window_start: window.start, window_end: window.end } : {}),
         }),
@@ -108,8 +106,12 @@ export default function FidelityPanel() {
           </span>
         </label>
         <label>
-          <span className="field-cap">History (days)</span>
-          <NumberField min={7} max={730} step={1} value={days} onChange={setDays} />
+          <span className="field-cap">Period</span>
+          <div className="field-static">Since this strategy started trading</div>
+          <span className="field-help">
+            Worked out from the journal rather than asked for: replaying further back than the strategy has existed
+            counts every trade the backtest takes there as one it invented, which says nothing about the backtester.
+          </span>
         </label>
       </div>
 
@@ -118,7 +120,7 @@ export default function FidelityPanel() {
           Comparing <strong>{window.start.slice(0, 10)}</strong> to <strong>{window.end.slice(0, 10)}</strong> — a
           stretch with no edits in it.{" "}
           <button type="button" className="btn-ghost" onClick={() => setWindow(null)}>
-            Use the last {days} days instead
+            Use the whole period instead
           </button>
         </p>
       )}
@@ -320,12 +322,11 @@ export default function FidelityPanel() {
             <p className="hint">
               <strong>
                 Compared {report.window.start.slice(0, 10)} to {report.window.end.slice(0, 10)} ({report.window.days}{" "}
-                days), not the {days} you asked for.
+                days).
               </strong>{" "}
-              This strategy's first {report.mode} activity was{" "}
-              {report.window.first_trade_at?.slice(0, 10)} — replaying before that would score every trade the
-              backtest took in a period the strategy didn't exist as one it invented, which says nothing about the
-              backtester and buries the days that do.
+              That is this strategy's whole {report.mode} life — its first activity was{" "}
+              {report.window.first_trade_at?.slice(0, 10)}. Anything earlier would be replaying a period it didn't
+              exist in.
             </p>
           )}
 

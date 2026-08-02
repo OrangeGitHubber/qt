@@ -481,3 +481,38 @@ def test_a_window_ending_before_the_strategy_existed_is_refused(client, configur
     })
     assert r.status_code == 422
     assert "no paper history" in r.json()["detail"]
+
+
+def test_the_window_defaults_to_the_strategys_whole_trading_life(client, configured):
+    """No day count is asked for. The window that makes sense is "since this
+    strategy started trading", the journal already knows it, and asking invites a
+    number wrong in the only direction that matters — too long."""
+    from unittest.mock import AsyncMock, patch
+
+    from qt.broker.alpaca import AlpacaClient
+
+    sid = client.post("/api/strategies", json=_strategy_body(3, ["DFLT"], "derived")).json()["id"]
+    now = datetime.now(timezone.utc)
+    # OLDER than any fixed fallback would reach. On a young strategy the clamp
+    # produces the same answer either way, so a short-lived fixture cannot tell
+    # "derived from the journal" from "a fixed span that got clamped" — and the
+    # mutation proving it survives is what showed that.
+    with session_scope() as s:
+        for days_ago in (200, 3):
+            s.add(Trade(
+                strategy_id=sid, mode="paper", symbol="DFLT", asset_class="stock",
+                status="closed", qty=10, notional=1000, entry_price=100.0, exit_price=110.0,
+                pnl=100.0, entry_reason="gain 5%", exit_reason="take-profit: +10%",
+                entry_at=now - timedelta(days=days_ago),
+                exit_at=now - timedelta(days=days_ago - 1),
+            ))
+
+    bars = [{"t": (now - timedelta(days=n)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+             "o": 100, "h": 100, "l": 100, "c": 100, "v": 1e6, "vw": 100} for n in (205, 204, 203)]
+    with patch.object(AlpacaClient, "historical_bars", new=AsyncMock(return_value={"DFLT": bars})):
+        # No `days` at all — the shape the UI now sends.
+        body = client.post("/api/fidelity/compare", json={"strategy_id": sid}).json()
+
+    assert body["window"]["days"] >= 199, "did not reach back to the strategy's first trade"
+    assert body["window"]["clamped_to_first_trade"] is False  # nothing to clamp — it IS the start
+    assert body["decision"]["live_trades"] == 2, "the oldest trade fell outside the window"

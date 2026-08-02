@@ -1403,6 +1403,18 @@ td.detail p {
   margin-top: 0.35rem;
 }
 
+/* A derived value shown where an input used to be — same box and rhythm as the
+   controls beside it, but plainly not editable. Dashed rather than solid so it
+   reads as "worked out for you" instead of "disabled", which invites a hunt for
+   the thing that would re-enable it. */
+.field-static {
+  padding: 0.45rem 0.6rem;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  color: var(--muted);
+  background: var(--bg);
+}
+
 /* Symbol picker */
 .picker {
   position: relative;

@@ -139,6 +139,21 @@ The P&L column in the journal is still gross, and now says so.
 but don't post real fee activities, so on paper this job runs, finds nothing,
 and correctly reports "no fees" rather than inventing them.
 
+## The fidelity window is worked out, not asked for (2026-08-02)
+
+The "History (days)" box is gone. Once the window was being clamped to the
+strategy's own lifetime anyway, the field implied a choice that no longer
+existed — and the number it invited was wrong in the only direction that
+matters: too long.
+
+The comparison now runs over **the strategy's whole trading life** in the mode
+you picked, worked out from the journal. It shows the period it used and when
+that strategy first did anything, so nothing is hidden behind the automation.
+
+There are still two ways to narrow it, both of which come to you rather than
+being typed: the suggested stretch between edits, and the button that returns you
+to the whole period.
+
 ## Fidelity now reads as a comparison, and stops replaying history that never happened (2026-08-02)
 
 Two problems, and the second was making the first look worse than it was.

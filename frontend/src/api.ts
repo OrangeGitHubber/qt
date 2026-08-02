@@ -1357,7 +1357,9 @@ export interface FidelityReport {
 
 export const runFidelity = (body: {
   strategy_id: number;
-  days: number;
+  // Omitted normally: the server derives the window from the strategy's own
+  // history. Only meaningful as a deliberate cap.
+  days?: number;
   mode: string;
   // An explicit stretch, which `days` cannot express — the useful comparison on
   // an edited strategy is a period that ENDED in the past.

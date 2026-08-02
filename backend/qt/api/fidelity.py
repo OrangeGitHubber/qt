@@ -54,7 +54,12 @@ router = APIRouter(prefix="/api/fidelity", tags=["fidelity"])
 
 class CompareBody(BaseModel):
     strategy_id: int
-    days: int = Field(default=90, ge=7, le=730)
+    # Optional, and normally left alone. The window that makes sense is "since
+    # this strategy started trading" — asking the user for a number invites one
+    # that is wrong in the only direction that matters (too long), and the answer
+    # is already in the journal. Kept so an older frontend still works, and as a
+    # cap for anyone who deliberately wants less.
+    days: int | None = Field(default=None, ge=1, le=730)
     # An explicit window, which `days` cannot express: the useful comparison on a
     # heavily edited strategy is a stretch BETWEEN edits, and that stretch ended
     # in the past. Given both, `days` is ignored.
@@ -702,17 +707,27 @@ async def compare(
     # start/end when given (the only way to name a stretch that ENDED in the
     # past), otherwise the last `days` days. Computed before the journal read
     # because both ends bound which trades are in scope.
-    since = _aware(body.window_start) or (datetime.now(timezone.utc) - timedelta(days=body.days))
+    began = None if body.imported_trades is not None else first_trade_at(session, strategy, body.mode)
     until = _aware(body.window_end) or datetime.now(timezone.utc)
+    # Precedence: an explicit stretch (the "use that window" button), then a
+    # deliberate day count, then the strategy's own lifetime — which is the case
+    # that needs no input and is right nearly always.
+    if body.window_start is not None:
+        since = _aware(body.window_start)
+    elif body.days is not None:
+        since = until - timedelta(days=body.days)
+    elif began is not None:
+        since = began
+    else:
+        # No history at all. Any window is empty; the 422 below explains it
+        # better than an arbitrary number would.
+        since = until - timedelta(days=90)
     if until <= since:
         raise HTTPException(status_code=422, detail="The window ends before it starts.")
 
-    # CLAMPED to the strategy's own lifetime. Asking for 90 days of a strategy
-    # that has been running for five replays 85 days in which it did not exist,
-    # and every trade the replay takes there is scored as one it invented. Those
-    # are not backtester faults, there can be dozens of them, and they bury the
-    # few days that actually carry information.
-    began = None if body.imported_trades is not None else first_trade_at(session, strategy, body.mode)
+    # Clamped even when asked for more: replaying before the strategy existed
+    # scores every trade the backtest takes there as one it invented — dozens of
+    # them, none about the backtester, burying the days that are.
     clamped = bool(began and began > since)
     if clamped:
         since = began
@@ -805,10 +820,12 @@ async def compare(
         result = await run(
             BacktestBody(
                 strategy_id=strategy.id,
+                # The window is passed explicitly, so `days` — which only ever
+                # means "back from now" — would be redundant here, and wrong once
+                # the window ends in the past.
                 window_start=since,
                 window_end=until,
                 symbols=symbols,
-                days=body.days,
                 scanner_replay=scanner_replay,
                 timeframe=_timeframe_for(json.loads(strategy.params)),
                 starting_cash=max(strategy.sleeve_usd, 100),
