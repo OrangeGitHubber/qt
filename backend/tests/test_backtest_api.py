@@ -359,6 +359,43 @@ def test_scanner_replay_crypto_gates_to_cached_movers_by_utc_day(client, configu
     assert body["open_positions"][0]["entry_day"] == d1   # UTC-day bucket, not ET
 
 
+def test_a_crypto_scanner_plus_watchlist_strategy_replays_both(client, configured, monkeypatch):
+    """The same two-universe rule on the CRYPTO side, off the crypto tables and
+    UTC day buckets. ETH rose the same +5% but never made a movers list, so only
+    the pinned watchlist keeps it eligible; BTC can only come from the replay."""
+    eng = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    barcache.CacheBase.metadata.create_all(eng)
+    Sess = sessionmaker(bind=eng, expire_on_commit=False)
+    monkeypatch.setattr(barcache, "_engine", eng)
+    monkeypatch.setattr(barcache, "_Session", Sess)
+    d0 = (datetime.now(timezone.utc) - timedelta(days=6)).strftime("%Y-%m-%d")
+    d1 = (datetime.now(timezone.utc) - timedelta(days=5)).strftime("%Y-%m-%d")
+    with Sess() as s:
+        for sym in ("BTC/USD", "ETH/USD"):
+            barcache.save_daily_bars(s, sym, [
+                {"t": f"{d0}T00:00:00Z", "o": 100, "h": 100, "l": 100, "c": 100, "v": 1e6, "vw": 100},
+                {"t": f"{d1}T00:00:00Z", "o": 105, "h": 105, "l": 105, "c": 105, "v": 1e6, "vw": 105},
+            ], model=barcache.CryptoDailyBar)
+        barcache.store_movers(s, d1, [("BTC/USD", 5.0, 105.0, 1e8)], model=barcache.CryptoDailyMover)
+        s.commit()
+
+    with session_scope() as s:
+        s.add(WatchlistItem(symbol="ETH/USD", asset_class="crypto"))
+    try:
+        sid = client.post(
+            "/api/strategies", json={**_strategy("crypto"), "universe": "both"}
+        ).json()["id"]
+        fetch = AsyncMock(side_effect=Exception("no benchmark in test"))
+        with patch.object(AlpacaClient, "historical_bars", new=fetch):
+            body = client.post("/api/backtest", json={
+                "strategy_id": sid, "days": 30, "starting_cash": 50000, "spread_pct": 0}).json()
+        assert body["scanner_replay"] is True
+        assert {p["symbol"] for p in body["open_positions"]} == {"BTC/USD", "ETH/USD"}
+    finally:
+        with session_scope() as s:
+            s.query(WatchlistItem).filter(WatchlistItem.symbol == "ETH/USD").delete()
+
+
 def test_scanner_replay_crypto_prefers_intraday_bars(client, configured, monkeypatch):
     """Crypto replay uses cached 15-min bars (UTC-day bucketed) when present."""
     eng = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
