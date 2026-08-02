@@ -36,6 +36,28 @@ The P&L column in the journal is still gross, and now says so.
 but don't post real fee activities, so on paper this job runs, finds nothing,
 and correctly reports "no fees" rather than inventing them.
 
+## Scanner replay ignored your scanner settings (2026-08-01)
+
+TRUMP/USD was on the **never trade these** list, and a backtest kept buying it.
+SHIB/USD sat at $0.000009 against a $0.05 price floor, and it was traded too.
+
+The historical "today's risers" are reconstructed once and cached, and the
+filters were applied only at that moment. Anything you changed afterwards — a
+symbol added to the exclude list, a price or volume floor raised — never reached
+the replay. So the backtest was trading names the live engine is configured never
+to touch, and reporting a result for a strategy you couldn't actually run. Worse
+than a wrong number: a plausible one.
+
+The exclusion had a second problem underneath. The scanner config holds
+**TRUMP/USD** (what you typed) while the bar cache holds **TRUMPUSD** (what
+Alpaca's bars endpoint returns), so even a correctly-placed check would have
+matched nothing. Symbols are now compared with the slash removed.
+
+Every scanner filter is re-checked when the replay reads its universe, so
+changing a setting takes effect on your next backtest with **no re-sweep**. Sweeps
+also stop storing banned names in the first place. Both the backtest and the
+optimizer read the live config.
+
 ## Wider layout, and Journal moved next to Dashboard (2026-08-01)
 
 The app was capped at 1080px, which on a 1920 monitor used barely half the

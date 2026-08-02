@@ -251,7 +251,13 @@ async def start_optimize(
     if scanner_replay:
         from qt.api.backtest import load_scanner_replay_dataset
 
-        ds = load_scanner_replay_dataset(strategy.asset_class, body.days, replay_top_n)
+        from qt.services import scanner as scanner_svc
+
+        # Same rule as the backtest: search the universe the engine would really
+        # trade, not one frozen at sweep time.
+        ds = load_scanner_replay_dataset(
+            strategy.asset_class, body.days, replay_top_n, scanner_svc.get_config(session)
+        )
         prebuilt_bars = ds.bars
         eligible_by_day = ds.eligible_by_day
         timeframe = ds.timeframe  # 15Min if intraday cached, else 1Day — from the cache

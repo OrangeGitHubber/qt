@@ -187,6 +187,14 @@ class DayQuote:
     high: float | None = None  # intraday peak; when set, ranking uses the peak gain
 
 
+def _norm_symbol(symbol: str) -> str:
+    """Match symbols across the two spellings in play: the scanner config holds
+    'TRUMP/USD' (what you typed), the bar cache holds whatever Alpaca's bars
+    endpoint returned, which for crypto is slash-less. Without this an exclusion
+    silently does nothing."""
+    return symbol.replace("/", "").strip().upper()
+
+
 def rank_movers(
     quotes: list[DayQuote],
     top_n: int,
@@ -196,14 +204,20 @@ def rank_movers(
     min_price: float = 0.0,
     max_price: float = 0.0,
     min_dollar_volume: float = 0.0,
+    exclude: set[str] | None = None,
 ) -> list[tuple[str, float, float, float]]:
     """Reconstruct a day's 'today's risers': the top-N symbols by % gain that
     clear the scanner's filters. Returns (symbol, change_pct, price, $ volume),
     ranked highest-gain first. Mirrors the live scanner's filter order so a
     replay matches what the scanner would have surfaced that day."""
     ranked: list[tuple[str, float, float, float]] = []
+    banned = {_norm_symbol(s) for s in (exclude or set())}
     for q in quotes:
         if not q.prev_close or not q.close:
+            continue
+        # Also filtered on the way IN, so a sweep stops spending rows on names
+        # you've banned. Read-time filtering is what fixes an EXISTING cache.
+        if banned and _norm_symbol(q.symbol) in banned:
             continue
         # Rank on the intraday PEAK (daily high) when we have it: an intraday
         # scanner flags a stock that spiked +40% at 10am even if it closed flat,
@@ -279,7 +293,15 @@ def top_movers(sess: OrmSession, day: str, model=DailyMover) -> list:
 
 
 def movers_between(
-    sess: OrmSession, start_day: str, top_n: int | None = None, model=DailyMover
+    sess: OrmSession,
+    start_day: str,
+    top_n: int | None = None,
+    model=DailyMover,
+    *,
+    exclude: set[str] | None = None,
+    min_price: float = 0.0,
+    max_price: float = 0.0,
+    min_dollar_volume: float = 0.0,
 ) -> dict[str, list[str]]:
     """{day: [symbols ranked]} for all reconstructed days on/after start_day —
     the per-day 'today's risers' a scanner-replay backtest gates entries on.
@@ -287,15 +309,35 @@ def movers_between(
     `top_n` narrows each day to its best N at READ time: the cache stores a
     generous set (see barsweep.SWEEP_STORE_TOP_N), so the backtest can dial the
     riser count up or down instantly without re-sweeping or re-ranking. None
-    returns everything stored."""
+    returns everything stored.
+
+    THE FILTERS ARE RE-APPLIED HERE FOR THE SAME REASON. A mover list is frozen
+    at sweep time, so a symbol added to "never trade these" — or a price floor
+    raised afterwards — went on being replayed regardless: the backtest traded
+    names the live engine is configured never to touch, and reported a result for
+    a strategy you could not actually run. Every filter is re-checked against the
+    row's stored price and volume, so changing a scanner setting takes effect on
+    the next backtest with no re-sweep.
+
+    The exclude list is matched loosely on purpose: the cache stores 'TRUMPUSD'
+    where the scanner config holds 'TRUMP/USD'."""
     rows = (
         sess.query(model)
         .filter(model.day >= start_day)
         .order_by(model.day, model.rank)
         .all()
     )
+    banned = {_norm_symbol(s) for s in (exclude or set())}
     out: dict[str, list[str]] = {}
     for m in rows:  # rows are rank-ordered, so appending while under the cap keeps the top N
+        if banned and _norm_symbol(m.symbol) in banned:
+            continue
+        if min_price and m.price < min_price:
+            continue
+        if max_price and m.price > max_price:
+            continue
+        if min_dollar_volume and m.dollar_volume < min_dollar_volume:
+            continue
         lst = out.setdefault(m.day, [])
         if top_n is None or len(lst) < top_n:
             lst.append(m.symbol)

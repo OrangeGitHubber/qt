@@ -97,7 +97,9 @@ class ScannerReplayDataset:
     intraday_covered: int
 
 
-def load_scanner_replay_dataset(asset_class: str, days: int, replay_top_n: int) -> ScannerReplayDataset:
+def load_scanner_replay_dataset(
+    asset_class: str, days: int, replay_top_n: int, scanner_cfg: dict | None = None
+) -> ScannerReplayDataset:
     """Read the cached historical top-N risers + their bars for `days` back.
     Prefers cached INTRADAY bars (so intraday exits behave); falls back to daily
     when no intraday sweep has been run. Fully offline. Raises HTTPException 422
@@ -111,6 +113,7 @@ def load_scanner_replay_dataset(asset_class: str, days: int, replay_top_n: int) 
     intraday_model = barcache.CryptoIntradayBar if crypto else barcache.IntradayBar
     daily_stamp = "T12:00:00Z" if crypto else "T14:00:00Z"
     market = "crypto" if crypto else "stock"
+    market_key = "crypto" if crypto else "stocks"  # the scanner config's own key
     benchmark_symbol = "BTC/USD" if crypto else "SPY"
 
     try:
@@ -121,7 +124,18 @@ def load_scanner_replay_dataset(asset_class: str, days: int, replay_top_n: int) 
     start_day = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%d")
     cache = barcache.session()
     try:
-        movers = barcache.movers_between(cache, start_day, top_n=replay_top_n, model=mover_model)
+        # The replay's universe must obey the SAME scanner settings the live
+        # engine obeys. Read them now rather than trusting whatever was in force
+        # when the sweep ran — an exclusion added since, or a price floor raised,
+        # would otherwise keep feeding the backtest names it must never trade.
+        f = scanner_cfg[market_key] if scanner_cfg else {}
+        movers = barcache.movers_between(
+            cache, start_day, top_n=replay_top_n, model=mover_model,
+            exclude=set(scanner_cfg.get("exclude_symbols") or []) if scanner_cfg else set(),
+            min_price=float(f.get("min_price") or 0),
+            max_price=float(f.get("max_price") or 0),
+            min_dollar_volume=float(f.get("min_dollar_volume") or 0),
+        )
         if not movers:
             asset = "crypto" if crypto else "stock"
             raise HTTPException(
@@ -579,8 +593,11 @@ async def _scanner_replay(
     # Both off the event loop: the dataset read sweeps the whole bar cache and the
     # replay is pure CPU. See the note on run()'s call.
     _report("Reading cached movers…")
+    from qt.services import scanner as scanner_svc
+
+    cfg = scanner_svc.get_config(session)
     ds = await asyncio.to_thread(
-        load_scanner_replay_dataset, strategy.asset_class, body.days, body.replay_top_n
+        load_scanner_replay_dataset, strategy.asset_class, body.days, body.replay_top_n, cfg
     )
 
     _report("Replaying history…", 0)
