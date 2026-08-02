@@ -2674,6 +2674,19 @@ details.strat-fold > summary .strat-head .hint {
   color: var(--text);
   background: rgba(46, 204, 113, 0.08);
 }
+
+/* The draft's name, in the full width of a results card. Left unbounded the
+   input stretches the whole card, which reads as a paragraph box rather than a
+   one-line name. Wide enough that a name AT the 80-character cap is still
+   visible end to end — you're being asked to check the name, so it has to fit. */
+.draft-name-field {
+  max-width: 42rem;
+  margin-top: 0;
+}
+.draft-name-field + .hint {
+  margin-top: 0.35rem;
+}
+
 .plateau-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));

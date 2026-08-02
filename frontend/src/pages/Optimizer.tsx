@@ -53,6 +53,29 @@ function pct(v: number | null | undefined): string {
   return v != null ? `${v}%` : "—";
 }
 
+// Mirrors StrategyBody.name in qt/api/strategies.py. Kept client-side too because
+// the only place the cap used to bite was a 422 AFTER the search had run — the
+// work felt lost over a name the user never chose.
+const NAME_MAX = 80;
+const DRAFT_SUFFIX = " (search draft)";
+
+// The default draft name has to FIT, not just look sensible: a strategy called
+// "crypto - intraday scalper good tester v2 with ATR" plus the suffix is already
+// over the cap. Trim the base, never the suffix — the suffix is what tells you at
+// a glance which rows on the Strategies tab came out of a search.
+function defaultDraftName(base: string): string {
+  const room = NAME_MAX - DRAFT_SUFFIX.length;
+  const trimmed = base.trim();
+  if (trimmed.length <= room) return trimmed + DRAFT_SUFFIX;
+  // Leave one character for the ellipsis, then snap back to a word boundary if
+  // one is close by — a cut mid-word reads as corruption. Only "close by",
+  // because a name with no spaces near the end would otherwise lose most of itself.
+  let head = trimmed.slice(0, room - 1);
+  const lastSpace = head.lastIndexOf(" ");
+  if (lastSpace >= room - 12) head = head.slice(0, lastSpace);
+  return `${head.trimEnd()}…${DRAFT_SUFFIX}`;
+}
+
 // --- Which bar size this strategy's rules demand (mirrors the backend guards in
 // qt/api/backtest.py: _uses_daily_only_signals / _has_price_triggered_exit /
 // _mixed_resolution, and the same helpers on the Backtest page). ---
@@ -219,6 +242,9 @@ export default function Optimizer() {
   const [status, setStatus] = useState<OptimizerStatus | null>(null);
   const [saveMsg, setSaveMsg] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  // Seeded from the tested strategy once a search finishes; yours to edit before
+  // saving, so the name is decided BEFORE the request rather than rejected after it.
+  const [draftName, setDraftName] = useState("");
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Basket sweep: the same search across EVERY basket, ranked by out-of-sample
@@ -303,6 +329,14 @@ export default function Optimizer() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [strategyId, strategies]);
+
+  // Re-seed the draft name whenever a fresh result lands or you switch strategies.
+  // Not on every render: once the field exists, anything you typed into it is
+  // yours to keep until the thing it describes changes underneath you.
+  useEffect(() => {
+    if (result && strategy) setDraftName(defaultDraftName(strategy.name));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [result, strategy?.name]);
 
   function stopPolling() {
     if (pollRef.current) {
@@ -422,6 +456,10 @@ export default function Optimizer() {
 
   async function saveDraft() {
     if (!result || !strategy) return;
+    // The button is disabled while this is empty; belt and braces so a blank name
+    // can never reach the API.
+    const name = draftName.trim();
+    if (!name) return;
     setSaving(true);
     setSaveMsg(null);
     try {
@@ -429,7 +467,7 @@ export default function Optimizer() {
       // create endpoint always makes it DISABLED — a hypothesis to review, tweak,
       // and walk up the shadow -> paper ladder. Nothing is enabled automatically.
       const draft = await createStrategy({
-        name: `${strategy.name} (search draft)`,
+        name,
         asset_class: strategy.asset_class,
         universe: strategy.universe,
         basket_id: strategy.basket_id,
@@ -485,6 +523,10 @@ export default function Optimizer() {
         (sweepStatus.current_basket ? ` — ${sweepStatus.current_basket}` : "");
 
   const hb = result?.hold_benchmark_comparison;
+
+  // Whitespace isn't a name. maxLength caps the other end, so this is the only
+  // way the field can be invalid.
+  const draftNameOk = draftName.trim().length > 0;
 
   return (
     <>
@@ -861,7 +903,21 @@ export default function Optimizer() {
             ))}
 
             <div style={{ marginTop: 12 }}>
-              <button type="button" onClick={saveDraft} disabled={saving}>
+              <label className="field draft-name-field">
+                Name for the draft
+                <input
+                  value={draftName}
+                  maxLength={NAME_MAX}
+                  onChange={(e) => setDraftName(e.target.value)}
+                  placeholder="e.g. my strategy (search draft)"
+                />
+              </label>
+              <p className={`hint${draftNameOk ? "" : " warn"}`}>
+                {draftNameOk
+                  ? `${draftName.trim().length} of ${NAME_MAX} characters.`
+                  : "A draft needs a name before it can be saved."}
+              </p>
+              <button type="button" onClick={saveDraft} disabled={saving || !draftNameOk}>
                 {saving ? "Saving…" : "Save as draft strategy"}
               </button>
               <p className="hint">

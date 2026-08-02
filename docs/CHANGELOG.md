@@ -3,6 +3,30 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## You name the search draft yourself, before it's saved (2026-08-02)
+
+Saving a draft off the optimizer used to fail for anyone with a descriptive
+strategy name. The draft was named for you — your strategy's name plus
+"(search draft)" — and strategy names are capped at 80 characters, so
+"crypto - intraday scalper good tester v2 with ATR" plus the suffix simply
+didn't fit. Worse, you only found out **after** the search had finished, when
+you clicked Save and got a validation error about a name you never chose. The
+search wasn't lost, but it certainly felt like it.
+
+The Save block now has a **name field**, filled in with that same default —
+except the default is now guaranteed to fit. When the strategy's own name is
+too long it's shortened (at a word boundary, with an ellipsis) rather than the
+"(search draft)" part being dropped, because that suffix is how you spot
+search-born drafts in your strategy list.
+
+The field is capped at 80 characters as you type and shows how many you've
+used, and Save stays disabled until there's an actual name in there. So the
+name is settled before anything is sent, instead of being rejected afterwards.
+
+Everything else about the flow is unchanged: the draft is still created
+**disabled**, still mirrors the tested strategy's universe and sizing, and
+still records which strategy it came from and over how many days.
+
 ## Real broker fees are now recorded — per day, not per trade (2026-08-01)
 
 The previous entry ended on "still not recorded: fees on actual paper/live
