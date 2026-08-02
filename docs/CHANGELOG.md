@@ -60,6 +60,41 @@ The P&L column in the journal is still gross, and now says so.
 but don't post real fee activities, so on paper this job runs, finds nothing,
 and correctly reports "no fees" rather than inventing them.
 
+## Portfolio backtests get mixed resolution; the optimizer stops searching blind (2026-08-02)
+
+The two gaps left open by this week's bar-resolution work.
+
+**A portfolio can now be replayed on intraday bars.** Until now a book holding
+any daily-signal strategy (MACD, RSI, or — since this week — ATR) was refused
+intraday bars outright, because a portfolio replays one shared bar stream and
+there was no way to give one strategy daily signals over it.
+
+That turned out to be a smaller problem than it looked. Every strategy in a
+portfolio replays the *same* stream; only the indicator **source** differs, and
+that is already per-strategy because each carries its own periods. The machinery
+to read indicators from a daily series had been there all along — the portfolio
+simply never handed one over. It does now, so a portfolio behaves exactly like a
+single-strategy mixed run: stops checked on 15-minute bars, signals from
+completed daily ones.
+
+Still refused, deliberately: a daily-signal strategy with **no** stop, trailing
+stop or take-profit. There is nothing for the finer bars to resolve, so it would
+pay for a second download and change no result.
+
+**The optimizer no longer searches over daily-filled days.** It had the same
+blind spot the backtest did: days a position was held after its symbol left the
+top-N list were covered by daily bars, which resolve an exit only once a day —
+so every config was judged on exits that couldn't fire when they really would
+have.
+
+It can't discover holdings per config (hundreds run, each holding different
+names for different spans), so it probes once with your strategy as it stands —
+the anchor every search grid is built around, and therefore close to everything
+the search tries — fetches those days, and searches on the better data.
+
+Building this turned up a crash that would have hit every scanner-replay search
+whose cache was already complete. It's fixed, and covered by a test.
+
 ## Review pass: accurate warnings, readable line lengths (2026-08-02)
 
 Two things caught while reviewing the week's changes.

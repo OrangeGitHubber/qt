@@ -1095,6 +1095,7 @@ def run_portfolio_backtest(
     spread_pct: float = 0.1,
     market: str = "stock",
     sim_start: datetime | None = None,
+    daily_bars_by_strategy: dict[int, dict[str, list[dict]]] | None = None,
 ) -> dict:
     """Portfolio simulation: replay N strategies over ONE merged timeline sharing
     a SINGLE cash account and the GLOBAL risk rails — exactly like the live engine,
@@ -1132,13 +1133,27 @@ def run_portfolio_backtest(
         for sid in strat_by_id
     }
     # Each strategy carries its own MACD/ATR periods/toggles; annotate its own bars.
-    # (Mixed-resolution replay — daily signals over an intraday timeline — is
-    # single-strategy only for now: run_backtest takes daily_bars_by_symbol, this
-    # merged-timeline run does not. A portfolio still picks ONE resolution.)
+    #
+    # MIXED RESOLUTION. `daily_bars_by_strategy` makes this a mixed run: the
+    # merged timeline stays intraday for everyone, while MACD, RSI and ATR are
+    # read off each strategy's DAILY series — the same arrangement run_backtest
+    # gives a single strategy, and the same reason. The live engine computes all
+    # three from completed daily bars; a "14-period ATR" over 15-minute bars
+    # spans three and a half hours, not fourteen days.
+    #
+    # This was thought to need a per-strategy timeline, which it does not. Every
+    # strategy replays the SAME stream; only the indicator SOURCE differs, and
+    # that is per-strategy already because each carries its own periods. The
+    # annotators have taken a daily source all along — the portfolio simply never
+    # passed one. Look-ahead safety is unchanged: _daily_frontier only ever reads
+    # daily bars completed BEFORE each replay bar's own day.
     for sid, prepared in prepared_by_strategy.items():
-        _annotate_macd(prepared, strat_by_id[sid]["params"])
-        _annotate_atr(prepared, bars_by_strategy.get(sid) or {}, strat_by_id[sid]["params"])
-        _annotate_rsi(prepared, strat_by_id[sid]["params"])
+        daily = (daily_bars_by_strategy or {}).get(sid)
+        _annotate_macd(prepared, strat_by_id[sid]["params"], daily)
+        _annotate_atr(
+            prepared, bars_by_strategy.get(sid) or {}, strat_by_id[sid]["params"], daily
+        )
+        _annotate_rsi(prepared, strat_by_id[sid]["params"], daily)
     events: dict[datetime, list[tuple[int, str, dict]]] = {}
     for sid, series_map in prepared_by_strategy.items():
         for symbol, series in series_map.items():

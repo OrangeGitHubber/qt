@@ -678,17 +678,22 @@ async def run_portfolio(
     daily_signalled = [
         s for s in strategies if _uses_daily_only_signals(json.loads(s.params))
     ]
-    if body.timeframe in ("15Min", "1Hour") and daily_signalled:
-        culprit = daily_signalled[0]
-        # A portfolio replays ONE bar stream shared by every strategy, so it has
-        # no mixed-resolution escape hatch the way a single-strategy run does.
+    # MIXED RESOLUTION rescues a daily-signalled strategy on an intraday timeframe:
+    # the replay stays intraday for everyone while that strategy's MACD/RSI/ATR
+    # come from its own daily series. It only helps a strategy with something
+    # price-triggered to gain from intraday bars, though — one with no stop at all
+    # learns nothing from the finer stream and should stay on daily.
+    mixed_portfolio = bool(daily_signalled) and body.timeframe in ("15Min", "1Hour")
+    unrescuable = [
+        s for s in daily_signalled if not _has_price_triggered_exit(json.loads(s.params))
+    ]
+    if body.timeframe in ("15Min", "1Hour") and unrescuable:
+        culprit = unrescuable[0]
         raise HTTPException(
             status_code=422,
-            detail=f"\"{culprit.name}\" uses {daily_signal_names(json.loads(culprit.params))}, "
-            "which the live engine reads off completed DAILY bars — on intraday bars it would be "
-            "measured over hours instead of days and wouldn't match live. Use 1 Day, or backtest "
-            "that strategy on its own (a single-strategy run replays intraday bars while still "
-            "taking those signals from daily ones).",
+            detail=f"\"{culprit.name}\" uses {daily_signal_names(json.loads(culprit.params))} "
+            "and has no stop, trailing stop or take-profit — so an intraday replay would measure "
+            "that signal over hours instead of days and gain nothing in return. Use 1 Day.",
         )
 
     # Resolve each strategy's own universe, then fetch bars ONCE per asset class.
@@ -712,7 +717,8 @@ async def run_portfolio(
     # 422-blocked there anyway), so warm-up is a daily-only concern.
     warmup = (
         WARMUP_DAYS
-        if body.timeframe == "1Day" and any(_needs_warmup(json.loads(s.params)) for s in strategies)
+        if (body.timeframe == "1Day" or mixed_portfolio)
+        and any(_needs_warmup(json.loads(s.params)) for s in strategies)
         else 0
     )
     start = (window_start - timedelta(days=warmup)).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -723,6 +729,7 @@ async def run_portfolio(
             if sym not in by_class[s.asset_class]:
                 by_class[s.asset_class].append(sym)
     bars_cache: dict[str, dict[str, list]] = {}
+    daily_cache: dict[str, dict[str, list]] = {}
     try:
         for asset_class, syms in by_class.items():
             if syms:
@@ -730,9 +737,24 @@ async def run_portfolio(
                 # is the HEAVIEST fetch in the app — every symbol of every picked
                 # strategy — and it was the one path still re-downloading the same
                 # history on every run.
-                bars_cache[asset_class] = await barfetch.fetch_bars(
-                    client, syms, asset_class, body.timeframe, start
-                )
+                if mixed_portfolio:
+                    # Two fetches with deliberately different windows, exactly like
+                    # the single-strategy mixed run: the DAILY series reaches back
+                    # over the warm-up so indicators are alive from day one, while
+                    # the intraday series covers only the tested window (fetching
+                    # warm-up intraday too would multiply the download for bars
+                    # that could never trade).
+                    daily_cache[asset_class] = await barfetch.fetch_bars(
+                        client, syms, asset_class, "1Day", start
+                    )
+                    bars_cache[asset_class] = await barfetch.fetch_bars(
+                        client, syms, asset_class, body.timeframe,
+                        window_start.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                    )
+                else:
+                    bars_cache[asset_class] = await barfetch.fetch_bars(
+                        client, syms, asset_class, body.timeframe, start
+                    )
     except AlpacaError as exc:
         raise HTTPException(status_code=502, detail=f"Bar download failed ({exc.status_code}): {exc}")
 
@@ -740,6 +762,16 @@ async def run_portfolio(
         s.id: {sym: bars_cache.get(s.asset_class, {}).get(sym, []) for sym in symbols_by_strategy[s.id]}
         for s in strategies
     }
+    # Only strategies that actually read a daily indicator get a daily series;
+    # the rest are untouched, so a plain momentum book replays exactly as before.
+    daily_by_strategy = {
+        s.id: {
+            sym: daily_cache.get(s.asset_class, {}).get(sym, [])
+            for sym in symbols_by_strategy[s.id]
+        }
+        for s in strategies
+        if mixed_portfolio and _needs_warmup(json.loads(s.params))
+    } or None
     strategy_dicts = [
         {
             "id": s.id,
@@ -765,11 +797,15 @@ async def run_portfolio(
         strategy_dicts, bars_by_strategy, get_risk(session),
         starting_cash=body.starting_cash, spread_pct=body.spread_pct, market=market,
         sim_start=window_start if warmup else None,
+        daily_bars_by_strategy=daily_by_strategy,
     )
     if "error" in result:
         raise HTTPException(status_code=422, detail=result["error"])
 
     result["timeframe"] = body.timeframe
+    result["mixed_resolution"] = bool(daily_by_strategy)
+    if daily_by_strategy:
+        result["signal_timeframe"] = "1Day"
     result["days"] = body.days
     return result
 

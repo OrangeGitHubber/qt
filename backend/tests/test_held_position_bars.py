@@ -193,3 +193,88 @@ def test_the_replay_fetches_the_held_days_it_only_had_daily_bars_for(client, con
             s, ["BTC/USD"], days[0], model=barcache.CryptoIntradayBar
         )["BTC/USD"]
     assert any(b["t"].startswith(days[2]) for b in cached)
+
+
+def test_the_optimizer_also_fetches_bars_for_days_the_base_strategy_held(configured, monkeypatch):
+    """The search had the same blind spot as the backtest: it searched over days
+    covered only by daily fills, so every config was judged on exits that could
+    resolve just once a day.
+
+    It can't discover holdings per config — hundreds run, each holding different
+    names — so it probes once with the BASE strategy, the anchor every grid is
+    built around, and fetches those days. Driven through _run_search directly
+    because TestClient tears the event loop down when the response returns,
+    cancelling the background task."""
+    import asyncio
+    from datetime import datetime, timedelta, timezone
+    from unittest.mock import patch
+
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from sqlalchemy.pool import StaticPool
+
+    from qt.api import optimizer as optimizer_api
+    from qt.api.backtest import load_scanner_replay_dataset, replay_inputs
+    from qt.broker.alpaca import AlpacaClient
+    from qt.services import barcache
+    from qt.services.engine import RISK_DEFAULTS
+
+    eng = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    barcache.CacheBase.metadata.create_all(eng)
+    Sess = sessionmaker(bind=eng, expire_on_commit=False)
+    monkeypatch.setattr(barcache, "_engine", eng)
+    monkeypatch.setattr(barcache, "_Session", Sess)
+
+    risk = dict(RISK_DEFAULTS, max_total_exposure_usd=1_000_000, max_daily_loss_usd=1_000_000)
+    now = datetime.now(timezone.utc)
+    days = [(now - timedelta(days=n)).strftime("%Y-%m-%d") for n in (8, 7, 6, 5, 4)]
+    riser = days[1]
+
+    def ib(ts, c):
+        return {"t": ts, "o": c, "h": c, "l": c, "c": c, "v": 1e5, "vw": c}
+
+    with Sess() as s:
+        barcache.save_intraday_bars(s, "BTC/USD", [
+            ib(f"{days[0]}T12:00:00Z", 100.0), ib(f"{riser}T12:00:00Z", 106.0),
+        ], model=barcache.CryptoIntradayBar)
+        barcache.save_daily_bars(s, "BTC/USD", [
+            {"t": f"{d}T00:00:00Z", "o": c, "h": c, "l": c, "c": c, "v": 1e6, "vw": c}
+            for d, c in zip(days, (100.0, 106.0, 105.0, 104.0, 103.0))
+        ], model=barcache.CryptoDailyBar)
+        barcache.store_movers(s, riser, [("BTC/USD", 6.0, 106.0, 1e8)],
+                              model=barcache.CryptoDailyMover)
+        s.commit()
+
+    strategy_dict = {
+        "asset_class": "crypto", "swing_mode": False, "sizing_usd": 1000,
+        "sleeve_usd": 5000, "max_positions": 3,
+        "params": {
+            "entry": {"min_day_gain_pct": 3, "require_above_vwap": False},
+            "exit": {"trailing_stop_pct": 5, "stop_loss_pct": 4, "take_profit_pct": 0},
+        },
+    }
+    ds = load_scanner_replay_dataset("crypto", 30, 10, None)
+    assert ds.daily_filled_days > 0, "fixture must start with days only a daily fill covers"
+    inputs = replay_inputs(ds, strategy_dict["params"], 10)
+
+    calls: list[tuple] = []
+
+    async def fake_bars(self, symbols, asset_class, timeframe, start, end=None):
+        calls.append((tuple(symbols), timeframe))
+        return {"BTC/USD": [ib(f"{days[2]}T06:00:00Z", 105.0), ib(f"{days[3]}T06:00:00Z", 104.0)]}
+
+    optimizer_api._progress.error = None
+    optimizer_api._progress.result = None
+    with patch.object(AlpacaClient, "historical_bars", new=fake_bars):
+        asyncio.run(optimizer_api._run_search(
+            AlpacaClient.__new__(AlpacaClient), strategy_dict, risk, ds.replayed, "crypto",
+            inputs["timeframe"], 30, 5, 5000, 0.1,
+            prebuilt_bars=inputs["bars"], prebuilt_daily=inputs["daily"],
+            eligible_by_day=inputs["eligible_by_day"], replay_extra=inputs["extra"],
+            replay_ctx={"ds": ds, "asset_class": "crypto", "days": 30,
+                        "replay_top_n": 10, "scanner_cfg": None},
+            mixed=inputs["mixed"],
+        ))
+
+    assert optimizer_api._progress.error is None, optimizer_api._progress.error
+    assert [c for c in calls if c[1] == "15Min"], f"no held-day fetch; calls were {calls}"

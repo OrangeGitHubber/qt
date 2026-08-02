@@ -670,3 +670,66 @@ def test_a_broken_top_up_falls_back_instead_of_failing_the_run(client, configure
     assert r.status_code == 200, r.text
     assert r.json()["intraday_topped_up"] is False
     assert r.json()["timeframe"] == "1Day"
+
+
+def test_a_portfolio_with_a_daily_signal_now_runs_mixed_on_intraday_bars(client, configured):
+    """A portfolio was locked to ONE resolution, so a book holding any
+    daily-signal strategy (MACD, RSI, or — since this week — ATR) was refused
+    intraday bars outright. That was never a timeline problem: every strategy
+    replays the SAME stream, and only the indicator SOURCE differs. The
+    annotators have accepted a daily series all along; the portfolio just never
+    passed one."""
+    strat = _strategy("stock")  # keeps stop-loss 4% / trailing 5%
+    strat["params"]["atr"] = {"period": 14, "stop_mult": 1.5, "risk_usd": 0}
+    strat["universe"] = "custom"
+    strat["symbols"] = ["NVDA"]
+    sid = client.post("/api/strategies", json=strat).json()["id"]
+
+    # Spy on the replay itself: asserting the response flag alone would pass even
+    # if the daily series never reached the simulation, which is the whole point.
+    from qt.services import backtest as backtest_service
+
+    seen: dict = {}
+    real = backtest_service.run_portfolio_backtest
+
+    def spy(*a, **kw):
+        seen.update(kw)
+        return real(*a, **kw)
+
+    fetch = AsyncMock(side_effect=[{"NVDA": BARS}, {"NVDA": BARS}, {"SPY": BARS}])
+    with patch.object(AlpacaClient, "historical_bars", new=fetch),          patch.object(backtest_service, "run_portfolio_backtest", new=spy):
+        r = client.post("/api/backtest/portfolio", json={
+            "strategy_ids": [sid], "days": 30, "timeframe": "15Min",
+            "starting_cash": 5000, "spread_pct": 0})
+    assert seen.get("daily_bars_by_strategy"), "the replay never received the daily series"
+    assert seen["daily_bars_by_strategy"][sid]["NVDA"], "the daily series was empty"
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["mixed_resolution"] is True
+    assert body["timeframe"] == "15Min"        # what the stops were checked on
+    assert body["signal_timeframe"] == "1Day"  # where the ATR came from
+
+    daily_call, intraday_call = fetch.await_args_list[0], fetch.await_args_list[1]
+    assert daily_call.args[2] == "1Day" and intraday_call.args[2] == "15Min"
+    # The daily series reaches back over the warm-up; the intraday one does not.
+    assert daily_call.args[3] < intraday_call.args[3]
+
+
+def test_a_portfolio_strategy_with_nothing_to_gain_from_intraday_is_still_refused(client, configured):
+    """Mixed resolution is worth the extra download only when the finer stream
+    buys something. A daily-signal strategy with no stop, trailing stop or
+    take-profit has nothing for intraday bars to resolve, so it stays on daily
+    rather than paying for a second fetch that changes no result."""
+    strat = _no_price_exits(_strategy("stock"))
+    strat["params"]["entry"]["require_macd_bullish"] = True
+    strat["universe"] = "custom"
+    strat["symbols"] = ["NVDA"]
+    sid = client.post("/api/strategies", json=strat).json()["id"]
+
+    r = client.post("/api/backtest/portfolio", json={
+        "strategy_ids": [sid], "days": 30, "timeframe": "15Min",
+        "starting_cash": 5000, "spread_pct": 0})
+    assert r.status_code == 422
+    detail = r.json()["detail"]
+    assert "MACD" in detail                       # names the real signal...
+    assert strat["name"] in detail                # ...and which strategy has it

@@ -202,13 +202,24 @@ async def _run_search(
                 # dataset — the search must describe what it ACTUALLY replayed,
                 # and after a successful top-up that is a different (intraday,
                 # possibly mixed) dataset than the request handler saw.
-                from qt.api.backtest import ensure_replay_intraday, replay_inputs
+                from qt.api.backtest import (
+                    ensure_replay_intraday,
+                    fetch_held_position_bars,
+                    load_scanner_replay_dataset,
+                    replay_inputs,
+                )
+                from qt.services.backtest import run_backtest
 
                 _progress.phase = "downloading 15-minute bars"
 
                 def _report(msg: str, _pct: int | None = None) -> None:
                     _progress.phase = msg
 
+                # Bound BEFORE the top-up: the held-position pass below reads it
+                # whether or not anything was downloaded, and leaving it assigned
+                # only inside the `if topped_up` branch made every search with an
+                # already-complete cache die on an unbound local.
+                ds = replay_ctx["ds"]
                 ds2, topped_up = await ensure_replay_intraday(
                     client, replay_ctx["ds"], strategy_dict["params"],
                     asset_class=replay_ctx["asset_class"], days=replay_ctx["days"],
@@ -227,6 +238,51 @@ async def _run_search(
                     if replay_extra is not None:
                         replay_extra.update(fresh["extra"])
                         replay_extra["intraday_topped_up"] = True
+                    ds = ds2
+
+                # HELD-POSITION COVERAGE. The cache holds 15-minute bars only
+                # around each symbol's mover-days, so a position held after its
+                # symbol left the top-N list falls back to daily bars — which can
+                # resolve an exit just once a day, tying up the slot and the cash
+                # until then. The backtest fixes this by replaying once to learn
+                # its holdings and fetching exactly those days.
+                #
+                # A search can't do that per config: it runs hundreds, each
+                # holding different names for different spans, and fetching for
+                # every one would download far more than the search uses. It uses
+                # the BASE strategy's holdings instead — the anchor every grid is
+                # built around, so the configs tried are all near it and their
+                # holdings overlap heavily. Imperfect on purpose, and far better
+                # than searching entirely on daily-filled days.
+                if ds.used_intraday and ds.daily_filled_days:
+                    _progress.phase = "downloading bars for held positions"
+                    probe = await asyncio.to_thread(
+                        run_backtest,
+                        strategy_dict, bars, risk,
+                        starting_cash=starting_cash, spread_pct=spread_pct,
+                        market=("crypto" if asset_class == "crypto" else "stock"),
+                        eligible_by_day=eligible_by_day,
+                        daily_bars_by_symbol=daily_bars,
+                    )
+                    if "error" not in probe and await fetch_held_position_bars(
+                        client, probe, ds, asset_class=asset_class, report=_report
+                    ):
+                        ds = await asyncio.to_thread(
+                            load_scanner_replay_dataset,
+                            replay_ctx["asset_class"], replay_ctx["days"],
+                            replay_ctx["replay_top_n"], replay_ctx["scanner_cfg"],
+                        )
+                        fresh = replay_inputs(
+                            ds, strategy_dict["params"], replay_ctx["replay_top_n"]
+                        )
+                        bars = fresh["bars"]
+                        daily_bars = fresh["daily"]
+                        eligible_by_day = fresh["eligible_by_day"]
+                        timeframe = fresh["timeframe"]
+                        mixed = fresh["mixed"]
+                        if replay_extra is not None:
+                            replay_extra.update(fresh["extra"])
+                            replay_extra["intraday_topped_up"] = True
         else:
             # Read-through the bar cache: only the missing recent edge is actually
             # downloaded, and any cache trouble degrades to a plain fetch.

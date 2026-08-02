@@ -879,3 +879,105 @@ def test_fill_is_clamped_into_the_bar_when_price_gaps_through_the_stop():
     res = run_backtest(STRATEGY, {"TEST": series}, RISK, starting_cash=5000, spread_pct=0)
     t = res["trade_list"][0]
     assert t["exit_price"] == pytest.approx(92.0, abs=0.01)  # the high, not 99.84
+
+
+def test_a_portfolio_takes_its_daily_signals_from_the_daily_series_too():
+    """The portfolio was locked to ONE resolution, so a book containing any
+    daily-signal strategy couldn't be replayed on intraday bars at all.
+
+    That was never a merged-timeline problem. Every strategy in a portfolio
+    replays the SAME stream; only the indicator SOURCE differs, and that is
+    already per-strategy because each carries its own periods. Given the daily
+    series, a one-strategy portfolio must now reproduce exactly what the
+    single-strategy mixed run produces — same entry, same stop, same price.
+    """
+    from qt.services.backtest import run_portfolio_backtest
+
+    strat = _mixed_strategy(trailing_stop_pct=0)
+    daily = _daily(_TREND + [_ENTRY_CLOSE, _RECOVERED], "2026-05-04")
+    intraday = (
+        bars_from([_TREND_LAST] * 3, "2026-05-13T14:00:00Z")
+        + bars_from([_ENTRY_CLOSE] * 3, "2026-05-14T14:00:00Z")
+        + bars_from([_RECOVERED, _INTRADAY_DIP, _RECOVERED], "2026-05-15T14:00:00Z")
+    )
+    book = [{**strat, "id": 1, "name": "mixed"}]
+
+    single = run_backtest(
+        strat, {"TEST": intraday}, RISK, starting_cash=5000, spread_pct=0,
+        daily_bars_by_symbol={"TEST": daily},
+    )
+    mixed = run_portfolio_backtest(
+        book, {1: {"TEST": intraday}}, RISK, starting_cash=5000, spread_pct=0,
+        daily_bars_by_strategy={1: {"TEST": daily}},
+    )
+    blind = run_portfolio_backtest(
+        book, {1: {"TEST": intraday}}, RISK, starting_cash=5000, spread_pct=0,
+    )
+
+    assert mixed["trades"] == single["trades"] == 1
+    assert "stop-loss" in mixed["trade_list"][0]["exit_reason"]
+    assert mixed["trade_list"][0]["entry_price"] == single["trade_list"][0]["entry_price"]
+    assert mixed["trade_list"][0]["exit_price"] == single["trade_list"][0]["exit_price"]
+    # This fixture's MACD happens to agree either way, so it proves the plumbing
+    # but not the SOURCE. The ATR test below discriminates.
+    assert blind["trades"] == 1
+
+
+def test_a_portfolio_atr_stop_is_measured_in_days_not_minutes():
+    """The sharpest proof that the indicator really comes from the daily series.
+
+    A "14-period ATR" over 15-minute bars measures a few minutes of range, not a
+    fortnight of it, so on a calm stretch it comes out near zero and every stop
+    derived from it sits a hair under the entry price. Here the daily range is
+    wide (~10%) and the intraday range is almost nothing, so the two sources give
+    opposite answers about whether a 1% dip should stop the position out — and
+    the exit reason prints the ATR it used, which makes the source unambiguous.
+    """
+    from qt.services.backtest import run_portfolio_backtest
+
+    strat = {
+        "asset_class": "stock", "swing_mode": False,
+        "sizing_usd": 1000.0, "sleeve_usd": 5000.0, "max_positions": 3,
+        "params": {
+            "entry": {"min_day_gain_pct": 1.0, "require_above_vwap": False,
+                      "entry_window_start": None, "entry_window_end": None},
+            # No fixed stop at all, so the ATR stop is the ONLY thing that can
+            # exit: whatever it measures decides the outcome by itself.
+            "exit": {"trailing_stop_pct": 0, "stop_loss_pct": 0, "take_profit_pct": 0,
+                     "max_holding_hours": 0, "flatten_before_close": False,
+                     "exit_below_vwap": False},
+            "atr": {"period": 3, "stop_mult": 1.5, "risk_usd": 0},
+        },
+    }
+
+    def d(day, c, h, l):
+        return {"t": f"{day}T14:00:00Z", "o": c, "h": h, "l": l, "c": c, "v": 1e6, "vw": c}
+
+    def i(ts, c):  # a nearly flat 15-minute bar
+        return {"t": ts, "o": c, "h": c * 1.0005, "l": c * 0.9995, "c": c, "v": 1e4, "vw": c}
+
+    daily = [d(f"2026-05-{n:02d}", 100.0, 105.0, 95.0) for n in (4, 5, 6, 7, 8, 11)]
+    intraday = (
+        [i(f"2026-05-08T{h:02d}:00:00Z", 100.0) for h in (14, 15, 16, 17)]
+        + [i(f"2026-05-11T{h:02d}:00:00Z", 102.0) for h in (14, 15, 16, 17)]  # +2% -> entry
+        + [i("2026-05-12T14:00:00Z", 102.0), i("2026-05-12T15:00:00Z", 101.0)]  # -1% dip
+    )
+    book = [{**strat, "id": 1, "name": "atr"}]
+
+    blind = run_portfolio_backtest(
+        book, {1: {"TEST": intraday}}, RISK, starting_cash=5000, spread_pct=0,
+    )
+    mixed = run_portfolio_backtest(
+        book, {1: {"TEST": intraday}}, RISK, starting_cash=5000, spread_pct=0,
+        daily_bars_by_strategy={1: {"TEST": daily}},
+    )
+
+    # Measured off 15-minute bars the ATR is a rounding error, so the stop sits
+    # 0.15% under the entry and an ordinary 1% dip takes the position out.
+    assert blind["trades"] == 1
+    reason = blind["trade_list"][0]["exit_reason"]
+    assert "ATR stop-loss" in reason and "ATR 0.10%" in reason
+    # Measured off DAILY bars it is ~10%, putting the stop ~15% away: the same
+    # dip is noise and the position is still open at the end.
+    assert mixed["trades"] == 0
+    assert len(mixed["open_positions"]) == 1
