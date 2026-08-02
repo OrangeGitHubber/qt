@@ -17,6 +17,14 @@
   box-sizing: border-box;
 }
 
+/* Always reserve the scrollbar's width. Without this, any content change that
+   crosses the viewport height silently re-lays-out the whole page ~15px
+   narrower — which is how a hover panel came to move the chart it was
+   describing. Cheap insurance against a whole class of jitter. */
+html {
+  scrollbar-gutter: stable;
+}
+
 body {
   margin: 0;
   background: var(--bg);
@@ -2055,6 +2063,22 @@ button.linklike {
   line-height: 1.5;
   font-variant-numeric: tabular-nums;
   color: var(--muted);
+  /* HEIGHT IS BOUNDED, and that is not cosmetic — it stops a feedback loop.
+     Unbounded, this panel grew from 3 lines to 12+ as the cursor crossed a busy
+     day (compare mode lists BOTH strategies). The page got taller, the vertical
+     scrollbar appeared, the viewport lost ~15px, the width:100% chart narrowed,
+     and the pixel under the cursor suddenly mapped to a different day — whose
+     trade count resized the panel again. The chart jittered as you moved across
+     it. Measured: 204px of vertical movement per hovered day, and a min/max
+     RANGE only halved it to 100px — any variability at all keeps the loop alive.
+     A FIXED height takes it to zero; a busy day scrolls inside its own box.
+
+     This is the same discipline .chart-readout above the chart already follows
+     ("its height is constant — the chart below never shifts"). The panel below
+     was left free to grow, which was survivable until compare mode started
+     listing both strategies' trades. */
+  height: 7rem;
+  overflow-y: auto;
 }
 
 /* Collapsible cards (Settings etc.): the title row is always visible with a

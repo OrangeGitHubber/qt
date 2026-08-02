@@ -36,6 +36,26 @@ The P&L column in the journal is still gross, and now says so.
 but don't post real fee activities, so on paper this job runs, finds nothing,
 and correctly reports "no fees" rather than inventing them.
 
+## The chart stopped jittering under the cursor (2026-08-01)
+
+Sweeping the mouse across the comparison chart made the whole page jump. Not a
+rendering glitch — a feedback loop:
+
+1. Hovering a busy day grew the trade panel from 3 lines to 12 (compare mode
+   lists both strategies).
+2. That moved everything below it, and the page reflowed under the cursor.
+3. The chart shifted, so the pixel you were pointing at became a **different
+   day** — with a different trade count, which resized the panel again.
+
+Measured at **204 pixels** of movement per hovered day. The panel now has a fixed
+height and scrolls internally when a day has more trades than fit, which takes it
+to **zero**. A minimum/maximum range wasn't enough — that still left 100px, and
+any variability at all keeps the loop running.
+
+It's the same rule the readout strip above the chart already followed: its height
+is constant so the chart never moves. The panel below was left free to grow,
+which was survivable until compare mode doubled how much it could contain.
+
 ## Compare-mode trade colours now mean something (2026-08-01)
 
 On the comparison chart, every sell in the hover panel was red — including the
