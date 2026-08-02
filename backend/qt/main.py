@@ -20,6 +20,7 @@ from qt.api import (
     baskets,
     broker as broker_api,
     engine as engine_api,
+    fidelity as fidelity_api,
     market,
     optimizer as optimizer_api,
     setup,
@@ -258,6 +259,7 @@ app.include_router(assets_api.router, dependencies=[Depends(require_user)])
 app.include_router(baskets.router, dependencies=[Depends(require_user)])
 app.include_router(barcache_api.router, dependencies=[Depends(require_user)])
 app.include_router(optimizer_api.router, dependencies=[Depends(require_user)])
+app.include_router(fidelity_api.router, dependencies=[Depends(require_user)])
 app.include_router(about.router, dependencies=[Depends(require_user)])
 
 

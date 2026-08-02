@@ -1205,3 +1205,74 @@ export function liquidateAll(includeOrphans = false) {
     }>(r),
   );
 }
+
+// --- Backtest fidelity (validation tool) -----------------------------------
+// Two halves that mean different things. `decision` asks whether the replay
+// reproduced the same trades — it should reach near-perfect agreement and then
+// stay there, so it is a development instrument. `execution` measures how far
+// real fills sat from simulated ones, which never becomes "solved": it depends
+// on your broker, symbols and order sizes, and the number it yields belongs in
+// the backtest's spread setting.
+export interface FidelityMatch {
+  symbol: string;
+  day: string;
+  live_entry: number | null;
+  sim_entry: number | null;
+  entry_delta_pct: number | null;
+  live_exit: number | null;
+  sim_exit: number | null;
+  exit_delta_pct: number | null;
+  live_exit_day: string | null;
+  sim_exit_day: string | null;
+  exit_day_matches: boolean;
+  live_pnl: number | null;
+  sim_pnl: number | null;
+  live_exit_reason: string | null;
+  sim_exit_reason: string | null;
+  exit_reason_matches: boolean | null;
+}
+
+export interface FidelityReport {
+  strategy_name: string;
+  mode: string;
+  days: number;
+  imported: boolean;
+  timeframe?: string;
+  bar_gaps?: { after: string; before: string; days: number }[];
+  // False for paper: the broker simulates those fills, so the cost half would be
+  // measuring a simulation rather than a market.
+  execution_is_measurable: boolean;
+  matched: FidelityMatch[];
+  live_only: { symbol: string; day: string; entry_price: number | null; entry_reason: string }[];
+  backtest_only: { symbol: string; day: string; sim_entry: number | null; sim_exit_reason: string }[];
+  rails_blocked: { symbol: string; day: string; blocked_by: string | null }[];
+  decision: {
+    live_trades: number;
+    backtest_trades: number;
+    matched: number;
+    missed_by_backtest: number;
+    invented_by_backtest: number;
+    match_rate_pct: number | null;
+    same_exit_rule_pct: number | null;
+    same_exit_day_pct: number | null;
+    enough_to_judge: boolean;
+  };
+  execution: {
+    fills_compared: number;
+    median_entry_delta_pct: number | null;
+    median_exit_delta_pct: number | null;
+    measured_cost_per_side_pct: number | null;
+    assumed_spread_pct: number;
+    assumed_fee_pct: number;
+    suggested_spread_pct: number | null;
+    backtest_pnl_optimism_usd: number | null;
+    enough_to_judge: boolean;
+  };
+}
+
+export const runFidelity = (body: {
+  strategy_id: number;
+  days: number;
+  mode: string;
+  imported_trades?: unknown[];
+}) => fetch("/api/fidelity/compare", json(body)).then((r) => handle<FidelityReport>(r));

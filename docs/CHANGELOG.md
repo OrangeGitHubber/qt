@@ -60,6 +60,44 @@ The P&L column in the journal is still gross, and now says so.
 but don't post real fee activities, so on paper this job runs, finds nothing,
 and correctly reports "no fees" rather than inventing them.
 
+## Check the backtester against what really happened (2026-08-02)
+
+Settings now has a **Backtest fidelity** panel: point the backtester at a stretch
+you have already traded and see whether it agrees with reality.
+
+It reports two things that mean different things, and mixing them up is how
+people fool themselves.
+
+**Did it pick the same trades?** Every decision either side made lands in one of
+four buckets — matched, missed by the backtest, invented by the backtest, or
+blocked by a safety rail. That last one matters: the engine *wanted* the trade
+and a rail refused it, which is not a backtest error and is counted separately so
+it can't be mistaken for one. Because the entry, exit and rail code is shared
+between the live engine and the backtester — one implementation, not two — a
+mismatch here always means the replay saw a different *market*, not that it
+followed a different strategy.
+
+**What did the fills really cost?** Given the same decision, how far the real
+fill sat from the simulated one. This is the part that stays useful indefinitely:
+it produces a measured spread cost to type into future backtests, so they stop
+being optimistic by an amount nobody had measured. It depends on your broker,
+your symbols and your order sizes, so it never becomes a solved number the way
+the trade-picking half should.
+
+Start on **paper**. Whether the replay picks the same trades is exactly as
+testable there, and paper has the volume. What a fill costs is not — the broker
+simulates those fills — so the panel says so plainly rather than presenting a
+simulated number as a measurement.
+
+Two guards worth knowing: with fewer than about 30 matched trades it says the
+sample is too thin instead of printing a confident percentage, and if the replay
+had days with no price data it says so first, because a "missed" trade on a day
+with no bars is a gap in the cache rather than a fault in the replay.
+
+There's also an export endpoint, so a production instance can hand its real
+trades to a development one for the same comparison. Trades only — no keys, no
+account numbers, no settings.
+
 ## Stocks get everything crypto got; the generation warning comes first (2026-08-02)
 
 This week's replay work was all driven and checked against crypto. The stock side

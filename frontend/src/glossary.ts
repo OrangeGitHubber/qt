@@ -14,6 +14,30 @@ export interface GlossaryEntry {
 export type InfoKey = keyof typeof GLOSSARY;
 
 export const GLOSSARY: Record<string, GlossaryEntry> = {
+  decision_fidelity: {
+    term: "Decision fidelity",
+    explain:
+      "Given the same history, did the backtest pick the same symbols on the same days as the engine really did, and leave for the same reasons? Because the entry, exit and safety-rail code is literally shared between the live engine and the backtester, the two cannot disagree about strategy logic — so a mismatch here means the replay saw a different MARKET: missing bars, a different day boundary, an indicator read off the wrong series. This is the half that should reach near-perfect agreement and then stay there; if it doesn't, that's a bug to fix rather than a setting to tune.",
+    url: "https://www.investopedia.com/terms/b/backtesting.asp",
+  },
+  execution_fidelity: {
+    term: "Execution fidelity",
+    explain:
+      "Given the same decision, how far did the real fill sit from the simulated one? This measures the cost model — spread, slippage and fees — rather than the strategy. Unlike decision fidelity it never becomes 'solved': it depends on your broker, your symbols and your order sizes, so an illiquid small-cap mover will always slip more than Bitcoin. The number it produces is meant to be typed back into the backtest's spread setting, so future backtests stop being optimistic by a known amount.",
+    url: "https://www.investopedia.com/terms/s/slippage.asp",
+  },
+  fidelity_buckets: {
+    term: "Matched, missed, invented, blocked",
+    explain:
+      "Every decision either side made lands in one of four buckets. Matched: both took the trade. Missed by the backtest: the engine really traded it and the replay didn't — usually missing bars for that day. Invented by the backtest: the replay took a trade that never happened, which is the one that should worry you. Blocked by a rail: the engine WANTED the trade and a safety rail refused it (daily loss cap, trade-rate limiter, wash-sale guard, no cash) — that is not a backtest error, and it is counted separately so it can't be mistaken for one.",
+    url: "https://www.investopedia.com/terms/b/backtesting.asp",
+  },
+  fidelity_sample: {
+    term: "Enough trades to judge",
+    explain:
+      "Below roughly 30 matched trades the differences are anecdotes, not measurements — one unusual fill moves the whole picture. The same discipline the optimizer applies to its own winners: a result out of five tries means far less than one out of five hundred. The report says when it hasn't got enough rather than printing a confident percentage over a handful of trades.",
+    url: "https://www.investopedia.com/terms/s/samplesize.asp",
+  },
   concurrent_symbol: {
     term: "Share a symbol with other strategies",
     explain:
