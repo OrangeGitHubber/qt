@@ -65,6 +65,7 @@ def _start_scheduler():
         backup_database,
         crypto_movers_sweep,
         daily_movers_sweep,
+        prune_bar_cache,
         daily_summary,
         reconcile_open_trades,
         snapshot_benchmarks,
@@ -135,6 +136,24 @@ def _start_scheduler():
     scheduler.add_job(
         crypto_movers_sweep,
         CronTrigger(hour=0, minute=20, timezone="UTC"),
+        max_instances=1,
+        coalesce=True,
+    )
+    # A newly created scanner strategy shouldn't have to wait for tonight's run
+    # to get the cache it needs, so both upkeep jobs also run shortly after boot.
+    # They no-op in seconds when there is nothing to build or maintain; the delay
+    # is only to stay out of the way of startup's own work.
+    scheduler.add_job(
+        daily_movers_sweep, "date", run_date=datetime.now(timezone.utc) + timedelta(seconds=90)
+    )
+    scheduler.add_job(
+        crypto_movers_sweep, "date", run_date=datetime.now(timezone.utc) + timedelta(seconds=120)
+    )
+    # Intraday-bar retention: 04:00 ET daily, off the hour every other job uses.
+    # Every calendar day, since the crypto side of the cache grows on weekends.
+    scheduler.add_job(
+        prune_bar_cache,
+        CronTrigger(hour=4, minute=0, timezone="America/New_York"),
         max_instances=1,
         coalesce=True,
     )

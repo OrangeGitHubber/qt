@@ -110,6 +110,13 @@ SQLite file in `/data` — zero setup, fully functional. Optionally, set the
 that survives container recreation and can be shared across instances (it holds
 only public market data). See [docs/bar-cache.md](docs/bar-cache.md) for setup.
 
+You do not have to build or maintain this cache. QT fills it in automatically
+the first time an enabled strategy uses the scanner as its universe, keeps it
+current daily, and reclaims 15-minute bars older than 730 days — the longest
+window a backtest can request — so it cannot grow forever and a prune never
+costs you a re-download. Set `QT_BAR_CACHE_KEEP_DAYS` to keep less (tight disk)
+or to `0` to keep everything.
+
 ### ⚠ Get the volume direction right — `host path : /data`
 
 In the `-v host:container` flag (and the unraid "Data" field), the **left**

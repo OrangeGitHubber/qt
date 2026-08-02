@@ -260,3 +260,47 @@ def test_crypto_cache_stats_reads_the_crypto_tables():
     }
     # And the stock stats remain empty — the two caches are independent.
     assert barcache.cache_stats(s)["daily_symbols"] == 0
+
+
+def test_pruning_keeps_everything_a_backtest_could_still_ask_for(monkeypatch):
+    """Retention is the app's own maximum window, so a prune never causes a
+    re-download. A bar one day inside the limit stays; one day past it goes."""
+    from datetime import datetime, timedelta, timezone
+
+    s = _mem_session()
+    now = datetime.now(timezone.utc)
+
+    def stamp(days_ago):
+        return (now - timedelta(days=days_ago)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    keep, drop = stamp(barcache.INTRADAY_KEEP_DAYS - 1), stamp(barcache.INTRADAY_KEEP_DAYS + 1)
+    for model, sym in ((barcache.IntradayBar, "AAA"), (barcache.CryptoIntradayBar, "BTC/USD")):
+        for ts in (keep, drop):
+            s.add(model(symbol=sym, ts=ts, o=1, h=1, l=1, c=1, v=1, vw=1))
+    s.commit()
+
+    out = barcache.prune_intraday(s)
+    assert out["stock"] == 1 and out["crypto"] == 1   # both markets pruned
+    assert [b.ts for b in s.query(barcache.IntradayBar).all()] == [keep]
+    assert [b.ts for b in s.query(barcache.CryptoIntradayBar).all()] == [keep]
+
+
+def test_pruning_can_be_turned_off_entirely(monkeypatch):
+    """0 means keep everything — for a durable Postgres cache with room to spare."""
+    from datetime import datetime, timedelta, timezone
+
+    s = _mem_session()
+    ancient = (datetime.now(timezone.utc) - timedelta(days=3000)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    s.add(barcache.IntradayBar(symbol="AAA", ts=ancient, o=1, h=1, l=1, c=1, v=1, vw=1))
+    s.commit()
+    monkeypatch.setenv("QT_BAR_CACHE_KEEP_DAYS", "0")
+    assert barcache.prune_intraday(s) == {"pruned": False, "keep_days": 0, "stock": 0, "crypto": 0}
+    assert s.query(barcache.IntradayBar).count() == 1
+
+
+def test_a_typo_in_the_retention_env_var_does_not_disable_pruning(monkeypatch):
+    """The one setting whose failure mode is a full disk must not fail open."""
+    monkeypatch.setenv("QT_BAR_CACHE_KEEP_DAYS", "forever")
+    assert barcache.intraday_keep_days() == barcache.INTRADAY_KEEP_DAYS
+    monkeypatch.setenv("QT_BAR_CACHE_KEEP_DAYS", "500")
+    assert barcache.intraday_keep_days() == 500

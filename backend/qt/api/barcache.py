@@ -31,6 +31,9 @@ router = APIRouter(prefix="/api/barcache", tags=["barcache"])
 class SweepProgress:
     running: bool = False
     kind: str = "daily"  # daily | reconstruct | intraday — what the current/last run was
+    # True when the nightly upkeep started this rather than the user. Only ever
+    # set on a run, so the Settings view can label the one it is watching.
+    automatic: bool = False
     market: str = "stock"  # stock | crypto — which cache the current/last run touched
     started_at: str | None = None
     last_run_at: str | None = None
@@ -243,6 +246,49 @@ async def _run_crypto_intraday_sweep(client: AlpacaClient) -> None:
         _progress.last_run_at = datetime.now(timezone.utc).isoformat()
 
 
+async def bootstrap(client: AlpacaClient, market: str, days: int = 365) -> bool:
+    """Build a scanner-replay cache from nothing, unattended.
+
+    This is the Settings button's whole job, minus the button. It is called by
+    the nightly upkeep when a strategy needs a cache that does not exist yet, so
+    "run the sweep once before you can backtest a scanner strategy" stopped being
+    something the user has to know. It shares the same progress record the manual
+    trigger writes, so the Settings view narrates an automatic build exactly as it
+    narrates a requested one.
+
+    Returns False when a sweep is already running — the caller must not queue a
+    second one, and the next night's run will find the cache either built or
+    still empty and decide again. Intraday bars are deliberately NOT swept here:
+    a backtest fetches the 15-minute bars it needs for itself, so pre-fetching
+    them would spend the API budget on days no strategy ever asks about."""
+    global _task
+    if _progress.running:
+        return False
+    try:
+        barcache.init_cache()
+    except Exception:
+        log.exception("automatic %s sweep: could not open the bar cache", market)
+        return False
+
+    _progress.running = True
+    _progress.kind = "daily"
+    _progress.market = market
+    _progress.automatic = True
+    _progress.started_at = datetime.now(timezone.utc).isoformat()
+    _progress.batches_done = 0
+    _progress.batches_total = 0
+    _progress.days_reconstructed = 0
+    _progress.last_error = None
+    log.info("no %s scanner-replay cache and a strategy needs one — building it (%sd)", market, days)
+    # Awaited, not fired off as a task: the caller is a scheduled job with
+    # max_instances=1, which is the lock that stops two builds overlapping.
+    if market == "crypto":
+        await _run_crypto_sweep(client, days)
+    else:
+        await _run_sweep(client, days)
+    return _progress.last_error is None
+
+
 @router.post("/sweep")
 async def trigger_sweep(
     days: int = Query(default=365, ge=7, le=1825),
@@ -264,6 +310,7 @@ async def trigger_sweep(
     _progress.running = True
     _progress.kind = "daily"
     _progress.market = "stock"
+    _progress.automatic = False
     _progress.started_at = datetime.now(timezone.utc).isoformat()
     _progress.batches_done = 0
     _progress.batches_total = 0

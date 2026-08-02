@@ -81,15 +81,38 @@ async def reconcile_open_trades() -> None:
         log.exception("reconciliation job failed")
 
 
+def _wants_scanner_cache(session, asset_class: str) -> bool:
+    """Is there an ENABLED strategy whose universe is the scanner (alone, or
+    alongside the watchlist) for this asset class?
+
+    This is what decides whether the cache gets built automatically. The old rule
+    was "maintain, never bootstrap" — a no-op on an empty cache — which kept the
+    daily Alpaca cost off users who never replay the scanner, at the price of a
+    button they had to find and press once before a scanner strategy could be
+    backtested at all. Asking the strategies instead keeps both: nobody who has
+    no use for the cache pays for it, and nobody who does has to know it exists."""
+    return (
+        session.query(Strategy)
+        .filter(
+            Strategy.enabled.is_(True),
+            Strategy.asset_class == asset_class,
+            Strategy.universe.in_(("scanner", "both")),
+        )
+        .first()
+        is not None
+    )
+
+
 async def daily_movers_sweep() -> None:
     """Keep the STOCK scanner-replay cache current: after the US close, pull the
     day's universe daily bars and re-rank the recent days' risers.
 
-    Only MAINTAINS a cache the user already built — it never bootstraps one, so
-    users who don't use scanner replay pay no daily Alpaca cost. Skips non-trading
-    days (stocks don't trade weekends/holidays). Crypto is maintained separately
-    by crypto_movers_sweep, which runs every calendar day. Best-effort; failures
-    are logged, not fatal."""
+    BUILDS one from scratch when a strategy needs it and there isn't one — see
+    _wants_scanner_cache — and otherwise maintains what's there. A user with no
+    scanner strategy still pays no daily Alpaca cost. Skips non-trading days
+    (stocks don't trade weekends/holidays) once past the build. Crypto is handled
+    separately by crypto_movers_sweep, which runs every calendar day. Best-effort;
+    failures are logged, not fatal."""
     try:
         from qt.services import barcache, barsweep, calendar, scanner
 
@@ -98,27 +121,44 @@ async def daily_movers_sweep() -> None:
             if client is None:
                 return
             try:
+                barcache.init_cache()
+            except Exception:
+                log.exception("daily movers sweep: could not open the bar cache")
+                return
+
+            # BUILD it if a strategy needs one and there is none. Deliberately
+            # ahead of the trading-day gate: a year of history is just as
+            # downloadable on a Sunday, and making the first build wait for
+            # Monday is the same "come back later" the button was.
+            sess = barcache.session()
+            try:
+                empty = sess.query(barcache.DailyBar).first() is None
+            finally:
+                sess.close()
+            if empty:
+                with session_scope() as s2:
+                    wanted = _wants_scanner_cache(s2, "stock")
+                if wanted:
+                    from qt.api import barcache as barcache_api
+
+                    await barcache_api.bootstrap(client, "stock")
+                return  # built (or declined) — the maintenance pass has nothing to add
+
+            try:
                 if not await calendar.is_trading_today(client):
                     return  # holiday/weekend — no new stock bar to fetch
             except Exception:
                 log.warning("daily movers sweep: calendar check failed, proceeding anyway")
 
-            try:
-                barcache.init_cache()
-            except Exception:
-                log.exception("daily movers sweep: could not open the bar cache")
-                return
             sess = barcache.session()
             try:
-                # STOCK cache — maintain only if it already exists.
-                if sess.query(barcache.DailyBar).first() is not None:
-                    f = scanner.STOCK_DEFAULTS
-                    summary = await barsweep.daily_movers_update(
-                        client, sess,
-                        min_change_pct=f["min_change_pct"], min_price=f["min_price"],
-                        max_price=f["max_price"], min_dollar_volume=f["min_dollar_volume"],
-                    )
-                    log.info("daily movers sweep done: %s", summary)
+                f = scanner.STOCK_DEFAULTS
+                summary = await barsweep.daily_movers_update(
+                    client, sess,
+                    min_change_pct=f["min_change_pct"], min_price=f["min_price"],
+                    max_price=f["max_price"], min_dollar_volume=f["min_dollar_volume"],
+                )
+                log.info("daily movers sweep done: %s", summary)
             finally:
                 sess.close()
     except Exception:
@@ -131,10 +171,10 @@ async def crypto_movers_sweep() -> None:
     (no US-trading-calendar gate), keeping weekend and holiday movers fresh
     instead of letting them lag until the next US trading day.
 
-    Same 'maintain, never bootstrap' rule: a no-op unless the user has already
-    built a crypto cache, so non-users pay nothing. The daily sweep skips the
-    still-forming current UTC day and only caches completed days. Best-effort;
-    failures are logged, not fatal."""
+    Builds and maintains on the same rule as its stock twin: a crypto cache
+    appears when an enabled crypto strategy replays the scanner, and never
+    otherwise. The daily sweep skips the still-forming current UTC day and only
+    caches completed days. Best-effort; failures are logged, not fatal."""
     try:
         from qt.services import barcache, barsweep, scanner
 
@@ -149,18 +189,55 @@ async def crypto_movers_sweep() -> None:
                 return
             sess = barcache.session()
             try:
-                if sess.query(barcache.CryptoDailyBar).first() is not None:
-                    cf = scanner.CRYPTO_DEFAULTS
-                    summary = await barsweep.crypto_daily_movers_update(
-                        client, sess,
-                        min_change_pct=cf["min_change_pct"], min_price=cf["min_price"],
-                        max_price=cf["max_price"], min_dollar_volume=cf["min_dollar_volume"],
-                    )
-                    log.info("crypto movers sweep done: %s", summary)
+                empty = sess.query(barcache.CryptoDailyBar).first() is None
+            finally:
+                sess.close()
+            if empty:
+                with session_scope() as s2:
+                    wanted = _wants_scanner_cache(s2, "crypto")
+                if wanted:
+                    from qt.api import barcache as barcache_api
+
+                    await barcache_api.bootstrap(client, "crypto")
+                return
+
+            sess = barcache.session()
+            try:
+                cf = scanner.CRYPTO_DEFAULTS
+                summary = await barsweep.crypto_daily_movers_update(
+                    client, sess,
+                    min_change_pct=cf["min_change_pct"], min_price=cf["min_price"],
+                    max_price=cf["max_price"], min_dollar_volume=cf["min_dollar_volume"],
+                )
+                log.info("crypto movers sweep done: %s", summary)
             finally:
                 sess.close()
     except Exception:
         log.exception("crypto movers sweep failed")
+
+
+async def prune_bar_cache() -> None:
+    """Reclaim intraday bars past the retention window (see
+    barcache.prune_intraday). Runs every day; a no-op on a cache that has none.
+
+    The cache is disposable by design, so this can only ever cost a re-download,
+    never data. Best-effort: a failure logs and the next run tries again."""
+    try:
+        from qt.services import barcache
+
+        try:
+            barcache.init_cache()
+        except Exception:
+            return  # no cache configured/reachable — nothing to prune
+        sess = barcache.session()
+        try:
+            out = barcache.prune_intraday(sess)
+            if out.get("stock") or out.get("crypto"):
+                log.info("bar cache prune: %s", out)
+        finally:
+            sess.close()
+    except Exception:
+        log.exception("bar cache prune failed")
 
 
 async def sync_fee_activities() -> None:

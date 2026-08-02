@@ -526,8 +526,11 @@ export default function Settings() {
           ) : (
             "…"
           )}
-          . Stocks and crypto keep separate caches — sweep each on its own side below. Order per class:{" "}
-          <strong>Run sweep → Sweep intraday → backtest</strong>. (See “How the sweep works” at the bottom.)
+          . <strong>You don't need to do anything here.</strong> QT builds this cache by itself the first
+          time an enabled strategy uses the scanner as its universe, keeps it current every day, and pulls
+          the 15-minute bars a backtest needs when that backtest asks for them. The buttons below are for
+          forcing a rebuild or reaching further back than the automatic year — not steps to work through.
+          Stocks and crypto keep separate caches. (See “How this cache works” at the bottom.)
         </p>
 
         {bars?.running && (
@@ -557,7 +560,7 @@ export default function Settings() {
                 className="small"
                 disabled={bars?.running}
                 onClick={runSweep}
-                title="Download daily bars for the whole US-stock universe, then rank each day's risers"
+                title="Rebuild now instead of waiting for tonight's automatic run, or reach further back than a year"
               >
                 {bars?.running ? "Sweeping…" : "⭳ Run sweep"}
               </button>
@@ -565,7 +568,7 @@ export default function Settings() {
                 className="small btn-accent-ghost"
                 disabled={bars?.running}
                 onClick={runIntraday}
-                title="Pull 15-minute bars for the ranked movers (enables intraday replay)"
+                title="Pull 15-minute bars ahead of time. A backtest fetches the ones it needs by itself."
               >
                 ⭳ Sweep intraday
               </button>
@@ -573,7 +576,7 @@ export default function Settings() {
                 className="small btn-ghost"
                 disabled={bars?.running}
                 onClick={runReconstruct}
-                title="Recompute the risers from bars already cached — no download"
+                title="Rarely needed: the nightly run and every full sweep already rank. For after a criteria change."
               >
                 ↻ Re-rank
               </button>
@@ -625,21 +628,37 @@ export default function Settings() {
               )}
             </p>
           ) : (
-            <p className="hint">No movers cached yet — run a sweep first.</p>
+            <p className="hint">
+              No movers cached yet — this fills itself in once a scanner strategy is enabled, or now if you
+              press Run sweep.
+            </p>
           ))}
 
         <details className="cache-help">
-          <summary>How the sweep works (three steps)</summary>
+          <summary>How this cache works (and why you don't have to touch it)</summary>
           <p className="hint">
-            <strong>1. Run sweep</strong> downloads one daily price bar (open/high/low/close) for the <em>entire</em>{" "}
+            <strong>It builds itself.</strong> The moment you enable a strategy whose universe is the scanner
+            (alone or alongside your watchlist), QT downloads a year of history for that asset class and keeps
+            it current daily. Nothing is downloaded for an asset class no enabled strategy replays, so a cache
+            you have no use for never costs you anything. The steps below are what that automatic build does —
+            worth reading to understand the numbers, not to follow.
+          </p>
+          <p className="hint">
+            <strong>Nothing is thrown away that you could still ask for.</strong> 15-minute bars are the only
+            part that grows quickly, so anything older than the longest backtest QT will accept (730 days) is
+            reclaimed nightly. A prune can therefore never cause a re-download — it only removes bars no
+            backtest is able to reach.
+          </p>
+          <p className="hint">
+            <strong>1. The daily sweep</strong> downloads one daily price bar (open/high/low/close) for the <em>entire</em>{" "}
             tradable US-stock universe — thousands of symbols, every stock on a real exchange, not just the movers. It's a
             raw price dump: at this point nothing yet knows which stocks were the day's risers. Takes several minutes, and
             it's cached and idempotent — run it again with more history to reach further back and only the missing older
-            days are added, never re-downloaded. QT also re-runs it automatically each trading evening. A full sweep
-            finishes by ranking the risers for you (step 2), so normally you never press Re-rank yourself.
+            days are added, never re-downloaded. QT re-runs it automatically each trading evening. It finishes by
+            ranking the risers for you (step 2), which is why the Re-rank button is almost never the answer.
           </p>
           <p className="hint">
-            <strong>2. Re-rank</strong> turns that raw dump into <em>each past day's top risers</em>: for every day it
+            <strong>2. Ranking</strong> turns that raw dump into <em>each past day's top risers</em>: for every day it
             measures each stock's gain at its intraday peak (daily high vs. the prior close), drops penny and low-volume
             junk (the scanner's price and dollar-volume filters), and keeps the top 100 (the backtest then picks how many
             of those to use per day). This is the step that <em>creates</em> the risers list — the raw sweep doesn't
@@ -648,11 +667,11 @@ export default function Settings() {
             risers to keep); otherwise a full sweep already did it.
           </p>
           <p className="hint">
-            <strong>3. Sweep intraday</strong> then pulls 15-minute bars for those ranked movers only (just those names,
-            on their mover-days, plus a short prior-session baseline), so the backtest can judge an <em>intraday</em>{" "}
+            <strong>3. The 15-minute bars</strong> are pulled for those ranked movers only (just those names, on
+            their mover-days, plus a short prior-session baseline), so the backtest can judge an <em>intraday</em>{" "}
             strategy on how each day actually traded — VWAP, the entry window, and flatten-before-close all behave for
-            real. Without it, replay falls back to daily bars, which can't simulate any intraday exit. Needs a daily
-            sweep first so there are movers to fetch.
+            real. A backtest fetches whatever it is missing for itself, so the button is only a way to pull them ahead
+            of time. Without them, replay falls back to daily bars, which can't simulate any intraday exit.
           </p>
           <p className="hint">
             <strong>Crypto</strong> uses its own separate cache. The crypto universe is tiny (~20–40 USD pairs), so one

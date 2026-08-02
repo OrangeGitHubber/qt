@@ -1,6 +1,8 @@
-"""The forward daily movers job MAINTAINS an existing cache but never
-bootstraps one, so users who don't use scanner replay pay no daily Alpaca
-cost. These tests pin that gate without touching the network."""
+"""The forward daily movers job maintains an existing cache, and BUILDS one
+when an enabled strategy replays the scanner and there is none. The gate is the
+strategies, not the cache: a user with no scanner strategy still pays no daily
+Alpaca cost, and one who has a scanner strategy never has to know a cache is a
+thing. These tests pin that gate without touching the network."""
 
 import asyncio
 
@@ -8,8 +10,31 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from qt.db import session_scope
+from qt.models import Strategy
 from qt.services import barcache, barsweep, calendar
 from qt.services import jobs
+
+
+def _scanner_strategy(asset_class="stock", universe="scanner", enabled=True):
+    """A strategy that (usually) wants a scanner-replay cache, cleaned up after."""
+    import json
+
+    with session_scope() as s:
+        row = Strategy(
+            name=f"sweep-gate {asset_class} {universe} {enabled}",
+            asset_class=asset_class, universe=universe, enabled=enabled,
+            preset="custom", params=json.dumps({"entry": {}, "exit": {}}),
+            sizing_usd=100, sleeve_usd=1000, max_positions=1,
+        )
+        s.add(row)
+        s.flush()
+        return row.id
+
+
+def _drop(sid):
+    with session_scope() as s:
+        s.query(Strategy).filter(Strategy.id == sid).delete()
 
 
 def _mem_cache(monkeypatch):
@@ -31,15 +56,93 @@ def _wire(monkeypatch, *, trading=True):
     monkeypatch.setattr(calendar, "is_trading_today", _is_trading)
 
 
-def test_daily_sweep_is_a_noop_on_an_empty_cache(monkeypatch):
+def test_daily_sweep_builds_nothing_when_no_strategy_wants_it(monkeypatch):
+    """No scanner strategy, no cache, no Alpaca cost — the whole reason the build
+    is gated rather than unconditional."""
     _mem_cache(monkeypatch)
     _wire(monkeypatch)
 
-    async def _boom(*a, **k):  # must NOT be called when the cache is empty
+    async def _boom(*a, **k):
         raise AssertionError("daily_movers_update ran against an un-bootstrapped cache")
 
     monkeypatch.setattr(barsweep, "daily_movers_update", _boom)
-    asyncio.run(jobs.daily_movers_sweep())  # returns cleanly, no update attempted
+    built = _spy_bootstrap(monkeypatch)
+    asyncio.run(jobs.daily_movers_sweep())
+    assert built == []
+
+
+def _spy_bootstrap(monkeypatch) -> list:
+    """Record bootstrap calls instead of downloading a year of bars."""
+    from qt.api import barcache as barcache_api
+
+    built: list = []
+
+    async def _fake(client, market, days=365):
+        built.append((market, days))
+        return True
+
+    monkeypatch.setattr(barcache_api, "bootstrap", _fake)
+    return built
+
+
+def test_an_enabled_scanner_strategy_builds_the_cache_itself(monkeypatch):
+    """Werner's ask: don't make me press a button once before a scanner strategy
+    can be backtested. An empty cache plus a strategy that needs one is enough."""
+    _mem_cache(monkeypatch)
+    _wire(monkeypatch)
+    built = _spy_bootstrap(monkeypatch)
+    sid = _scanner_strategy()
+    try:
+        asyncio.run(jobs.daily_movers_sweep())
+    finally:
+        _drop(sid)
+    assert built == [("stock", 365)]
+
+
+def test_a_scanner_plus_watchlist_strategy_counts_too(monkeypatch):
+    """"both" replays the scanner, so it needs the same cache "scanner" does."""
+    _mem_cache(monkeypatch)
+    _wire(monkeypatch)
+    built = _spy_bootstrap(monkeypatch)
+    sid = _scanner_strategy(universe="both")
+    try:
+        asyncio.run(jobs.daily_movers_sweep())
+    finally:
+        _drop(sid)
+    assert built == [("stock", 365)]
+
+
+def test_a_disabled_or_unrelated_strategy_does_not_build_it(monkeypatch):
+    """Three ways to look like a reason to build without being one: paused, the
+    wrong asset class, and a universe that never replays the scanner."""
+    _mem_cache(monkeypatch)
+    _wire(monkeypatch)
+    built = _spy_bootstrap(monkeypatch)
+    ids = [
+        _scanner_strategy(enabled=False),
+        _scanner_strategy(asset_class="crypto"),
+        _scanner_strategy(universe="watchlist"),
+    ]
+    try:
+        asyncio.run(jobs.daily_movers_sweep())
+    finally:
+        for sid in ids:
+            _drop(sid)
+    assert built == []
+
+
+def test_the_build_is_not_blocked_by_a_closed_market(monkeypatch):
+    """A year of history downloads just as well on a Sunday. Making the first
+    build wait for Monday would be the same "come back later" as the button."""
+    _mem_cache(monkeypatch)
+    _wire(monkeypatch, trading=False)
+    built = _spy_bootstrap(monkeypatch)
+    sid = _scanner_strategy()
+    try:
+        asyncio.run(jobs.daily_movers_sweep())
+    finally:
+        _drop(sid)
+    assert built == [("stock", 365)]
 
 
 def test_daily_sweep_updates_a_populated_cache(monkeypatch):

@@ -3,6 +3,35 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## The scanner-replay cache now builds and prunes itself (2026-08-02)
+
+Backtesting a scanner strategy used to require finding a button in Settings and
+pressing it once. Nothing told you that, and until you did, the backtest simply
+refused. That was never a decision worth asking a user to make — the app already
+knows whether it needs the data.
+
+**It builds itself.** When an enabled strategy uses the scanner as its universe
+(alone, or alongside your watchlist) and there is no cache for that asset class,
+QT downloads a year of history and keeps it current from then on. It also runs
+shortly after startup, so a strategy you create today doesn't wait for tonight.
+The gate moved from "has a cache already" to "does any strategy need one", which
+keeps the property that mattered: an asset class no enabled strategy replays
+still costs nothing, ever.
+
+The **Re-rank** button is no longer part of any normal path either. Every full
+sweep ends by ranking, and the nightly run re-ranks the recent days — it is now
+only there for after a change of criteria.
+
+**And it prunes itself,** because the 15-minute bars are the one table that grows
+without bound: a daily bar is one row per symbol per day, a 15-minute bar is ~26
+a day for a stock and ~96 for a crypto pair, for every mover any backtest ever
+touched. Bars older than **730 days — the longest window a backtest can even
+request** — are reclaimed nightly. Pinning retention to that limit rather than a
+tighter number means a prune can never cause a re-download: it only removes bars
+nothing is able to ask for. `QT_BAR_CACHE_KEEP_DAYS` lowers it if disk is tight,
+or `0` keeps everything forever. Daily bars are never pruned — they're cheap, and
+every past day's movers list is reconstructed from them.
+
 ## "Scanner + watchlist" strategies are now backtested as both (2026-08-02)
 
 A strategy whose universe is **scanner *and* watchlist** was being replayed

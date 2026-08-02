@@ -15,8 +15,10 @@ broker-free function so the reconstruction is exhaustively testable.
 
 from __future__ import annotations
 
+import logging
+import os
 from dataclasses import dataclass
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 from sqlalchemy import Float, Integer, String, create_engine, func
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -26,6 +28,8 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
 from sqlalchemy.orm import Session as OrmSession
 
 from qt.paths import bar_cache_url
+
+log = logging.getLogger("qt.barcache")
 
 
 class CacheBase(DeclarativeBase):
@@ -462,6 +466,61 @@ def freshest_mover(sess: OrmSession, mover_model=DailyMover, intraday_model=Intr
         "change_pct": row.change_pct,
         "has_intraday": has_15m,
     }
+
+
+# How far back intraday bars are kept. They are the only table that grows
+# without bound: a daily bar is one row per symbol per day, but a 15-minute bar
+# is ~26 rows a day for a stock and ~96 for a crypto pair, for every mover the
+# backtester ever asked about. Left alone, a cache that serves an active user
+# grows forever and nothing ever reclaims it.
+#
+# The window is deliberately the LONGEST backtest the app will accept (730 days
+# — see BacktestBody), not a tighter number. Pruning a bar something can still
+# ask for only trades disk for a re-download later, which is churn, not saving.
+# At 730 nothing the app is capable of requesting is ever thrown away, and the
+# table still cannot grow forever: everything past the point where no backtest
+# can reach goes.
+# QT_BAR_CACHE_KEEP_DAYS overrides it — lower if disk is tight and you never
+# replay that far back, 0 to keep everything forever.
+INTRADAY_KEEP_DAYS = 730
+
+
+def intraday_keep_days() -> int:
+    """The retention window, from the environment. Invalid values fall back to
+    the default rather than disabling the prune — a typo in an env var should
+    not silently be the one setting that lets the disk fill up."""
+    raw = os.environ.get("QT_BAR_CACHE_KEEP_DAYS")
+    if raw is None or not raw.strip():
+        return INTRADAY_KEEP_DAYS
+    try:
+        days = int(raw)
+    except ValueError:
+        log.warning("QT_BAR_CACHE_KEEP_DAYS=%r is not a number — keeping the default", raw)
+        return INTRADAY_KEEP_DAYS
+    return max(0, days)
+
+
+def prune_intraday(sess: OrmSession, keep_days: int | None = None) -> dict:
+    """Delete intraday bars older than the retention window, both markets.
+
+    Daily bars are deliberately NOT pruned. They are cheap (one row per symbol
+    per day) and they are what every past day's movers list is reconstructed
+    from — dropping them would not reclaim much and would quietly shorten the
+    history a scanner replay can cover.
+
+    `ts` is an ISO-8601 UTC string, so a lexical comparison IS a chronological
+    one, and the delete works identically on SQLite and Postgres."""
+    days = intraday_keep_days() if keep_days is None else keep_days
+    if days <= 0:
+        return {"pruned": False, "keep_days": 0, "stock": 0, "crypto": 0}
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    out = {"pruned": True, "keep_days": days, "cutoff": cutoff}
+    for key, model in (("stock", IntradayBar), ("crypto", CryptoIntradayBar)):
+        out[key] = int(
+            sess.query(model).filter(model.ts < cutoff).delete(synchronize_session=False)
+        )
+    sess.commit()
+    return out
 
 
 def cache_stats(
