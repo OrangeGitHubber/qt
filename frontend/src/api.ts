@@ -96,6 +96,10 @@ export interface StrategyRow {
   // Your own freeform notes. Never read by the engine, and editing them does not
   // create a new config version — a note changes no behaviour.
   notes?: string;
+  // Set only on a strategy a parameter search produced: what it was searched
+  // from, and over how many days. Lets a later run say which generation it is.
+  optimized_from_id?: number | null;
+  optimized_days?: number | null;
   // Let this strategy hold a symbol another strategy already holds. Never
   // relaxes the wash-sale guard or the loss cooldown — those stay account-wide.
   allow_concurrent_symbol?: boolean;
@@ -807,6 +811,10 @@ export interface OptimizerResult {
   best: OptimizerResultRow | null;
   best_draft_params: StrategyParams;
   relative_step?: number; // the step size every grid was built from
+  // How many times this strategy's ancestry has already been searched. generation
+  // 1 = a hand-built strategy; 2+ means the out-of-sample slice has been picked
+  // against before and is no longer independent.
+  lineage?: { generation: number; windows: number[]; same_window: number; root: string | null } | null;
   // The strategy's value for each searched knob AT THE TIME OF THE SEARCH — the
   // "before" of the before/after. in_grid is false when that value wasn't one of
   // the coarse grid values, i.e. the search never actually evaluated it.

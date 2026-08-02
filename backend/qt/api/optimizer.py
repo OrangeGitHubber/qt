@@ -108,6 +108,46 @@ def _resolve_symbols(session: Session, strategy: Strategy) -> list[str]:
     )
 
 
+def optimizer_lineage(session: Session, strategy: Strategy, days: int) -> dict:
+    """How many times this strategy's ancestry has already been through a
+    parameter search, and over what windows.
+
+    Why this exists: the out-of-sample split is the optimizer's one real defence,
+    and it is a ONCE-PER-SLICE resource. Search a strategy, save the draft, search
+    THAT draft over the same history, and the held-out portion is no longer held
+    out — the person at the keyboard is now choosing configurations knowing how
+    they scored on it. After a few rounds that slice has effectively seen
+    thousands of configs while the app still prints a confident number.
+
+    Note what is NOT counted as fresh data: every window ends today, so a shorter
+    one is a SUBSET of a longer one. Changing 180 days to 200 does not give the
+    search history it hasn't already picked against — only new symbols, or the
+    passage of time, does that. Hence `windows`, so the UI can say so rather than
+    implying a different day count resets anything."""
+    chain: list[dict] = []
+    seen: set[int] = set()
+    current: Strategy | None = strategy
+    while current is not None and current.optimized_from_id is not None:
+        if current.id in seen:
+            break  # defensive: a cycle would otherwise loop forever
+        seen.add(current.id)
+        chain.append(
+            {
+                "days": current.optimized_days,
+                "at": current.optimized_at.isoformat() if current.optimized_at else None,
+            }
+        )
+        current = session.get(Strategy, current.optimized_from_id)
+    return {
+        # The generation this run WILL produce: a hand-built strategy yields 1.
+        "generation": len(chain) + 1,
+        "windows": [c["days"] for c in chain if c["days"]],
+        "same_window": sum(1 for c in chain if c["days"] == days),
+        # The strategy the whole line descends from, if it still exists.
+        "root": current.name if current is not None and current is not strategy else None,
+    }
+
+
 async def _run_search(
     client: AlpacaClient,
     strategy_dict: dict,
@@ -125,6 +165,7 @@ async def _run_search(
     eligible_by_day: dict | None = None,
     replay_extra: dict | None = None,
     replay_ctx: dict | None = None,
+    lineage: dict | None = None,
     mixed: bool = False,
 ) -> None:
     """Background worker: get the bars once, then run the search in a worker
@@ -244,6 +285,10 @@ async def _run_search(
         if mixed:
             result["signal_timeframe"] = "1Day"
         result["days"] = days
+        # How many times this strategy's line has already been searched. Carried
+        # on the RESULT rather than only shown at start time, because it is the
+        # number that qualifies the out-of-sample figure printed beside it.
+        result["lineage"] = lineage
         if replay_extra:
             result.update(replay_extra)
         _progress.result = result
@@ -409,6 +454,7 @@ async def start_optimize(
             prebuilt_bars=prebuilt_bars, prebuilt_daily=prebuilt_daily,
             eligible_by_day=eligible_by_day, replay_extra=replay_extra,
             replay_ctx=replay_ctx,
+            lineage=optimizer_lineage(session, strategy, body.days),
             mixed=mixed,
         )
     )

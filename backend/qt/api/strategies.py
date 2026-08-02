@@ -2,6 +2,7 @@
 config, and trades reference the snapshot that produced them."""
 
 import json
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field, model_validator
@@ -168,6 +169,12 @@ class StrategyBody(BaseModel):
     max_positions: int = Field(default=3, ge=1, le=25)
     swing_mode: bool = True
     ignore_regime: bool = False
+    # Provenance, set only by the optimizer's "save as draft": which strategy this
+    # was searched FROM and over how many days. It is what lets a later run say
+    # "this is generation 3 on the same history" — the out-of-sample guarantee is
+    # spent by repetition, and nothing else in the model could see that.
+    optimized_from_id: int | None = None
+    optimized_days: int | None = Field(default=None, ge=1, le=3650)
 
     @model_validator(mode="after")
     def _sanity(self) -> "StrategyBody":
@@ -295,6 +302,9 @@ def create_strategy(body: StrategyBody, session: Session = Depends(get_session))
         ignore_regime=body.ignore_regime,
         notes=body.notes.strip() or None,
         allow_concurrent_symbol=body.allow_concurrent_symbol,
+        optimized_from_id=body.optimized_from_id,
+        optimized_days=body.optimized_days,
+        optimized_at=datetime.now(timezone.utc) if body.optimized_from_id else None,
     )
     session.add(strategy)
     session.flush()

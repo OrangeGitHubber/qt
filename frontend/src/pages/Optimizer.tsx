@@ -444,6 +444,10 @@ export default function Optimizer() {
         max_positions: strategy.max_positions,
         swing_mode: strategy.swing_mode,
         ignore_regime: strategy.ignore_regime,
+        // Provenance, so a later search can tell you this draft's line has been
+        // optimized before — and how many times on the same history.
+        optimized_from_id: strategy.id,
+        optimized_days: days,
       });
       setSaveMsg(
         `Saved "${draft.name}" as a DISABLED draft. Open the Strategies tab to review it, then run it in shadow mode before anything else.`,
@@ -760,6 +764,35 @@ export default function Optimizer() {
                 tone={(result.best.out_of_sample?.max_drawdown_pct ?? 0) > 10 ? "down" : undefined}
               />
             </div>
+
+            {(result.lineage?.generation ?? 1) > 1 && (
+              <p className="hint warn">
+                <IconWarn className="icon-inline" />{" "}
+                <strong>
+                  Generation {result.lineage!.generation}: this strategy's line has already been through{" "}
+                  {result.lineage!.generation - 1} {result.lineage!.generation === 2 ? "search" : "searches"}
+                  {result.lineage!.root ? <> since "{result.lineage!.root}"</> : null}.
+                </strong>{" "}
+                The out-of-sample figure above is only independent the <em>first</em> time a slice of history is
+                searched. Once you optimize a draft that came out of an earlier search, you are choosing settings while
+                already knowing how they scored on the held-out portion — so it isn't held out any more, and the number
+                flatters itself a little more each round.{" "}
+                {result.lineage!.same_window > 0 ? (
+                  <>
+                    {result.lineage!.same_window} of those earlier{" "}
+                    {result.lineage!.same_window === 1 ? "runs used" : "runs used"} the same {result.days}-day window.
+                  </>
+                ) : (
+                  <>
+                    The earlier {result.lineage!.windows.length === 1 ? "run used a" : "runs used"} different day{" "}
+                    {result.lineage!.windows.length === 1 ? "count" : "counts"} ({result.lineage!.windows.join(", ")}) —
+                    which is not fresh data: every window ends today, so a shorter one is contained inside a longer one.
+                  </>
+                )}{" "}
+                Changing the <strong>symbols</strong>, or waiting for time to pass, is what actually buys history this
+                line hasn't already been fitted to. Forward paper trading is the only test that can't be spent.
+              </p>
+            )}
 
             {(result.best.in_sample?.net_pnl_pct ?? 0) > (result.best.out_of_sample?.net_pnl_pct ?? 0) + 2 && (
               <p className="hint warn">

@@ -89,6 +89,16 @@ class Strategy(Base):
     # try next. The engine never reads this — it exists purely so the reasoning
     # behind a strategy lives next to the strategy instead of in your head.
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Set only when a parameter search produced this strategy: which strategy it
+    # was searched FROM, and over how many days. The optimizer walks this chain
+    # to tell you which generation a run is — its out-of-sample guarantee is a
+    # once-per-slice resource, and re-optimizing a draft on the same history
+    # spends it without anything visibly changing.
+    optimized_from_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    optimized_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    optimized_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 

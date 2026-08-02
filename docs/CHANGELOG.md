@@ -36,6 +36,33 @@ The P&L column in the journal is still gross, and now says so.
 but don't post real fee activities, so on paper this job runs, finds nothing,
 and correctly reports "no fees" rather than inventing them.
 
+## The optimizer now tells you when it's repeating itself (2026-08-01)
+
+The out-of-sample split is the optimizer's one real defence: the last ~30% of the
+window is history the search never saw, so its score there is an independent
+result. That guarantee holds **exactly once per slice of history**.
+
+Optimize a strategy, save the draft, then optimize *that draft* over the same
+period, and the guarantee is quietly gone. You are now choosing settings while
+already knowing how they scored on the held-out portion — so it isn't held out
+any more. After a few rounds that slice has effectively seen thousands of
+configurations, while the app keeps printing a confident number beside them.
+Nothing could see this happening, because each draft was just another strategy.
+
+A draft saved from a search now records **what it was searched from and over how
+many days**. Every later run walks that chain and says which generation it is:
+"Generation 3: this strategy's line has already been through 2 searches", with a
+plain explanation of why the number above it is no longer independent.
+
+It also names the thing people expect to reset it but doesn't: **changing the day
+count is not fresh data.** Every window ends today, so a 180-day window sits
+entirely inside a 200-day one. Changing the **symbols**, or waiting for time to
+pass, is what actually buys history the strategy hasn't already been fitted to —
+and forward paper trading is the only test that can't be spent.
+
+Existing strategies have no ancestry recorded, which reads as generation 1. That
+is the honest default: nothing knows what was done before today.
+
 ## The optimizer now searches around your own settings (2026-08-01)
 
 Until now every setting was searched against a hand-written list of values —
