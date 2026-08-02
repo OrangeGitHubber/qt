@@ -113,6 +113,41 @@ def _active_param_space(base_strategy: dict) -> dict[str, list[float]]:
         space.pop("stop_loss_pct", None)
     return space
 
+def _baseline_values(base_strategy: dict, space: dict[str, list[float]]) -> dict[str, dict]:
+    """What the strategy is set to TODAY for each searched knob, so the result can
+    show before -> after.
+
+    Read from the base strategy the search actually ran against — NOT from
+    whatever the UI happens to have loaded — so editing the strategy after a run
+    can't silently rewrite the "before" and make the search look like it proposed
+    something it didn't.
+
+    `in_grid` is False when the current value isn't one of the values the search
+    could draw from. That matters: the grid is coarse, so a strategy sitting at
+    3.5% when the grid holds 3.0 and 4.0 was never actually evaluated at its own
+    setting, and "the search picked 4.0 over your 3.5" would be a claim nobody
+    tested."""
+    params = base_strategy.get("params") or {}
+    entry = params.get("entry") or {}
+    exit_rules = params.get("exit") or {}
+    out: dict[str, dict] = {}
+    for key, values in space.items():
+        if key == "macd_slow":
+            raw = (params.get("macd") or {}).get("slow", 26)
+        elif key == "atr_stop_mult":
+            raw = (params.get("atr") or {}).get("stop_mult")
+        elif key in _ENTRY_KNOBS:
+            raw = entry.get(key)
+        else:
+            raw = exit_rules.get(key)
+        current = None if raw is None else float(raw)
+        out[key] = {
+            "value": current,
+            "in_grid": current is not None and any(abs(current - v) < 1e-9 for v in values),
+        }
+    return out
+
+
 ProgressFn = Callable[[int, int], None]
 BacktestFn = Callable[..., dict]
 
@@ -504,6 +539,9 @@ def optimize(
         "out_of_sample_window": _window(boundary, t1),
         "results": results,
         "best": results[0] if results else None,
+        # The strategy's CURRENT value for each searched knob — the "before" of
+        # the before/after, captured from the strategy this search ran against.
+        "baseline_params": _baseline_values(base_strategy, space),
         "best_draft_params": best_draft,
         "neighbourhood": neighbourhood,
         "hold_benchmark_comparison": {

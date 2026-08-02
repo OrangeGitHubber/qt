@@ -36,6 +36,30 @@ The P&L column in the journal is still gross, and now says so.
 but don't post real fee activities, so on paper this job runs, finds nothing,
 and correctly reports "no fees" rather than inventing them.
 
+## Optimizer results now show before and after (2026-08-01)
+
+"Winning settings" used to be a bare list of numbers, which left the most useful
+question unanswered: *what would actually change?* A proposal of 2% trailing stop
+reads very differently when you're already at 2%.
+
+Each searched setting now shows your current value next to the proposed one, with
+a count at the top ("2 of 4 settings differ"). Settings the search agreed with are
+still listed, marked **unchanged** — the search confirming what you already had is
+a real result, and hiding those rows would make it look like the setting was never
+tested.
+
+The "before" comes from the strategy the search actually ran against, not from
+whatever is on screen afterwards, so editing the strategy later can't quietly
+rewrite history and make the search look like it proposed something it didn't.
+
+One honest caveat is surfaced rather than glossed over: the search tries a coarse
+set of values, so if your current setting sits between two of them (say 3.5% when
+it tries 3.0 and 4.0), it says so. Your value was never tested directly, and
+"the search picked 4.0 over your 3.5" would be a comparison nobody ran.
+
+Nothing is colour-coded by direction — a wider stop isn't "bad" and a tighter one
+isn't "good", so a red/green verdict the search never made would be misleading.
+
 ## Why the new ATR knob wasn't showing up (2026-08-01)
 
 The ATR search shipped earlier today, but running it still showed no ATR

@@ -110,6 +110,63 @@ function Stat({ label, value, tone, sub }: { label: string; value: string; tone?
   );
 }
 
+// The label already carries the unit ("Min gain today (%)"), so the value is
+// shown bare — except where 0 means the rule is switched off entirely, which
+// "0" reads as a setting rather than an absence.
+const OFF_AT_ZERO = new Set(["take_profit_pct", "rsi_max", "rsi_min", "exit_rsi_above"]);
+
+function fmtKnob(knob: string, v: number | null | undefined): string {
+  if (v == null) return "not set";
+  return v === 0 && OFF_AT_ZERO.has(knob) ? "off" : String(v);
+}
+
+// One knob, before -> after. Unchanged knobs are shown too rather than hidden:
+// "the search agreed with what you already had" is a real result, and dropping
+// the row would make it look like the knob wasn't searched at all.
+function KnobDiff({
+  knob,
+  from,
+  to,
+  inGrid,
+}: {
+  knob: string;
+  from: number | null | undefined;
+  to: number;
+  inGrid: boolean;
+}) {
+  const label = KNOB_LABELS[knob] ?? knob;
+  const changed = from == null || Math.abs(from - to) > 1e-9;
+  return (
+    <div className={`knob-diff${changed ? "" : " knob-same"}`}>
+      <div className="knob-diff-label">{label}</div>
+      <div
+        className="knob-diff-values"
+        aria-label={changed ? `${label}: ${fmtKnob(knob, from)} changes to ${fmtKnob(knob, to)}` : `${label}: unchanged at ${fmtKnob(knob, to)}`}
+      >
+        {changed ? (
+          <>
+            <span className="knob-from">{fmtKnob(knob, from)}</span>
+            <span className="knob-arrow" aria-hidden="true">
+              →
+            </span>
+            <span className="knob-to knob-changed">{fmtKnob(knob, to)}</span>
+          </>
+        ) : (
+          <>
+            <span className="knob-to">{fmtKnob(knob, to)}</span>
+            <span className="knob-unchanged">unchanged</span>
+          </>
+        )}
+      </div>
+      {from != null && !inGrid && (
+        <div className="knob-diff-note hint">
+          Your {fmtKnob(knob, from)} isn't one of the values this search tries, so it was never tested directly.
+        </div>
+      )}
+    </div>
+  );
+}
+
 // One knob's plateau strip: the winner plus its immediate neighbours. If the
 // neighbours score similarly, the winner sits on a plateau (trustworthy); if the
 // winner spikes alone, it's probably noise.
@@ -686,17 +743,38 @@ export default function Optimizer() {
 
             <div className="deployment">
               <h4>Winning settings (the draft)</h4>
-              <div className="stats">
-                {KNOB_ORDER.filter(
-                  (k) => (result.best!.params as unknown as Record<string, number>)[k] !== undefined,
-                ).map((k) => (
-                  <Stat
-                    key={k}
-                    label={KNOB_LABELS[k]}
-                    value={String((result.best!.params as unknown as Record<string, number>)[k])}
-                  />
-                ))}
-              </div>
+              {(() => {
+                const best = result.best!.params as unknown as Record<string, number>;
+                const base = result.baseline_params ?? {};
+                const knobs = KNOB_ORDER.filter((k) => best[k] !== undefined);
+                const changed = knobs.filter((k) => {
+                  const from = base[k]?.value;
+                  return from == null || Math.abs(from - best[k]) > 1e-9;
+                });
+                return (
+                  <>
+                    <p className="hint">
+                      What the search would change, next to what "{result.strategy_name ?? strategy?.name}" is set to
+                      now —{" "}
+                      <strong>
+                        {changed.length} of {knobs.length} setting{knobs.length === 1 ? "" : "s"}
+                      </strong>{" "}
+                      {changed.length === 1 ? "differs" : "differ"}.
+                    </p>
+                    <div className="knob-diffs">
+                      {knobs.map((k) => (
+                        <KnobDiff
+                          key={k}
+                          knob={k}
+                          from={base[k]?.value}
+                          to={best[k]}
+                          inGrid={base[k]?.in_grid ?? true}
+                        />
+                      ))}
+                    </div>
+                  </>
+                );
+              })()}
             </div>
 
             {hb && (

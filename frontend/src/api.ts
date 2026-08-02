@@ -805,6 +805,10 @@ export interface OptimizerResult {
   results: OptimizerResultRow[];
   best: OptimizerResultRow | null;
   best_draft_params: StrategyParams;
+  // The strategy's value for each searched knob AT THE TIME OF THE SEARCH — the
+  // "before" of the before/after. in_grid is false when that value wasn't one of
+  // the coarse grid values, i.e. the search never actually evaluated it.
+  baseline_params?: Record<string, { value: number | null; in_grid: boolean }>;
   neighbourhood: Record<string, OptimizerNeighbourPoint[]>;
   hold_benchmark_comparison: {
     strategy_out_of_sample_pct: number | null;

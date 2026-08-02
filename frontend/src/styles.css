@@ -1313,6 +1313,76 @@ td.detail p {
   font-variant-numeric: tabular-nums;
 }
 
+/* Optimizer: before -> after for each searched knob. Same card treatment as
+   .stat, but the value row carries two numbers and an arrow between them. */
+.knob-diffs {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 0.75rem;
+  margin: 0.75rem 0 1.25rem;
+}
+
+.knob-diff {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.6rem 0.8rem;
+}
+
+.knob-diff-label {
+  color: var(--muted);
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.knob-diff-values {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  /* Digits must not shift the arrow around as values change between runs. */
+  font-variant-numeric: tabular-nums;
+}
+
+.knob-from {
+  font-size: 1.15rem;
+  color: var(--muted);
+}
+
+.knob-arrow {
+  color: var(--muted);
+}
+
+.knob-to {
+  font-size: 1.15rem;
+  font-weight: 700;
+}
+
+/* The proposed value is the only thing highlighted here. Deliberately NOT
+   red/green: a wider stop is not "bad" and a tighter one is not "good", so
+   colouring by direction would state a verdict the search never made. */
+.knob-changed {
+  color: var(--accent);
+}
+
+/* An unchanged knob stays visible — "the search agreed with your setting" is a
+   result — but recedes so the changes read first. */
+.knob-same .knob-to {
+  color: var(--muted);
+  font-weight: 400;
+}
+
+.knob-unchanged {
+  color: var(--muted);
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.knob-diff-note {
+  margin-top: 0.35rem;
+}
+
 /* Symbol picker */
 .picker {
   position: relative;
