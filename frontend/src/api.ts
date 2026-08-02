@@ -1267,6 +1267,18 @@ export interface FidelityReport {
     // membership that changed and changed back looks identical from any two
     // points in time, so only a count can reveal it.
     basket_changes_during_window?: number;
+    // Every edit inside the window, with what moved and how many real trades
+    // followed it — reported even when the window was too churned to split, which
+    // is exactly when it is the only thing that can explain the mismatches.
+    changes?: {
+      at: string;
+      changed: { field: string; then: unknown; now: unknown }[];
+      live_trades_after: number;
+      version_no: number | null;
+    }[];
+    // The longest unedited stretch that actually traded: the window that would
+    // measure the backtester rather than the edits.
+    stable_window?: { start: string; end: string; days: number; live_trades: number } | null;
     // Whether the window was CUT at the moments the configuration changed, so
     // each stretch was replayed with the settings that were live during it.
     // When true, the drift above describes what moved rather than invalidating
@@ -1334,5 +1346,9 @@ export const runFidelity = (body: {
   strategy_id: number;
   days: number;
   mode: string;
+  // An explicit stretch, which `days` cannot express — the useful comparison on
+  // an edited strategy is a period that ENDED in the past.
+  window_start?: string;
+  window_end?: string;
   imported_trades?: unknown[];
 }) => fetch("/api/fidelity/compare", json(body)).then((r) => handle<FidelityReport>(r));

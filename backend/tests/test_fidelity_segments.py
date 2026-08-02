@@ -301,3 +301,131 @@ def test_a_basket_edited_mid_window_splits_it_too(client, configured):
     # the second against the two-symbol one — the point of the whole exercise.
     assert [s["symbols"] for s in segments] == [1, 2]
     assert {m["symbol"] for m in body["matched"]} == {"SEGF1", "SEGF2"}
+
+
+# --- when there are too many edits to split -------------------------------
+
+
+def test_the_change_log_says_what_moved_and_how_much_traded_after_it():
+    """Werner's ask: show the edits alongside the trades. A flat list of 48
+    mismatches is unreadable; "the universe widened on the 24th and 30 of them
+    are after that" is a finding."""
+    from datetime import datetime, timedelta, timezone
+
+    from qt.api.fidelity import _change_log, _Segment
+
+    now = datetime.now(timezone.utc)
+    segments = [
+        _Segment(start=now - timedelta(days=10), end=now - timedelta(days=6),
+                 config={"universe": "basket", "params": {}}, version_no=1,
+                 symbols=["MS"], scanner_replay=False, universe_known=True),
+        _Segment(start=now - timedelta(days=6), end=now - timedelta(days=4),
+                 config={"universe": "scanner", "params": {}}, version_no=2,
+                 symbols=[], scanner_replay=True, universe_known=True),
+        # A THIRD stretch, so a count that forgot its upper bound would sweep up
+        # these later trades and attribute them to the edit before them.
+        _Segment(start=now - timedelta(days=4), end=now,
+                 config={"universe": "watchlist", "params": {}}, version_no=3,
+                 symbols=[], scanner_replay=False, universe_known=True),
+    ]
+    live = [
+        {"entry_day": (now - timedelta(days=8)).strftime("%Y-%m-%d"), "status": "closed"},
+        {"entry_day": (now - timedelta(days=5)).strftime("%Y-%m-%d"), "status": "closed"},
+        {"entry_day": (now - timedelta(days=2)).strftime("%Y-%m-%d"), "status": "closed"},
+        {"entry_day": (now - timedelta(days=1)).strftime("%Y-%m-%d"), "status": "closed"},
+    ]
+    log = _change_log(segments, live)
+    assert len(log) == 2
+    assert log[0]["live_trades_after"] == 1   # that stretch only, not everything after
+    assert any(c["field"] == "Universe" for c in log[0]["changed"])
+
+
+def test_the_suggested_window_is_the_busiest_unedited_stretch():
+    """With the window too churned to split, the useful next move is a stretch
+    BETWEEN edits. Ranked by trades, not by length: a long quiet stretch proves
+    less than a short busy one, because the sample size is what the verdict
+    rests on."""
+    from datetime import datetime, timedelta, timezone
+
+    from qt.api.fidelity import _stable_window, _Segment
+
+    now = datetime.now(timezone.utc)
+
+    def seg(from_days, to_days):
+        return _Segment(start=now - timedelta(days=from_days), end=now - timedelta(days=to_days),
+                        config={}, version_no=1, symbols=[], scanner_replay=False,
+                        universe_known=True)
+
+    def trade(days_ago):
+        return {"entry_day": (now - timedelta(days=days_ago)).strftime("%Y-%m-%d"),
+                "status": "closed"}
+
+    segments = [seg(40, 20), seg(20, 15), seg(15, 0)]
+    # The LONG stretch (20 days) holds 2 trades; the SHORT one (5 days) holds 3.
+    # Both clear the minimum, so the two rankings genuinely disagree — with only
+    # one of them qualifying, this test would pass either way.
+    live = [trade(35), trade(34), trade(18), trade(17), trade(16)]
+    best = _stable_window(segments, live)
+    assert best["live_trades"] == 3
+    assert best["days"] == 5, "ranked by length instead of by trades"
+    assert best["start"].startswith((now - timedelta(days=20)).strftime("%Y-%m-%d"))
+
+
+def test_a_stretch_with_one_trade_is_not_suggested():
+    """A window with a single trade is a smaller anecdote, not a better
+    comparison — proposing it would just repeat the same emptiness."""
+    from datetime import datetime, timedelta, timezone
+
+    from qt.api.fidelity import _stable_window, _Segment
+
+    now = datetime.now(timezone.utc)
+    segments = [
+        _Segment(start=now - timedelta(days=10), end=now, config={}, version_no=1,
+                 symbols=[], scanner_replay=False, universe_known=True)
+    ]
+    live = [{"entry_day": (now - timedelta(days=5)).strftime("%Y-%m-%d"), "status": "closed"}]
+    assert _stable_window(segments, live) is None
+
+
+def test_an_explicit_window_bounds_the_trades_at_both_ends(client, configured):
+    """Naming a past stretch is the point of the suggestion. If the journal read
+    stayed open-ended, every trade AFTER that stretch would be counted as one the
+    backtest missed — turning the fix into a worse report than the problem."""
+    from datetime import datetime, timedelta, timezone
+    from unittest.mock import AsyncMock, patch
+
+    from qt.broker.alpaca import AlpacaClient
+
+    sid = client.post("/api/strategies", json=_strategy_body(3, ["WNDW"], "window bounds")).json()["id"]
+    now = datetime.now(timezone.utc)
+    with session_scope() as s:
+        for days_ago in (30, 5):          # one inside the window, one long after
+            s.add(Trade(
+                strategy_id=sid, mode="paper", symbol="WNDW", asset_class="stock",
+                status="closed", qty=10, notional=1000, entry_price=100.0,
+                exit_price=110.0, pnl=100.0, entry_reason="gain 5%",
+                exit_reason="take-profit: +10%",
+                entry_at=now - timedelta(days=days_ago),
+                exit_at=now - timedelta(days=days_ago - 1),
+            ))
+
+    bars = [{"t": (now - timedelta(days=n)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+             "o": 100, "h": 100, "l": 100, "c": 100, "v": 1e6, "vw": 100} for n in (35, 34, 33)]
+    with patch.object(AlpacaClient, "historical_bars", new=AsyncMock(return_value={"WNDW": bars})):
+        body = client.post("/api/fidelity/compare", json={
+            "strategy_id": sid,
+            "window_start": (now - timedelta(days=32)).isoformat(),
+            "window_end": (now - timedelta(days=20)).isoformat(),
+        }).json()
+    assert body["decision"]["live_trades"] == 1, "the trade after the window leaked in"
+
+
+def test_a_backwards_window_is_refused(client, configured):
+    sid = client.post("/api/strategies", json=_strategy_body(3, ["WNDW"], "backwards")).json()["id"]
+    now = datetime.now(timezone.utc)
+    r = client.post("/api/fidelity/compare", json={
+        "strategy_id": sid,
+        "window_start": now.isoformat(),
+        "window_end": (now - timedelta(days=10)).isoformat(),
+    })
+    assert r.status_code == 422 and "ends before it starts" in r.json()["detail"]

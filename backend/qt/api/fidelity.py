@@ -55,6 +55,11 @@ router = APIRouter(prefix="/api/fidelity", tags=["fidelity"])
 class CompareBody(BaseModel):
     strategy_id: int
     days: int = Field(default=90, ge=7, le=730)
+    # An explicit window, which `days` cannot express: the useful comparison on a
+    # heavily edited strategy is a stretch BETWEEN edits, and that stretch ended
+    # in the past. Given both, `days` is ignored.
+    window_start: datetime | None = None
+    window_end: datetime | None = None
     # Which real history to judge against. Paper is the honest default: it has
     # the volume, and DECISION fidelity is exactly as testable there as live.
     # Execution fidelity is not — Alpaca's paper fills are simulated, so
@@ -383,6 +388,68 @@ def _build_segments(
     return segments
 
 
+def _change_log(segments: list[_Segment], live_rows: list[dict]) -> list[dict]:
+    """Each moment the configuration or basket changed, with what moved and how
+    many real trades were made under the stretch that followed.
+
+    Werner asked for the edits to appear alongside the trades, and the reason is
+    sound: "48 trades the backtest invented" is unreadable as a flat list, while
+    "the universe widened on the 24th, and 30 of them are after that" is a
+    finding. The count per stretch is what turns a date into an explanation."""
+    log: list[dict] = []
+    for previous, segment in zip(segments, segments[1:]):
+        traded = sum(
+            1
+            for r in live_rows
+            if (entry := _parse(r.get("entry_day"))) is not None
+            and segment.start <= entry < segment.end
+        )
+        log.append(
+            {
+                "at": _iso(segment.start),
+                "changed": fidelity.config_drift(previous.config, segment.config)[:4],
+                "live_trades_after": traded,
+                "version_no": segment.version_no,
+            }
+        )
+    return log
+
+
+def _stable_window(segments: list[_Segment], live_rows: list[dict]) -> dict | None:
+    """The longest stretch with no edit at all, and how many real trades it holds.
+
+    With 21 edits in 90 days there is no stable strategy to validate — every
+    comparison is measuring the edits. Rather than leave the user to work out
+    which dates to type, find the longest unedited stretch that actually traded
+    and hand it over. Needs at least two trades: a window with one is a smaller
+    anecdote, not a better comparison.
+
+    None when nothing qualifies, because proposing a window that would report
+    the same emptiness is worse than proposing nothing."""
+    best: dict | None = None
+    for segment in segments:
+        traded = [
+            r
+            for r in live_rows
+            if (entry := _parse(r.get("entry_day"))) is not None
+            and segment.start <= entry < segment.end
+            and r.get("status") in ("open", "closed")
+        ]
+        if len(traded) < 2:
+            continue
+        days = max(1, round((segment.end - segment.start).total_seconds() / 86400))
+        # Ranked by TRADES, not by length: a long quiet stretch proves less than
+        # a short busy one, and the sample size is what the verdict rests on.
+        if best is None or len(traded) > best["live_trades"]:
+            best = {
+                "start": _iso(segment.start),
+                "end": _iso(segment.end),
+                "days": days,
+                "live_trades": len(traded),
+            }
+    return best
+
+
 def _place_trades(
     segments: list[_Segment], live_rows: list[dict]
 ) -> tuple[int, list[dict]]:
@@ -428,13 +495,14 @@ def _parse(stamp: str | None) -> datetime | None:
         return None
 
 
-def _journal_rows(session: Session, strategy: Strategy, days: int, mode: str) -> list[dict]:
+def _journal_rows(
+    session: Session, strategy: Strategy, since: datetime, until: datetime, mode: str
+) -> list[dict]:
     """This instance's own trades for the window, shaped for the comparison.
 
     REJECTED rows are included on purpose. They are the only way to tell a trade
     the backtest invented from one the engine wanted and a rail refused, and
     those two mean opposite things about the replay."""
-    since = datetime.now(timezone.utc) - timedelta(days=days)
     day_of = _day_of(strategy.asset_class)
     rows = (
         session.query(Trade)
@@ -447,7 +515,9 @@ def _journal_rows(session: Session, strategy: Strategy, days: int, mode: str) ->
         # it was written, or the window would silently drop exactly the rows that
         # tell a blocked trade from an invented one.
         stamp = _aware(t.entry_at) or _aware(t.created_at)
-        if stamp is None or stamp < since:
+        # Bounded at BOTH ends now: comparing a past stretch against trades that
+        # ran after it would count every later trade as one the backtest missed.
+        if stamp is None or not (since <= stamp < until):
             continue
         out.append(
             {
@@ -594,10 +664,19 @@ async def compare(
     if not strategy:
         raise HTTPException(status_code=404, detail="Strategy not found.")
 
+    # The window, resolved once and used by everything below: an explicit
+    # start/end when given (the only way to name a stretch that ENDED in the
+    # past), otherwise the last `days` days. Computed before the journal read
+    # because both ends bound which trades are in scope.
+    since = _aware(body.window_start) or (datetime.now(timezone.utc) - timedelta(days=body.days))
+    until = _aware(body.window_end) or datetime.now(timezone.utc)
+    if until <= since:
+        raise HTTPException(status_code=422, detail="The window ends before it starts.")
+
     live_rows = (
         body.imported_trades
         if body.imported_trades is not None
-        else _journal_rows(session, strategy, body.days, body.mode)
+        else _journal_rows(session, strategy, since, until, body.mode)
     )
     if not live_rows:
         raise HTTPException(
@@ -627,8 +706,6 @@ async def compare(
     # config history here is not the history that produced them, and cutting the
     # window at THIS machine's edits would be splitting on unrelated events. The
     # export also carries days rather than moments, so there is nothing to cut on.
-    since = datetime.now(timezone.utc) - timedelta(days=body.days)
-    until = datetime.now(timezone.utc)
     segments = (
         _build_segments(session, strategy, since, until)
         if body.imported_trades is None
@@ -678,6 +755,8 @@ async def compare(
         result = await run(
             BacktestBody(
                 strategy_id=strategy.id,
+                window_start=since,
+                window_end=until,
                 symbols=symbols,
                 days=body.days,
                 scanner_replay=scanner_replay,
@@ -745,6 +824,15 @@ async def compare(
         # drift above: membership that changed and changed back looks identical
         # from any two points, so only a count can reveal it.
         "basket_changes_during_window": basket_changes,
+        # Every edit inside the window, with what moved and how many real trades
+        # followed it. Reported whether or not the window was split — when it was
+        # NOT split (too many edits) this is the only thing that can explain the
+        # mismatches, and it is exactly then that it matters most.
+        "changes": _change_log(segments, live_rows) if segments else [],
+        # The longest unedited stretch that actually traded. With a heavily edited
+        # window every comparison measures the edits; this is the window that
+        # would measure the backtester instead.
+        "stable_window": _stable_window(segments, live_rows) if len(segments) > 1 else None,
         # Was the window CUT at the moments the configuration changed, so each
         # stretch ran on the settings that were live during it?
         "segmented": segmented,

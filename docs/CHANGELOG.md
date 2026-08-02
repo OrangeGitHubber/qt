@@ -139,6 +139,31 @@ The P&L column in the journal is still gross, and now says so.
 but don't post real fee activities, so on paper this job runs, finds nothing,
 and correctly reports "no fees" rather than inventing them.
 
+## Fidelity: show the edits next to the trades, and offer a window worth using (2026-08-02)
+
+Running the comparison over 90 days of a strategy edited 21 times produced 1.5%
+agreement — and that number said nothing about the backtester. Every comparison
+across a churned window mostly measures the churn.
+
+**The edits now appear alongside the trades.** A collapsible list gives each
+change: when it happened, what moved, and how many real trades were made under
+the stretch that followed. "48 trades the backtest invented" is unreadable as a
+flat list; "the universe widened on the 24th, and 30 of them come after that" is
+a finding.
+
+**And it offers you a window worth comparing.** It finds the longest stretch you
+didn't edit, says how many trades are in it, and gives you a button to compare
+exactly that. Ranked by trades rather than by length on purpose — a long quiet
+stretch proves less than a short busy one, because the sample size is what the
+verdict rests on. A stretch with a single trade isn't offered at all: that's a
+smaller anecdote, not a better comparison.
+
+This is what the windowed replay was for. A comparison can now name a period that
+**ended in the past**, which "the last N days" cannot express, and the trade list
+is bounded at both ends — without that, every trade after the chosen stretch
+would be counted as one the backtest missed, turning the fix into a worse report
+than the problem.
+
 ## Basket changes are tracked to the moment, not the day (2026-08-02)
 
 Basket membership is recorded with a full timestamp. An edit at 14:32 is stored

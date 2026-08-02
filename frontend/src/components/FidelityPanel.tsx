@@ -22,6 +22,9 @@ export default function FidelityPanel() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [report, setReport] = useState<FidelityReport | null>(null);
+  // An explicit stretch, set by taking up the suggestion below. Null = use the
+  // "History (days)" box, which always ends now.
+  const [window, setWindow] = useState<{ start: string; end: string } | null>(null);
 
   useEffect(() => {
     getStrategies()
@@ -39,7 +42,14 @@ export default function FidelityPanel() {
     setError(null);
     setReport(null);
     try {
-      setReport(await runFidelity({ strategy_id: strategyId, days, mode }));
+      setReport(
+        await runFidelity({
+          strategy_id: strategyId,
+          days,
+          mode,
+          ...(window ? { window_start: window.start, window_end: window.end } : {}),
+        }),
+      );
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -100,6 +110,15 @@ export default function FidelityPanel() {
         </label>
       </div>
 
+      {window && (
+        <p className="hint">
+          Comparing <strong>{window.start.slice(0, 10)}</strong> to <strong>{window.end.slice(0, 10)}</strong> — a
+          stretch with no edits in it.{" "}
+          <button type="button" className="btn-ghost" onClick={() => setWindow(null)}>
+            Use the last {days} days instead
+          </button>
+        </p>
+      )}
       <button type="button" onClick={run} disabled={busy || strategyId === null}>
         {busy ? "Comparing…" : "Run comparison"}
       </button>
@@ -231,6 +250,67 @@ export default function FidelityPanel() {
                 </>
               )}
             </p>
+          )}
+
+          {report.config?.stable_window && (
+            <p className="hint">
+              <strong>
+                The longest stretch you didn't edit runs {report.config.stable_window.start.slice(0, 10)} to{" "}
+                {report.config.stable_window.end.slice(0, 10)} ({report.config.stable_window.days} days,{" "}
+                {report.config.stable_window.live_trades} trades).
+              </strong>{" "}
+              Comparing that measures the backtester; comparing a window you edited repeatedly mostly measures the
+              edits.{" "}
+              <button
+                type="button"
+                className="btn-ghost"
+                onClick={() =>
+                  setWindow({
+                    start: report.config!.stable_window!.start,
+                    end: report.config!.stable_window!.end,
+                  })
+                }
+              >
+                Use that window
+              </button>
+            </p>
+          )}
+
+          {(report.config?.changes?.length ?? 0) > 0 && (
+            <details className="fold">
+              <summary>
+                <span className="hint">
+                  {report.config!.changes!.length} configuration change
+                  {report.config!.changes!.length === 1 ? "" : "s"} during this window — what moved, and when
+                </span>
+              </summary>
+              <div className="table-scroll">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>When</th>
+                      <th>What changed</th>
+                      <th>Trades after it</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {report.config!.changes!.map((c) => (
+                      <tr key={c.at}>
+                        <td>{c.at.slice(0, 10)}</td>
+                        <td className="hint">
+                          {c.changed.length
+                            ? c.changed
+                                .map((d) => `${d.field} ${JSON.stringify(d.then)} → ${JSON.stringify(d.now)}`)
+                                .join("; ")
+                            : "basket membership"}
+                        </td>
+                        <td>{c.live_trades_after}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </details>
           )}
 
           <h4>
