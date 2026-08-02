@@ -60,6 +60,31 @@ The P&L column in the journal is still gross, and now says so.
 but don't post real fee activities, so on paper this job runs, finds nothing,
 and correctly reports "no fees" rather than inventing them.
 
+## Stocks get everything crypto got; the generation warning comes first (2026-08-02)
+
+This week's replay work was all driven and checked against crypto. The stock side
+uses separate tables, a different day stamp and a different sweep, so "it works
+for crypto" proved nothing about it. Checking it turned up a bug that only
+affects stocks.
+
+**A stock daily bar is stamped 14:00Z — and so are plenty of real 15-minute
+bars**, because that is the middle of the trading session. The code that decides
+which held days still need proper intraday bars was telling a stand-in from a
+real bar by its timestamp, so genuine 15-minute bars were being read as
+stand-ins. The effect: days that were already fully covered looked uncovered and
+were re-downloaded on **every single run**, forever. Stand-ins now carry an
+explicit mark instead of being guessed at.
+
+The rest of the stock path is verified rather than assumed: the daily fill, the
+gap detection, and the top-up all use the stock tables and the stock sweep.
+
+**The "Generation 3" warning now appears before you run**, not only on the
+result. A search takes minutes, and being told afterwards that the number was
+never independent is the wrong moment to learn it. Pick a strategy that came out
+of an earlier search and the optimizer says so immediately, with what would
+actually buy you fresh history (different symbols, or waiting — not a different
+day count, since every window ends today).
+
 ## Portfolio backtests get mixed resolution; the optimizer stops searching blind (2026-08-02)
 
 The two gaps left open by this week's bar-resolution work.

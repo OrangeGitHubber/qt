@@ -192,3 +192,99 @@ def test_the_dataset_loader_actually_applies_the_fill(monkeypatch):
     assert ds.daily_filled_days == 2  # the two days after it stopped being a riser
     covered = {b["t"][:10] for b in ds.bars["BTC/USD"]}
     assert days[2] in covered and days[3] in covered, "the held days must be visible"
+
+
+def test_the_stock_side_gets_the_same_treatment(monkeypatch):
+    """Everything above was exercised on the crypto tables. The stock side is a
+    separate set of tables with a different day stamp (14:00Z vs 12:00Z) and a
+    different sweep, so "it works for crypto" proves nothing about it."""
+    from datetime import datetime, timedelta, timezone
+
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from sqlalchemy.pool import StaticPool
+
+    from qt.api.backtest import load_scanner_replay_dataset
+    from qt.services import barcache
+
+    eng = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    barcache.CacheBase.metadata.create_all(eng)
+    Sess = sessionmaker(bind=eng, expire_on_commit=False)
+    monkeypatch.setattr(barcache, "_engine", eng)
+    monkeypatch.setattr(barcache, "_Session", Sess)
+
+    now = datetime.now(timezone.utc)
+    days = [(now - timedelta(days=n)).strftime("%Y-%m-%d") for n in (6, 5, 4, 3)]
+    riser = days[1]
+
+    with Sess() as s:
+        # Stock tables (the defaults), and a real 15-minute bar stamped at exactly
+        # 14:00Z — the same stamp cached_daily_bars gives a DAILY stock bar. If the
+        # fill were detected by timestamp this bar would be mistaken for one.
+        barcache.save_intraday_bars(s, "NVDA", [
+            _ibar(f"{days[0]}T14:00:00Z", 100.0),
+            _ibar(f"{riser}T14:00:00Z", 106.0),
+        ])
+        barcache.save_daily_bars(s, "NVDA", [
+            {"t": f"{d}T00:00:00Z", "o": c, "h": c, "l": c, "c": c, "v": 1e6, "vw": c}
+            for d, c in zip(days, (100.0, 106.0, 105.0, 104.0))
+        ])
+        barcache.store_movers(s, riser, [("NVDA", 6.0, 106.0, 1e8)])
+        s.commit()
+
+    ds = load_scanner_replay_dataset("stock", 30, 10)
+    assert ds.used_intraday is True
+    assert ds.market == "stock" and ds.benchmark_symbol == "SPY"
+    # The held days after it stopped being a riser are filled from the daily bars.
+    assert ds.daily_filled_days == 2
+    covered = {b["t"][:10] for b in ds.bars["NVDA"]}
+    assert days[2] in covered and days[3] in covered
+    # The real 14:00Z intraday bars are NOT tagged as fills…
+    real = [b for b in ds.bars["NVDA"] if b["t"].endswith("T14:00:00Z") and b["t"][:10] == riser]
+    assert real and not any(b.get("daily_fill") for b in real)
+    # …and the stand-ins are.
+    stand_ins = [b for b in ds.bars["NVDA"] if b["t"][:10] == days[2]]
+    assert stand_ins and all(b.get("daily_fill") for b in stand_ins)
+
+
+def test_real_bars_at_the_daily_stamp_are_not_mistaken_for_fills():
+    """A stock DAILY bar is stamped 14:00Z, and 14:00Z is also an ordinary
+    15-minute bar time during the session. Spotting fills by their timestamp
+    therefore misreads genuine intraday bars as stand-ins, concludes the held
+    days are uncovered, and re-downloads them on EVERY run — for a symbol whose
+    coverage was already complete."""
+    import asyncio
+
+    from qt.api.backtest import ScannerReplayDataset, fetch_held_position_bars
+
+    real_bars = [
+        _ibar("2026-05-05T14:00:00Z", 100.0),
+        _ibar("2026-05-05T18:00:00Z", 101.0),
+        # 05-06's ONLY bar sits on the daily stamp. With any timestamp-based test
+        # this day looks uncovered and gets re-fetched; it is a real 15-minute bar.
+        _ibar("2026-05-06T14:00:00Z", 102.0),
+    ]
+    ds = ScannerReplayDataset(
+        bars={"NVDA": real_bars}, eligible_by_day={}, timeframe="15Min",
+        used_intraday=True, union=["NVDA"], market="stock", benchmark_class="stock",
+        benchmark_symbol="SPY", start_day="2026-05-05", days_replayed=2,
+        replayed=["NVDA"], dropped=[], intraday_covered=1, daily={}, daily_filled_days=0,
+    )
+    result = {
+        "trade_list": [{"symbol": "NVDA", "entry_day": "2026-05-05", "exit_day": "2026-05-06"}],
+        "open_positions": [],
+    }
+
+    # Records rather than raises: the fetch path retries and then swallows
+    # exceptions by design, so a raising stub would be silently absorbed and the
+    # test would pass no matter what.
+    calls: list = []
+
+    class Spy:
+        async def historical_bars(self, symbols, *a, **kw):
+            calls.append(tuple(symbols))
+            return {}
+
+    filled = asyncio.run(fetch_held_position_bars(Spy(), result, ds, asset_class="stock"))
+    assert calls == [], f"re-downloaded days that were already covered: {calls}"
+    assert filled == 0

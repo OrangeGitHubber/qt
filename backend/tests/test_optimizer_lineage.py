@@ -139,3 +139,20 @@ def test_a_cycle_cannot_hang_the_walk(client):
     with session_scope() as s:
         lineage = optimizer_lineage(s, s.get(Strategy, b), 180)
     assert lineage["generation"] >= 2  # terminated at all is the point
+
+
+def test_the_api_returns_the_provenance_the_ui_walks(client):
+    """The optimizer form warns BEFORE a search that a strategy is already the
+    Nth generation, and it does that by walking the chain across the strategies
+    it already has. That only works if the list endpoint carries the links —
+    they were stored but never returned."""
+    parent = client.post("/api/strategies", json=_strategy_body("ancestor")).json()["id"]
+    client.post(
+        "/api/strategies",
+        json=_strategy_body("descendant", optimized_from_id=parent, optimized_days=180),
+    )
+    rows = {s["name"]: s for s in client.get("/api/strategies").json()}
+    assert rows["descendant"]["optimized_from_id"] == parent
+    assert rows["descendant"]["optimized_days"] == 180
+    # A hand-built strategy reports no ancestry rather than a fabricated one.
+    assert rows["ancestor"]["optimized_from_id"] is None

@@ -244,6 +244,10 @@ def _serialize(s: Strategy) -> dict:
         "allow_concurrent_symbol": bool(s.allow_concurrent_symbol),
         "swing_mode": s.swing_mode,
         "ignore_regime": s.ignore_regime,
+        # Provenance, so the UI can walk the chain and warn BEFORE a search runs
+        # that this strategy is already the Nth generation off the same history.
+        "optimized_from_id": s.optimized_from_id,
+        "optimized_days": s.optimized_days,
     }
 
 

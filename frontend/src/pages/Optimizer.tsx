@@ -134,6 +134,36 @@ function deriveSearchTimeframe(s: StrategyRow | undefined): "1Day" | "15Min" {
   return wantsIntradayRules(s) ? "15Min" : "1Day";
 }
 
+// How many searches this strategy's line has already been through, walked from
+// the strategies we already hold. The backend computes the same thing and its
+// answer is what the RESULT reports; this exists so the warning can appear
+// BEFORE you spend several minutes on a run, rather than only after.
+//
+// The out-of-sample split is honest exactly once per slice of history: optimize a
+// draft that came out of an earlier search and you are choosing settings while
+// already knowing how they scored on the supposedly held-out part.
+function generationOf(strategy: StrategyRow | undefined, all: StrategyRow[]): {
+  generation: number;
+  sameWindow: number;
+  root: string | null;
+} {
+  const byId = new Map(all.map((s) => [s.id, s]));
+  const seen = new Set<number>();
+  let current = strategy;
+  let generation = 1;
+  let sameWindow = 0;
+  let root: string | null = null;
+  while (current?.optimized_from_id != null && !seen.has(current.id)) {
+    seen.add(current.id);
+    generation += 1;
+    if (current.optimized_days != null) sameWindow += 1;
+    const parent = byId.get(current.optimized_from_id);
+    root = parent?.name ?? root;
+    current = parent;
+  }
+  return { generation, sameWindow, root };
+}
+
 function Stat({ label, value, tone, sub }: { label: string; value: string; tone?: "up" | "down"; sub?: string }) {
   return (
     <div className="stat">
@@ -691,6 +721,28 @@ export default function Optimizer() {
             trying more settings makes a good in-sample score <em>easier to hit by luck</em>, which is exactly why the
             out-of-sample check matters.
           </p>
+          {(() => {
+            // Shown BEFORE the run, not only on the result: a search takes
+            // minutes, and being told afterwards that the number was never
+            // independent is the wrong moment to learn it.
+            const line = generationOf(strategy, strategies);
+            if (!strategy || line.generation < 2) return null;
+            return (
+              <p className="hint warn">
+                <IconWarn className="icon-inline" />{" "}
+                <strong>
+                  Generation {line.generation}: this strategy came out of{" "}
+                  {line.generation === 2 ? "an earlier search" : `${line.generation - 1} earlier searches`}
+                  {line.root ? <> of "{line.root}"</> : null}.
+                </strong>{" "}
+                The out-of-sample figure is only independent the <em>first</em> time a slice of history is searched.
+                Searching a draft that came out of an earlier search means choosing settings while already knowing how
+                they scored on the held-out part — so it isn't held out any more, and the result will flatter itself.
+                Changing the <strong>symbols</strong>, or waiting for new history, is what buys data this line hasn't
+                been fitted to; a different day count doesn't, because every window ends today.
+              </p>
+            );
+          })()}
           {error !== null && <div className="error">{error}</div>}
           {/* Not disabled when nothing is selected — a dead button looks broken.
               start() explains instead. */}

@@ -733,3 +733,51 @@ def test_a_portfolio_strategy_with_nothing_to_gain_from_intraday_is_still_refuse
     detail = r.json()["detail"]
     assert "MACD" in detail                       # names the real signal...
     assert strat["name"] in detail                # ...and which strategy has it
+
+
+def test_a_stock_replay_tops_up_from_the_stock_sweep_not_the_crypto_one(client, configured, monkeypatch):
+    """The auto top-up picks its sweep by asset class. Getting that branch wrong
+    would read and write the WRONG tables — a crypto sweep for a stock strategy
+    finds no movers, does nothing, and reports success, leaving the run silently
+    on daily bars forever."""
+    from qt.services import barsweep
+
+    eng = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    barcache.CacheBase.metadata.create_all(eng)
+    Sess = sessionmaker(bind=eng, expire_on_commit=False)
+    monkeypatch.setattr(barcache, "_engine", eng)
+    monkeypatch.setattr(barcache, "_Session", Sess)
+    d0 = (datetime.now(timezone.utc) - timedelta(days=6)).strftime("%Y-%m-%d")
+    d1 = (datetime.now(timezone.utc) - timedelta(days=5)).strftime("%Y-%m-%d")
+
+    with Sess() as s:  # stock tables, daily bars only — no intraday coverage
+        barcache.save_daily_bars(s, "NVDA", [
+            {"t": f"{d0}T14:00:00Z", "o": 100, "h": 100, "l": 100, "c": 100, "v": 1e6, "vw": 100},
+            {"t": f"{d1}T14:00:00Z", "o": 106, "h": 106, "l": 106, "c": 106, "v": 1e6, "vw": 106},
+        ])
+        barcache.store_movers(s, d1, [("NVDA", 6.0, 106.0, 1e8)])
+        s.commit()
+
+    used: list[str] = []
+
+    async def stock_sweep(*a, **kw):
+        used.append("stock")
+        return {"days": 0, "symbols_saved": 0, "bars_saved": 0, "errors": 0, "skipped": 0,
+                "timeframe": "15Min"}
+
+    async def crypto_sweep(*a, **kw):
+        used.append("crypto")
+        return {"days": 0, "symbols_saved": 0, "bars_saved": 0, "errors": 0, "skipped": 0,
+                "timeframe": "15Min"}
+
+    monkeypatch.setattr(barsweep, "sweep_intraday_movers", stock_sweep)
+    monkeypatch.setattr(barsweep, "sweep_crypto_intraday", crypto_sweep)
+
+    sid = _make(client, "stock")
+    fetch = AsyncMock(side_effect=Exception("no benchmark"))
+    with patch.object(AlpacaClient, "historical_bars", new=fetch):
+        r = client.post("/api/backtest", json={
+            "strategy_id": sid, "scanner_replay": True, "days": 30,
+            "starting_cash": 5000, "spread_pct": 0})
+    assert r.status_code == 200, r.text
+    assert used == ["stock"], f"wrong sweep for a stock strategy: {used}"

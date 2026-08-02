@@ -153,6 +153,12 @@ def _fill_intraday_gaps(
         ]
         if gap_bars:
             filled += len(gap_bars)
+            # Tagged, so a later pass can tell a stand-in from a real bar. The
+            # timestamp cannot: a daily stock bar is stamped 14:00Z and 14:00Z is
+            # an ordinary 15-minute bar time during the session, so matching on
+            # the stamp would read genuine intraday bars as fills and re-download
+            # days that were already covered, every single run.
+            gap_bars = [{**b, "daily_fill": True} for b in gap_bars]
             merged[symbol] = sorted(series + gap_bars, key=lambda b: b["t"])
         else:
             merged[symbol] = series
@@ -220,16 +226,14 @@ async def fetch_held_position_bars(
 
     # Which days inside each held span have no intraday bars. Days the cache
     # already covers are skipped — this only fills genuine holes.
+    # "Covered" must mean 15-MINUTE coverage: the daily stand-ins are in ds.bars
+    # too, and counting them would leave the very days this exists to fetch
+    # looking already done. They carry an explicit tag rather than being spotted
+    # by their timestamp — see _fill_intraday_gaps for why the stamp lies.
     covered_by_symbol: dict[str, set[str]] = {
-        symbol: {b["t"][:10] for b in series} for symbol, series in ds.bars.items()
+        symbol: {b["t"][:10] for b in series if not b.get("daily_fill")}
+        for symbol, series in ds.bars.items()
     }
-    # A daily-filled bar is in ds.bars too, so "covered" has to mean 15-MINUTE
-    # coverage specifically; anything stamped at the daily hour was the fill.
-    daily_stamp = "T12:00:00Z" if crypto else "T14:00:00Z"
-    for symbol, series in ds.bars.items():
-        covered_by_symbol[symbol] = {
-            b["t"][:10] for b in series if not b["t"].endswith(daily_stamp)
-        }
 
     wanted: dict[str, tuple[str, str]] = {}
     for symbol, (first, last) in spans.items():
