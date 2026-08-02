@@ -60,6 +60,34 @@ The P&L column in the journal is still gross, and now says so.
 but don't post real fee activities, so on paper this job runs, finds nothing,
 and correctly reports "no fees" rather than inventing them.
 
+## Held days now get real 15-minute bars, not a daily stand-in (2026-08-02)
+
+Covering a held position's missing days with its daily bar stopped the replay
+going blind, but it couldn't fix the *timing*. A daily bar resolves an exit once
+per day, so a stop that was really hit at 11:00 gets settled at that bar instead
+— and the capital and the position slot stay tied up in the meantime. Entries the
+strategy would have taken with that freed slot never happen. The P&L was honest;
+the schedule wasn't.
+
+So the replay now goes back for the real bars. It runs once, sees which symbols
+were actually held and for how long, downloads the 15-minute bars for exactly
+those days, and replays again on the better data.
+
+Why it has to work in that order: which symbols get held, and for how long, is a
+property of the strategy — there is no way to know it before the replay runs.
+Fetching intraday bars for every riser across the whole window up front would
+download tens of times more than any single run uses, nearly all of it for
+symbols the strategy never buys. Learning the holdings first keeps the download
+bounded by what was genuinely traded.
+
+It is paid once. The bars land in the cache, so re-running the same period reads
+them offline — and the optimizer, which searches the same universe over the same
+window, gets them for free.
+
+The daily fill stays as the floor beneath this: if a download fails or a symbol
+has no intraday data, the position is still marked and its stops still checked at
+daily resolution rather than going unwatched.
+
 ## A held position no longer goes blind when its symbol stops rising (2026-08-02)
 
 The other half of the flat-line problem, and the more damaging half.

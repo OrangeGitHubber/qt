@@ -22,7 +22,7 @@ import uuid
 from collections.abc import Callable
 from contextvars import ContextVar
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
@@ -157,6 +157,129 @@ def _fill_intraday_gaps(
         else:
             merged[symbol] = series
     return merged, filled
+
+
+def held_spans(result: dict) -> dict[str, tuple[str, str]]:
+    """For each symbol the replay actually held, the first entry day and the last
+    day it was still open — merged across every position in that symbol.
+
+    This is the coverage a replay genuinely needs at full resolution. The cache is
+    filled per mover-day, which is the right rule for deciding ENTRIES (a symbol
+    can only be bought on a day it was a riser) and the wrong one for HOLDING: a
+    position outlives its symbol's time on the top-N list, and every day it is
+    open needs bars for the exits to be evaluated when they actually happened."""
+    spans: dict[str, tuple[str, str]] = {}
+
+    def widen(symbol: str, first: str, last: str) -> None:
+        low, high = spans.get(symbol, (first, last))
+        spans[symbol] = (min(low, first), max(high, last))
+
+    for trade in result.get("trade_list") or []:
+        entry, exit_day = trade.get("entry_day"), trade.get("exit_day")
+        if entry:
+            widen(trade["symbol"], entry, exit_day or entry)
+    for position in result.get("open_positions") or []:
+        # Still open at the end, so it needed bars right up to the last day tested.
+        last = (result.get("equity_days") or [position.get("entry_day")])[-1]
+        if position.get("entry_day"):
+            widen(position["symbol"], position["entry_day"], last)
+    return spans
+
+
+async def fetch_held_position_bars(
+    client: AlpacaClient,
+    result: dict,
+    ds: ScannerReplayDataset,
+    *,
+    asset_class: str,
+    report=None,
+) -> int:
+    """Download the 15-minute bars for days a position was HELD but the cache only
+    had a daily bar for, and store them. Returns how many symbol-days were filled.
+
+    Why a second pass rather than fetching up front: which symbols get held, and
+    for how long, is a property of the strategy — it cannot be known before the
+    replay runs. Pre-fetching intraday bars for every mover across the whole
+    window would download tens of times more data than any run uses, most of it
+    for symbols the strategy never buys.
+
+    So: replay once to learn the holdings, fetch exactly those symbol-days, replay
+    again. The cost is bounded by what was actually held, and it is paid once —
+    the bars land in the cache, so later runs over the same period read them
+    offline. It also warms the cache for the optimizer, which searches the same
+    universe over the same window.
+    """
+    from qt.services import barcache, barsweep
+
+    crypto = asset_class == "crypto"
+    intraday_model = barcache.CryptoIntradayBar if crypto else barcache.IntradayBar
+
+    spans = held_spans(result)
+    if not spans:
+        return 0
+
+    # Which days inside each held span have no intraday bars. Days the cache
+    # already covers are skipped — this only fills genuine holes.
+    covered_by_symbol: dict[str, set[str]] = {
+        symbol: {b["t"][:10] for b in series} for symbol, series in ds.bars.items()
+    }
+    # A daily-filled bar is in ds.bars too, so "covered" has to mean 15-MINUTE
+    # coverage specifically; anything stamped at the daily hour was the fill.
+    daily_stamp = "T12:00:00Z" if crypto else "T14:00:00Z"
+    for symbol, series in ds.bars.items():
+        covered_by_symbol[symbol] = {
+            b["t"][:10] for b in series if not b["t"].endswith(daily_stamp)
+        }
+
+    wanted: dict[str, tuple[str, str]] = {}
+    for symbol, (first, last) in spans.items():
+        have = covered_by_symbol.get(symbol, set())
+        missing = [
+            d
+            for d in _days_between(first, last)
+            if d not in have
+        ]
+        if missing:
+            wanted[symbol] = (min(missing), max(missing))
+
+    if not wanted:
+        return 0
+
+    filled = 0
+    sess = barcache.session()
+    try:
+        for index, (symbol, (first, last)) in enumerate(sorted(wanted.items()), start=1):
+            if report:
+                report(
+                    f"Downloading 15-minute bars for held positions — {symbol} "
+                    f"({index} of {len(wanted)})",
+                    int(index * 100 / len(wanted)),
+                )
+            end = (date.fromisoformat(last) + timedelta(days=1)).isoformat()
+            try:
+                data = await barsweep._bars_with_retry(
+                    client, [symbol], "15Min", first, end,
+                    asset_class=asset_class, attempts=2, retry_delay=1.0,
+                )
+            except Exception as exc:  # noqa: BLE001 — one symbol failing is not a failed run
+                log.warning("held-position bar fetch failed for %s: %s", symbol, exc)
+                continue
+            for name, bars in data.items():
+                if bars:
+                    filled += barcache.save_intraday_bars(
+                        sess, name, bars, model=intraday_model
+                    )
+            sess.commit()
+    finally:
+        sess.close()
+    return filled
+
+
+def _days_between(first: str, last: str) -> list[str]:
+    start, end = date.fromisoformat(first), date.fromisoformat(last)
+    return [
+        (start + timedelta(days=n)).isoformat() for n in range((end - start).days + 1)
+    ]
 
 
 def load_scanner_replay_dataset(
@@ -831,6 +954,39 @@ async def _scanner_replay(
         daily_bars_by_symbol=replay_daily,
         progress=_replay_progress,
     )
+
+    # SECOND PASS. The first replay tells us which symbols were actually held and
+    # for how long — something no amount of pre-fetching could know, because it
+    # depends on the strategy. Those held days are the ones that need real
+    # 15-minute bars: a daily fill keeps a position visible, but it can only
+    # resolve the exit once per day, so the capital (and the position slot) stays
+    # tied up until that bar instead of freeing at the moment the stop was hit.
+    # Fetch exactly those days, then replay again on the better data.
+    if ds.used_intraday and "error" not in result and ds.daily_filled_days:
+        got = await fetch_held_position_bars(
+            client, result, ds, asset_class=strategy.asset_class, report=_report
+        )
+        if got:
+            ds = await asyncio.to_thread(
+                load_scanner_replay_dataset,
+                strategy.asset_class, body.days, body.replay_top_n, cfg,
+            )
+            _report("Replaying history…", 0)
+            replay_daily = ds.daily if _needs_warmup(strategy_dict["params"]) else None
+            result = await asyncio.to_thread(
+                backtest.run_backtest,
+                strategy_dict, ds.bars, get_risk(session),
+                starting_cash=body.starting_cash, spread_pct=body.spread_pct,
+                fee_pct=(
+                    body.fee_pct if body.fee_pct is not None
+                    else DEFAULT_FEE_PCT.get(strategy.asset_class, 0.0)
+                ),
+                eligible_by_day=ds.eligible_by_day, market=ds.market,
+                daily_bars_by_symbol=replay_daily,
+                progress=_replay_progress,
+            )
+            topped_up = True
+
     if "error" in result:
         raise HTTPException(status_code=422, detail=result["error"])
 
