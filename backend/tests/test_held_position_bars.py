@@ -16,8 +16,46 @@ and replays again.
 
 import pytest
 
+from qt import security
 from qt.api.backtest import _days_between, held_spans
-from tests.test_backtest_api import _make, configured  # noqa: F401 — shared fixtures
+from qt.broker.alpaca import SECRET_KEY_ID, SECRET_KEY_SECRET
+from qt.db import session_scope
+from qt.models import Strategy, StrategyConfigVersion, Trade
+
+
+# Defined here rather than imported from test_backtest_api: CI runs pytest from
+# the repo root (`pytest backend/tests`), where `tests` is not an importable
+# package, so a cross-module fixture import passes locally and fails there.
+@pytest.fixture()
+def configured(client):
+    with session_scope() as s:
+        security.set_secret(s, SECRET_KEY_ID, "k")
+        security.set_secret(s, SECRET_KEY_SECRET, "s")
+    yield
+    with session_scope() as s:
+        s.query(Trade).delete()
+        s.query(StrategyConfigVersion).delete()
+        s.query(Strategy).delete()
+        security.delete_secret(s, SECRET_KEY_ID)
+        security.delete_secret(s, SECRET_KEY_SECRET)
+
+
+def _make(client, asset_class: str) -> int:
+    return client.post("/api/strategies", json={
+        "name": f"held {asset_class}",
+        "asset_class": asset_class,
+        "universe": "scanner",
+        "preset": "custom",
+        "params": {
+            "entry": {"min_day_gain_pct": 3, "require_above_vwap": False,
+                      "entry_window_start": None, "entry_window_end": None},
+            "exit": {"trailing_stop_pct": 5, "stop_loss_pct": 4, "take_profit_pct": 0,
+                     "max_holding_hours": 0, "flatten_before_close": False,
+                     "exit_below_vwap": False},
+        },
+        "sizing_usd": 1000, "sleeve_usd": 5000, "max_positions": 3,
+        "swing_mode": False, "ignore_regime": True,
+    }).json()["id"]
 
 
 def test_a_closed_trade_covers_entry_through_exit():
