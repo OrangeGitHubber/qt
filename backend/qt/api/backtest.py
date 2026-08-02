@@ -892,34 +892,86 @@ def _stamp_window(result: dict, body: BacktestBody, start: datetime, end: dateti
     result["window_end"] = end.isoformat()
 
 
+def replay_strategy(config) -> dict:
+    """The fields a replay actually reads, lifted out of a strategy config.
+
+    Two things produce such a config and they are the same shape by construction:
+    the live Strategy row, and a StrategyConfigVersion snapshot — which is that
+    row's serialization, frozen at the moment it was saved. One reader for both
+    is the point: replaying the config that PRODUCED a set of trades must go down
+    the identical path as replaying today's, or the two results differ for
+    reasons that have nothing to do with the config.
+
+    Accepts the ORM row or the decoded snapshot dict. `params` is JSON text on the
+    row and already a dict in a snapshot, so it is decoded only when it needs to
+    be. Everything else a strategy carries — its name, whether it is enabled, its
+    provenance — is irrelevant here, and passing the whole object through would
+    invite the replay to quietly start depending on it."""
+    get = config.get if isinstance(config, dict) else lambda k: getattr(config, k)
+    params = get("params")
+    return {
+        "asset_class": get("asset_class"),
+        "swing_mode": get("swing_mode"),
+        "sizing_usd": get("sizing_usd"),
+        "sleeve_usd": get("sleeve_usd"),
+        "max_positions": get("max_positions"),
+        "params": json.loads(params) if isinstance(params, str) else params,
+    }
+
+
 @router.post("")
 async def run(
     body: BacktestBody,
     session: Session = Depends(get_session),
     client: AlpacaClient = Depends(require_client),
 ) -> dict:
+    """The endpoint: look the strategy up, then replay it AS IT STANDS TODAY.
+
+    Everything after the lookup lives in `replay()`, which takes a config rather
+    than a strategy id — so a caller holding a historical snapshot can run the
+    same replay against that instead, without a second implementation of a
+    backtest to drift from this one."""
     strategy = session.get(Strategy, body.strategy_id)
     if not strategy:
         raise HTTPException(status_code=404, detail="Strategy not found.")
 
-    strategy_dict = {
-        "asset_class": strategy.asset_class,
-        "swing_mode": strategy.swing_mode,
-        "sizing_usd": strategy.sizing_usd,
-        "sleeve_usd": strategy.sleeve_usd,
-        "max_positions": strategy.max_positions,
-        "params": json.loads(strategy.params),
-    }
+    return await replay(
+        body,
+        replay_strategy(strategy),
+        body.symbols,
+        strategy_name=strategy.name,
+        session=session,
+        client=client,
+    )
 
+
+async def replay(
+    body: BacktestBody,
+    strategy_dict: dict,
+    symbols: list[str],
+    *,
+    strategy_name: str,
+    session: Session,
+    client: AlpacaClient,
+) -> dict:
+    """Replay a GIVEN config over a window — the whole backtest, minus the "which
+    strategy?" lookup.
+
+    `strategy_dict` is what run_backtest reads (see replay_strategy) and
+    `symbols` the universe it was resolved to; neither is re-derived from the
+    strategy row, so passing a historical snapshot and the symbols that were in
+    the basket at the time replays THAT, not today's. `body.strategy_id` is still
+    carried for the caller's own bookkeeping and is deliberately not consulted
+    here — the config in hand wins."""
     if body.scanner_replay:
-        return await _scanner_replay(body, strategy, strategy_dict, session, client)
+        return await _scanner_replay(body, strategy_dict, strategy_name, session, client)
 
-    symbols = [s.strip().upper() for s in body.symbols if s.strip()]
+    symbols = [s.strip().upper() for s in symbols if s.strip()]
     if not symbols:
         symbols = [
             i.symbol
             for i in session.query(WatchlistItem)
-            .filter(WatchlistItem.asset_class == strategy.asset_class)
+            .filter(WatchlistItem.asset_class == strategy_dict["asset_class"])
             .all()
         ]
     if not symbols:
@@ -983,14 +1035,14 @@ async def run(
             # crypto bars are 96/symbol/day, so fetching warm-up intraday too would
             # multiply the download for bars that could never trade.
             daily_bars = await barfetch.fetch_bars(
-                client, symbols, strategy.asset_class, "1Day", fetch_start
+                client, symbols, strategy_dict["asset_class"], "1Day", fetch_start
             )
             bars = await barfetch.fetch_bars(
-                client, symbols, strategy.asset_class, replay_timeframe, window_start_str
+                client, symbols, strategy_dict["asset_class"], replay_timeframe, window_start_str
             )
         else:
             bars = await barfetch.fetch_bars(
-                client, symbols, strategy.asset_class, replay_timeframe, fetch_start
+                client, symbols, strategy_dict["asset_class"], replay_timeframe, fetch_start
             )
     except AlpacaError as exc:
         raise HTTPException(status_code=502, detail=f"Bar download failed ({exc.status_code}): {exc}")
@@ -1007,7 +1059,7 @@ async def run(
     # plain crypto backtest as the only place in the app not using the live
     # convention — so the optimizer tuned against one definition of a day and the
     # backtest graded against another.
-    market = "crypto" if strategy.asset_class == "crypto" else "stock"
+    market = "crypto" if strategy_dict["asset_class"] == "crypto" else "stock"
     # Run the replay OFF the event loop. It is pure CPU over every bar — a
     # 350-day, 30-symbol run is hundreds of thousands of them — and a coroutine
     # that never awaits owns the loop for its whole duration. That would freeze
@@ -1021,7 +1073,7 @@ async def run(
         strategy_dict, bars, get_risk(session),
         starting_cash=body.starting_cash, spread_pct=body.spread_pct,
         fee_pct=(
-            body.fee_pct if body.fee_pct is not None else DEFAULT_FEE_PCT.get(strategy.asset_class, 0.0)
+            body.fee_pct if body.fee_pct is not None else DEFAULT_FEE_PCT.get(strategy_dict["asset_class"], 0.0)
         ),
         market=market,
         # Mixed runs fetch intraday bars for the window only, so sim_start is a
@@ -1040,7 +1092,7 @@ async def run(
     # the one being traded. Testing BTC/USD against a "market" of BTC/USD drew
     # the same asset twice (and disagreed with itself, being sampled from daily
     # bars rather than the strategy's own). Skip it — and save the API call.
-    market_symbol = "SPY" if strategy.asset_class == "stock" else "BTC/USD"
+    market_symbol = "SPY" if strategy_dict["asset_class"] == "stock" else "BTC/USD"
     result["benchmark"] = None
     result["benchmark_symbol"] = None
     if [market_symbol] != symbols:
@@ -1049,7 +1101,7 @@ async def run(
             result["benchmark"] = await backtest.fetch_benchmark(
                 # Same day bucketing as the run, or the benchmark line lands a day
                 # off the equity curve (only differs for a crypto mixed run).
-                client, strategy.asset_class, window_start_str, result["equity_days"],
+                client, strategy_dict["asset_class"], window_start_str, result["equity_days"],
                 market=market,
             )
             result["benchmark_symbol"] = market_symbol
@@ -1057,7 +1109,7 @@ async def run(
             result["benchmark"] = None
             result["benchmark_symbol"] = None
 
-    result["strategy_name"] = strategy.name
+    result["strategy_name"] = strategy_name
     result["symbols"] = symbols
     # `timeframe` is what was REPLAYED (what the stops were checked on); on a
     # mixed run the signals came from a coarser series, named separately.
@@ -1072,7 +1124,8 @@ async def run(
 
 
 async def _scanner_replay(
-    body: BacktestBody, strategy: Strategy, strategy_dict: dict, session: Session, client: AlpacaClient
+    body: BacktestBody, strategy_dict: dict, strategy_name: str,
+    session: Session, client: AlpacaClient,
 ) -> dict:
     """Replay the historical 'today's risers' the scanner would have surfaced:
     for each past day, only that day's cached top-N movers are eligible to
@@ -1092,7 +1145,7 @@ async def _scanner_replay(
     # ordinary request, which is why every reload below passes the same pair.
     span, window_end = body.span_days(), body.window_end
     ds = await asyncio.to_thread(
-        load_scanner_replay_dataset, strategy.asset_class, span, body.replay_top_n, cfg,
+        load_scanner_replay_dataset, strategy_dict["asset_class"], span, body.replay_top_n, cfg,
         end=window_end,
     )
     # Missing 15-minute bars are fetched here rather than sent back as an
@@ -1100,7 +1153,7 @@ async def _scanner_replay(
     # cache serves it.
     ds, topped_up = await ensure_replay_intraday(
         client, ds, strategy_dict["params"],
-        asset_class=strategy.asset_class, days=span,
+        asset_class=strategy_dict["asset_class"], days=span,
         replay_top_n=body.replay_top_n, scanner_cfg=cfg, report=_report,
         end=window_end,
     )
@@ -1117,7 +1170,7 @@ async def _scanner_replay(
         strategy_dict, ds.bars, get_risk(session),
         starting_cash=body.starting_cash, spread_pct=body.spread_pct,
         fee_pct=(
-            body.fee_pct if body.fee_pct is not None else DEFAULT_FEE_PCT.get(strategy.asset_class, 0.0)
+            body.fee_pct if body.fee_pct is not None else DEFAULT_FEE_PCT.get(strategy_dict["asset_class"], 0.0)
         ),
         eligible_by_day=ds.eligible_by_day, market=ds.market,
         daily_bars_by_symbol=replay_daily,
@@ -1140,12 +1193,12 @@ async def _scanner_replay(
     # Fetch exactly those days, then replay again on the better data.
     if ds.used_intraday and "error" not in result and ds.daily_filled_days:
         got = await fetch_held_position_bars(
-            client, result, ds, asset_class=strategy.asset_class, report=_report
+            client, result, ds, asset_class=strategy_dict["asset_class"], report=_report
         )
         if got:
             ds = await asyncio.to_thread(
                 load_scanner_replay_dataset,
-                strategy.asset_class, span, body.replay_top_n, cfg, end=window_end,
+                strategy_dict["asset_class"], span, body.replay_top_n, cfg, end=window_end,
             )
             _report("Replaying history…", 0)
             replay_daily = ds.daily if _needs_warmup(strategy_dict["params"]) else None
@@ -1155,7 +1208,7 @@ async def _scanner_replay(
                 starting_cash=body.starting_cash, spread_pct=body.spread_pct,
                 fee_pct=(
                     body.fee_pct if body.fee_pct is not None
-                    else DEFAULT_FEE_PCT.get(strategy.asset_class, 0.0)
+                    else DEFAULT_FEE_PCT.get(strategy_dict["asset_class"], 0.0)
                 ),
                 eligible_by_day=ds.eligible_by_day, market=ds.market,
                 daily_bars_by_symbol=replay_daily,
@@ -1182,7 +1235,7 @@ async def _scanner_replay(
     except Exception:
         pass
 
-    result["strategy_name"] = strategy.name
+    result["strategy_name"] = strategy_name
     result["scanner_replay"] = True
     result["replay_intraday"] = ds.used_intraday
     result["intraday_topped_up"] = topped_up  # bars were downloaded for this run

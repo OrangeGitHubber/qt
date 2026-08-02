@@ -3,6 +3,23 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## A backtest can be pointed at a config, not just at a strategy (2026-08-02)
+
+Every trade already records the exact settings that produced it. Nothing could
+use that, because the replay always looked the strategy up and got **today's**
+settings — so tightening a stop after a trade quietly changed the question from
+"does the backtester reproduce reality?" to "does today's strategy reproduce
+yesterday's trades?".
+
+The replay now takes a **config and a symbol list** rather than a strategy id, so
+a saved snapshot can be handed to it directly. The universe counts as part of the
+config: replaying today's basket against trades made from an older membership is
+the same mistake as replaying today's stop.
+
+The Backtest page is unchanged and still replays your strategy as it stands —
+that path is now a two-line wrapper over the same code, so there is still one
+implementation of a backtest and nothing for the two to drift apart about.
+
 ## A backtest can now be told when to stop, not just when to start (2026-08-02)
 
 Every replay QT has ever run was "the last N days, up to right now". Useful for

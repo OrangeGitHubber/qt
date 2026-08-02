@@ -198,6 +198,12 @@ def test_the_portfolio_replay_marks_holdings_inside_the_window_as_well():
 
 
 # --- the endpoint ------------------------------------------------------------
+#
+# The symbols below are deliberately unique to this file. The endpoint fetches
+# through the real bar cache, which persists for the whole test session, so two
+# test modules using "AAA" for different price paths would serve each other's
+# bars — the cached copy wins on merge — and fail in a way that points nowhere
+# near the cause.
 
 from unittest.mock import AsyncMock, patch  # noqa: E402 — the endpoint half starts here
 
@@ -226,7 +232,7 @@ def configured(client):
 def _api_strategy() -> dict:
     return {
         "name": "windowed", "asset_class": "stock", "universe": "custom",
-        "symbols": ["AAA", "BBB"], "preset": "custom",
+        "symbols": ["WINA", "WINB"], "preset": "custom",
         "params": {
             "entry": {"min_day_gain_pct": 3, "require_above_vwap": False,
                       "entry_window_start": None, "entry_window_end": None},
@@ -256,11 +262,11 @@ def _daily_from_now(rise_days_ago: int) -> list[dict]:
 
 def _post(client, **extra) -> dict:
     sid = client.post("/api/strategies", json=_api_strategy()).json()["id"]
-    bars = {"AAA": _daily_from_now(15), "BBB": _daily_from_now(5)}
+    bars = {"WINA": _daily_from_now(15), "WINB": _daily_from_now(5)}
     with patch.object(AlpacaClient, "historical_bars", new=AsyncMock(return_value=bars)):
         response = client.post(
             "/api/backtest",
-            json={"strategy_id": sid, "symbols": ["AAA", "BBB"], "timeframe": "1Day",
+            json={"strategy_id": sid, "symbols": ["WINA", "WINB"], "timeframe": "1Day",
                   "starting_cash": 5000, "spread_pct": 0, **extra},
         )
     return response
@@ -280,7 +286,7 @@ def test_an_explicit_window_replays_only_what_happened_inside_it(client, configu
     traded = {t["symbol"] for t in body["trade_list"]} | {
         p["symbol"] for p in body["open_positions"]
     }
-    assert traded == {"AAA"}, body.get("diagnosis")
+    assert traded == {"WINA"}, body.get("diagnosis")
     # The window is echoed back, so a caller splitting a period can prove which
     # slice each result covers.
     assert body["window_start"].startswith((now - timedelta(days=21)).strftime("%Y-%m-%d"))
@@ -294,7 +300,7 @@ def test_the_same_run_without_the_window_finds_both(client, configured):
     traded = {t["symbol"] for t in body["trade_list"]} | {
         p["symbol"] for p in body["open_positions"]
     }
-    assert traded == {"AAA", "BBB"}
+    assert traded == {"WINA", "WINB"}
     # An open-ended run's end is "whenever you pressed the button", so it is not
     # stamped — printing a precise end for that would be false precision.
     assert "window_end" not in body
@@ -320,5 +326,5 @@ def test_an_end_on_its_own_still_counts_days_back_from_it(client, configured):
     traded = {t["symbol"] for t in body["trade_list"]} | {
         p["symbol"] for p in body["open_positions"]
     }
-    assert traded == {"AAA"}
+    assert traded == {"WINA"}
     assert body["days"] == 12
