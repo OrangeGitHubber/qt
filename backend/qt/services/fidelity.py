@@ -161,7 +161,16 @@ def compare(
                 "sim_exit_reason": sim.get("exit_reason"),
                 # False when a human or the broker ended this trade, not a rule.
                 # The entry still counts; every exit-side comparison skips it.
-                "exit_comparable": _is_strategy_exit(live.get("exit_reason")),
+                "exit_comparable": _is_strategy_exit(live.get("exit_reason"))
+                and not live.get("spans_segment_boundary"),
+                # Set when the comparison was SEGMENTED (the strategy was edited
+                # mid-window, so each stretch is replayed with its own config) and
+                # this trade opened in one stretch and closed in another. No
+                # segment's replay can reproduce that: each starts with no
+                # positions and stops at its own end. Same treatment as a
+                # hand-closed exit — the entry counts, the exit is set aside —
+                # but a different claim, so it is counted apart from those.
+                "exit_spans_boundary": bool(live.get("spans_segment_boundary")),
                 # Reasons are prose with numbers in them, so compare the RULE
                 # that fired (its first few words), not the whole sentence.
                 "exit_reason_matches": _same_rule(
@@ -263,7 +272,17 @@ def _decision_stats(matched: list[dict], live_only: list[dict], backtest_only: l
         # reconciliation. Surfaced rather than silently dropped: if most of your
         # exits were by hand, the exit half of this report is describing very
         # little, and you should know that before trusting it.
-        "manual_exits": len(matched) - len(comparable),
+        #
+        # Counted apart from the boundary-spanning ones below, because they are
+        # different claims: "you closed this yourself" and "no segment of a split
+        # comparison could see this trade end" call for different responses.
+        "manual_exits": sum(
+            1 for m in matched if not m["exit_comparable"] and not m["exit_spans_boundary"]
+        ),
+        # Matched trades whose exit fell in a later segment than their entry, on a
+        # segmented comparison. Their exits are excluded from every percentage
+        # above and from the trading cost below — see `exit_spans_boundary`.
+        "boundary_spanning_exits": sum(1 for m in matched if m["exit_spans_boundary"]),
         # Below this, differences are anecdotes. The same "count the coins"
         # discipline the optimizer applies to its own winners.
         "enough_to_judge": len(matched) >= 30,

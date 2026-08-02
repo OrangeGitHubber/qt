@@ -1231,6 +1231,8 @@ export interface FidelityMatch {
   sim_exit_reason: string | null;
   exit_reason_matches: boolean | null;
   exit_comparable: boolean;
+  // True when this trade crossed a segment boundary — see `boundary_spanning_exits`.
+  exit_spans_boundary?: boolean;
 }
 
 export interface FidelityReport {
@@ -1265,6 +1267,31 @@ export interface FidelityReport {
     // membership that changed and changed back looks identical from any two
     // points in time, so only a count can reveal it.
     basket_changes_during_window?: number;
+    // Whether the window was CUT at the moments the configuration changed, so
+    // each stretch was replayed with the settings that were live during it.
+    // When true, the drift above describes what moved rather than invalidating
+    // the comparison.
+    segmented?: boolean;
+    segments?: {
+      from: string;
+      to: string;
+      version_no: number | null;
+      symbols: number;
+      // False = the universe of that moment couldn't be reconstructed (a basket
+      // with no snapshot that old, or a watchlist, which nothing versions) and
+      // today's list was substituted.
+      universe_known: boolean;
+      live_trades: number;
+      backtest_trades: number;
+      error: string | null;
+    }[];
+    // Trades opened in one stretch and closed in another. No stretch's replay
+    // can reproduce those — each starts with no positions and stops at its own
+    // end — so their entries count and their exits are set aside.
+    boundary_spanning_trades?: number;
+    // Set when the window COULD have been split and deliberately wasn't.
+    not_segmented_reason?: string | null;
+    segments_with_unknown_universe?: number;
   };
   backtest_only: { symbol: string; day: string; sim_entry: number | null; sim_exit_reason: string }[];
   rails_blocked: { symbol: string; day: string; blocked_by: string | null }[];
@@ -1281,6 +1308,10 @@ export interface FidelityReport {
     // ENTRY still counts; every exit-side number skips them, because the replay
     // was never given the chance to make that decision.
     manual_exits: number;
+    // Matched trades whose exit fell in a later stretch than their entry, on a
+    // segmented comparison. Counted apart from manual_exits: "you closed this
+    // yourself" and "no stretch could see this trade end" are different claims.
+    boundary_spanning_exits?: number;
     // Of the trades the replay didn't find, how many it could never have found
     // because the symbol wasn't in the universe it replayed at all.
     missed_outside_universe: number;

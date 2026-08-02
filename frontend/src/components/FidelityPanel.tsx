@@ -116,16 +116,67 @@ export default function FidelityPanel() {
           )}
 
           {(report.config?.basket_changes_during_window ?? 0) > 0 && (
-            <p className="hint warn">
-              <IconWarn className="icon-inline" />{" "}
+            <p className={report.config!.segmented ? "hint" : "hint warn"}>
+              {!report.config!.segmented && <IconWarn className="icon-inline" />}{" "}
               <strong>
                 The basket was edited {report.config!.basket_changes_during_window} time
                 {report.config!.basket_changes_during_window === 1 ? "" : "s"} while these trades were being made.
               </strong>{" "}
-              Trades from before an edit ran on a different list of symbols than the replay uses, so some mismatches
-              below are that rather than a fault in the backtester. Membership is tracked to the moment, not the day —
-              but a single replay can only use one list, and a change that later reverted wouldn't show as a
-              difference at all, which is why this is counted separately.
+              {report.config!.segmented ? (
+                <>
+                  Membership is tracked to the moment, not the day, and the window was cut at each edit — so every
+                  stretch was replayed against the symbols that were actually in the basket at the time.
+                </>
+              ) : (
+                <>
+                  Trades from before an edit ran on a different list of symbols than the replay uses, so some
+                  mismatches below are that rather than a fault in the backtester. Membership is tracked to the moment,
+                  not the day — but a single replay can only use one list, and a change that later reverted wouldn't
+                  show as a difference at all, which is why this is counted separately.
+                </>
+              )}
+            </p>
+          )}
+
+          {report.config?.segmented && (
+            <p className="hint">
+              <strong>
+                This comparison was split into {report.config.segments?.length ?? 0} stretches.
+              </strong>{" "}
+              <InfoTip k="fidelity_segments" /> The configuration changed while these trades were being made, so the
+              window was cut at each change and every stretch was replayed with the settings that were live during it —
+              rather than measuring all of them against today's.{" "}
+              <strong>Each stretch starts with a fresh account and no open positions</strong>, which real trading did
+              not: cash and held positions carried across those moments in life and cannot here. A stretch that begins
+              with the full budget available has room the live account did not, so the replay leans towards taking more
+              trades than reality across a cut.
+              {(report.config.boundary_spanning_trades ?? 0) > 0 && (
+                <>
+                  {" "}
+                  <strong>
+                    {report.config.boundary_spanning_trades} trade
+                    {report.config.boundary_spanning_trades === 1 ? " was" : "s were"} opened in one stretch and closed
+                    in another.
+                  </strong>{" "}
+                  No stretch could reproduce that — the first stops watching at the cut, the second starts holding
+                  nothing — so their entries still count above and their exits are left out of every exit number,
+                  the same treatment a trade you closed by hand gets.
+                </>
+              )}
+              {(report.config.segments_with_unknown_universe ?? 0) > 0 && (
+                <>
+                  {" "}
+                  {report.config.segments_with_unknown_universe} of those stretches had no record of which symbols were
+                  in play at the time, so today's list stood in for them. Read their mismatches with that in mind.
+                </>
+              )}
+            </p>
+          )}
+
+          {report.config?.not_segmented_reason && (
+            <p className="hint warn">
+              <IconWarn className="icon-inline" /> <strong>This comparison was not split.</strong>{" "}
+              {report.config.not_segmented_reason} <InfoTip k="fidelity_segments" />
             </p>
           )}
 
@@ -133,15 +184,25 @@ export default function FidelityPanel() {
             <p className="hint warn">
               <IconWarn className="icon-inline" />{" "}
               <strong>This strategy was edited after these trades were made.</strong> Every trade records the config
-              version that produced it, and the replay uses the strategy as it stands <em>today</em> — so this is
-              measuring whether today's settings reproduce yesterday's trades, which is a different and much less
-              useful question. What changed:{" "}
+              version that produced it.{" "}
+              {report.config!.segmented ? (
+                <>
+                  Each stretch above was replayed with its own settings, so the comparison is no longer measuring
+                  today's against yesterday's — this is here to show you what moved.
+                </>
+              ) : (
+                <>
+                  The replay uses the strategy as it stands <em>today</em> — so this is measuring whether today's
+                  settings reproduce yesterday's trades, which is a different and much less useful question.
+                </>
+              )}{" "}
+              What changed:{" "}
               {report.config!.drift
                 .slice(0, 6)
                 .map((c) => `${c.field} ${JSON.stringify(c.then)} → ${JSON.stringify(c.now)}`)
                 .join("; ")}
               {report.config!.drift.length > 6 ? `; …and ${report.config!.drift.length - 6} more` : ""}.
-              {report.config!.versions_used > 1 && (
+              {report.config!.versions_used > 1 && !report.config!.segmented && (
                 <>
                   {" "}
                   These trades span <strong>{report.config!.versions_used} different config versions</strong>, so no

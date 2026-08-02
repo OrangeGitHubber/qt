@@ -3,6 +3,43 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Fidelity: a window you edited is now compared piece by piece (2026-08-02)
+
+The last two entries were the machinery. This is the thing they were for.
+
+Until now, editing a strategy partway through a period you were comparing left
+the report with only one honest move: tell you the comparison was compromised and
+stop. The replay used today's settings for the whole window, so every trade made
+before your edit was being judged against a strategy that didn't exist yet.
+
+The window is now **cut at the moments the configuration changed** — every save
+of the strategy, and every edit of the basket it points at — and each stretch is
+replayed with the settings that were actually live during it. The header says how
+many stretches, and the drift list below it changes meaning accordingly: it now
+shows you *what moved*, rather than warning you that the answer is wrong.
+
+**What splitting cannot do, said plainly on the page rather than buried here.**
+Each stretch's replay starts with a fresh account and no open positions. Real
+trading did not restart at those moments — cash and holdings carried across them.
+A stretch that begins with the full budget has room the live account did not, so
+across a cut the replay leans towards taking more trades than reality did.
+
+And a **trade opened in one stretch and closed in another** is beyond all of them:
+the first stops watching at the cut, the second starts holding nothing. Those are
+counted and named. Their entries still count — the entry was a real decision — and
+their exits are left out of every exit number, exactly as a trade you closed by
+hand is. They are counted *separately* from hand-closed exits, because "you sold
+this yourself" and "no stretch could see this trade end" are different claims and
+call for different responses.
+
+Three things it deliberately declines to do. A **rename** doesn't split anything:
+every save writes a version, and cutting the window for a change that cannot move
+a single trade would pay a boundary's cost for nothing. **Past eight stretches it
+stops and says so** — at that point the resets describe the split more than the
+backtester, and narrowing the window is the better answer. And **imported trades
+are never split**: they came from another machine, whose edits this one has no
+record of, so cutting on local history would be cutting on unrelated events.
+
 ## A backtest can be pointed at a config, not just at a strategy (2026-08-02)
 
 Every trade already records the exact settings that produced it. Nothing could

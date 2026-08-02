@@ -32,6 +32,12 @@ export const GLOSSARY: Record<string, GlossaryEntry> = {
       "Every decision either side made lands in one of four buckets. Matched: both took the trade. Missed by the backtest: the engine really traded it and the replay didn't — usually missing bars for that day. Invented by the backtest: the replay took a trade that never happened, which is the one that should worry you. Blocked by a rail: the engine WANTED the trade and a safety rail refused it (daily loss cap, trade-rate limiter, wash-sale guard, no cash) — that is not a backtest error, and it is counted separately so it can't be mistaken for one.",
     url: "https://www.investopedia.com/terms/b/backtesting.asp",
   },
+  fidelity_segments: {
+    term: "Segmented comparison",
+    explain:
+      "A replay uses ONE configuration. Edit a strategy — or the basket it points at — while it is trading, and no single configuration is faithful to all of those trades: the ones before the edit ran on settings the replay isn't using. So the window is cut at the moments the configuration changed, and each stretch is replayed with the settings that were actually live during it. What that cannot do is carry state across a cut: every stretch starts with fresh cash and no open positions, which real trading did not. A stretch beginning with a full wallet has room the live account did not, so the replay tends to look freer than reality — and a trade opened in one stretch and closed in another is beyond all of them, which is why those are counted and set aside rather than scored.",
+    url: "https://www.investopedia.com/terms/b/backtesting.asp",
+  },
   fidelity_sample: {
     term: "Enough trades to judge",
     explain:
