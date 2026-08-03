@@ -7,20 +7,6 @@ import { useEffect, useState } from "react";
  *  you can type over it. This keeps your literal keystrokes while focused,
  *  commits upward only when they parse as a number, and restores the last
  *  good value if you leave the field empty.
- *
- *  `step` IS A VALIDATION RULE, NOT A SPINNER SETTING. It looks like it only
- *  sizes the up/down arrows, but the browser also refuses to submit the
- *  surrounding form when the value isn't on the step grid (counting from `min`,
- *  not from zero) — with a native message this app cannot see or reword. So
- *  step="0.1" on a percentage silently means "one decimal place only", and any
- *  value with more precision makes the whole form unsavable.
- *
- *  Rule for this codebase: `step` must mirror the BACKEND's type for the field.
- *  Fields the pydantic model declares `int` use step="1"; fields it declares
- *  `float` use step="any", because the model, the backtester and the live engine
- *  all treat them as continuous. Inventing a precision limit here that the server
- *  does not have produces values one part of the app writes and another refuses —
- *  which is exactly what the optimizer's tuned percentages ran into.
  */
 export default function NumberField({
   value,

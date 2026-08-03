@@ -778,7 +778,7 @@ function Editor({
                 Max holding time <InfoTip k="max_holding" />
               </span>
               <div className="affix">
-                <NumberField step="any" min="0" value={p.exit.max_holding_hours}
+                <NumberField step="1" min="0" value={p.exit.max_holding_hours}
                   onChange={(n) => setExit("max_holding_hours", n)} />
                 <span className="affix-unit">hrs</span>
               </div>
@@ -913,7 +913,7 @@ function Editor({
         <p className="sec-sub">When the strategy is allowed to buy.</p>
         <div className="param-grid">
           <Param label="Min gain today (%)" tip="min_day_gain">
-            <NumberField step="any" min="0" value={p.entry.min_day_gain_pct}
+            <NumberField step="0.1" min="0" value={p.entry.min_day_gain_pct}
               onChange={(n) => setEntry("min_day_gain_pct", n)} />
           </Param>
         </div>
@@ -934,7 +934,7 @@ function Editor({
           <summary>Advanced entry options</summary>
           <div className="param-grid">
             <Param label="Max gain today (%, 0 = off)" tip="max_day_gain">
-              <NumberField step="any" min="0" value={p.entry.max_day_gain_pct ?? 0}
+              <NumberField step="0.1" min="0" value={p.entry.max_day_gain_pct ?? 0}
                 onChange={(n) => setEntry("max_day_gain_pct", n)} />
             </Param>
             <Param label="Min share price ($, 0 = any)" tip="share_price_band">
@@ -946,15 +946,15 @@ function Editor({
                 onChange={(n) => setEntry("max_price", n)} />
             </Param>
             <Param label="Min RSI (0 = off)" tip="rsi_entry">
-              <NumberField step="any" min="0" max="100" value={p.entry.rsi_min ?? 0}
+              <NumberField step="1" min="0" max="100" value={p.entry.rsi_min ?? 0}
                 onChange={(n) => setEntry("rsi_min", n)} />
             </Param>
             <Param label="Max RSI (0 = off)" tip="rsi_entry">
-              <NumberField step="any" min="0" max="100" value={p.entry.rsi_max ?? 0}
+              <NumberField step="1" min="0" max="100" value={p.entry.rsi_max ?? 0}
                 onChange={(n) => setEntry("rsi_max", n)} />
             </Param>
             <Param label={marketMode ? "Entry slippage — n/a at market" : "Entry slippage (%)"} tip="entry_slippage">
-              <NumberField step="any" min="0" max="5" value={p.entry.entry_slippage_pct ?? 0.5}
+              <NumberField step="0.1" min="0" max="5" value={p.entry.entry_slippage_pct ?? 0.5}
                 onChange={(n) => setEntry("entry_slippage_pct", n)} disabled={marketMode} />
             </Param>
           </div>
@@ -1008,18 +1008,18 @@ function Editor({
         <p className="sec-sub">When to sell — "the configurable downturn".</p>
         <div className="param-grid">
           <Param label="Trailing stop (%)" tip="trailing_stop">
-            <NumberField step="any" min="0.5" value={p.exit.trailing_stop_pct}
+            <NumberField step="0.1" min="0.5" value={p.exit.trailing_stop_pct}
               onChange={(n) => setExit("trailing_stop_pct", n)} />
           </Param>
           <Param
             label={atrStopOn ? "Stop-loss (%) — replaced by the ATR stop" : "Stop-loss (%) — required"}
             tip="stop_loss"
           >
-            <NumberField step="any" min="0.1" value={p.exit.stop_loss_pct}
+            <NumberField step="0.1" min="0.1" value={p.exit.stop_loss_pct}
               onChange={(n) => setExit("stop_loss_pct", n)} disabled={atrStopOn} />
           </Param>
           <Param label="Take-profit (%, 0 = off)" tip="take_profit">
-            <NumberField step="any" min="0" value={p.exit.take_profit_pct}
+            <NumberField step="0.1" min="0" value={p.exit.take_profit_pct}
               onChange={(n) => setExit("take_profit_pct", n)} />
           </Param>
         </div>
@@ -1048,20 +1048,20 @@ function Editor({
                 inapplicable swing/intraday toggle) — don't show it twice. */}
             {s.asset_class !== "crypto" && (
               <Param label="Max holding time (hrs, 0 = off)" tip="max_holding">
-                <NumberField step="any" min="0" value={p.exit.max_holding_hours}
+                <NumberField step="1" min="0" value={p.exit.max_holding_hours}
                   onChange={(n) => setExit("max_holding_hours", n)} />
               </Param>
             )}
             <Param label={marketMode ? "Exit slippage — n/a at market" : "Exit slippage (%)"} tip="exit_slippage">
-              <NumberField step="any" min="0" max="10" value={p.exit.exit_slippage_pct ?? 1}
+              <NumberField step="0.1" min="0" max="10" value={p.exit.exit_slippage_pct ?? 1}
                 onChange={(n) => setExit("exit_slippage_pct", n)} disabled={marketMode} />
             </Param>
             <Param label={marketMode ? "Max exit slippage — n/a" : "Max exit slippage (%)"} tip="exit_slippage">
-              <NumberField step="any" min="0" max="20" value={p.exit.exit_slippage_max_pct ?? 1}
+              <NumberField step="0.1" min="0" max="20" value={p.exit.exit_slippage_max_pct ?? 1}
                 onChange={(n) => setExit("exit_slippage_max_pct", n)} disabled={marketMode} />
             </Param>
             <Param label="Sell if RSI above (0 = off)" tip="rsi_exit">
-              <NumberField step="any" min="0" max="100" value={p.exit.exit_rsi_above ?? 0}
+              <NumberField step="1" min="0" max="100" value={p.exit.exit_rsi_above ?? 0}
                 onChange={(n) => setExit("exit_rsi_above", n)} />
             </Param>
           </div>
@@ -1170,7 +1170,7 @@ function Editor({
           <summary>Advanced — volatility stops &amp; sizing (ATR)</summary>
           <div className="param-grid">
             <Param label="ATR stop (× ATR, 0 = off)" tip="atr_stop">
-              <NumberField step="any" min="0" max="20" value={atr.stop_mult}
+              <NumberField step="0.1" min="0" max="20" value={atr.stop_mult}
                 onChange={(n) => setAtr("stop_mult", n)} />
             </Param>
             <Param label="Risk $ per trade (0 = off)" tip="atr_risk">

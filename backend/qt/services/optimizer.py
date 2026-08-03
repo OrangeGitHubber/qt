@@ -60,29 +60,13 @@ from qt.services.backtest import run_backtest
 RELATIVE_STEP_DEFAULT = 0.15
 STEPS_EACH_WAY = 4
 
-# (floor, ceiling, decimals) per knob, so every value the search can propose is
-# one the draft can actually be SAVED with. decimals=0 means the knob is an
-# integer (MACD periods).
-#
-# "Saved with" means BOTH gates, not just the pydantic one. The strategy schema
-# is the looser of the two — it allows any float in range — while the strategy
-# editor's number inputs carry their own `min`, and a value under that min makes
-# the whole edit form unsavable in the browser. The floors below are therefore
-# the tighter of (schema, editor): trailing stop 0.5 and stop-loss 0.1 come from
-# frontend/src/pages/Strategies.tsx, not from strategies.py, because a 0.06%
-# trailing stop is both un-editable and nonsense to trade. Backed by
-# test_optimizer_precision.py, which reads those mins out of the editor.
-#
-# decimals is the ONLY quantization applied, and it is deliberately finer than
-# one decimal place: the grid is geometric, so on a small anchor (0.6 -> 0.69 ->
-# 0.79) rounding to tenths would collapse neighbouring steps onto the same value
-# and shrink the search. Hundredths are meaningful downstream — evaluate_exit
-# compares entry_price * (1 - pct/100) against raw bar lows with no rounding, so
-# 1.23% and 1.20% are genuinely different stops.
+# (floor, ceiling, decimals) per knob — the same limits the strategy schema
+# enforces, so every value the search can propose is one the draft can actually
+# be SAVED with. decimals=0 means the knob is an integer (MACD periods).
 KNOB_BOUNDS: dict[str, tuple[float, float, int]] = {
     "min_day_gain_pct": (0.05, 100.0, 2),
-    "trailing_stop_pct": (0.5, 50.0, 2),
-    "stop_loss_pct": (0.1, 50.0, 2),
+    "trailing_stop_pct": (0.05, 50.0, 2),
+    "stop_loss_pct": (0.05, 50.0, 2),
     "take_profit_pct": (0.05, 500.0, 2),
     "rsi_max": (1.0, 99.0, 1),
     "rsi_min": (1.0, 99.0, 1),
@@ -100,15 +84,7 @@ def _geometric_grid(anchor: float, step: float, bounds: tuple[float, float, int]
     always genuinely among the values tested — that is what makes the before/after
     comparison real. Rounded neighbours are de-duplicated, which matters for small
     integers: 15% steps either side of a MACD slow period of 5 land on the same
-    number more than once.
-
-    The anchor also survives the CLAMP, which the neighbours don't. The floors
-    here match the strategy editor's, and an old strategy imported through the API
-    could sit below one (a 0.2% trailing stop, say) — dropping it would mean the
-    search never evaluated the config the user is actually running and the whole
-    before/after panel became fiction. The anchor is not a proposal, it is the
-    status quo: a draft built from it is exactly as savable as the strategy it was
-    read out of. Everything the search PROPOSES still respects the bounds."""
+    number more than once."""
     lo, hi, decimals = bounds
     values: set[float] = set()
     for k in range(-STEPS_EACH_WAY, STEPS_EACH_WAY + 1):
@@ -116,8 +92,7 @@ def _geometric_grid(anchor: float, step: float, bounds: tuple[float, float, int]
         v = float(round(v)) if decimals == 0 else round(v, decimals)
         if k == 0:
             v = float(anchor)  # exact, so the current config is always evaluated
-            values.add(v)
-        elif lo <= v <= hi:
+        if lo <= v <= hi:
             values.add(v)
     return sorted(values)
 
