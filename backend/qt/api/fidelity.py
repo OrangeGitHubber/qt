@@ -31,6 +31,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from qt.api.backtest import (
+    MAX_HOURS_FOR_MINUTE_REPLAY,
     MIN_HOURS_FOR_DAILY_REPLAY,
     BacktestBody,
     _mixed_resolution,
@@ -545,7 +546,7 @@ def _bar_floor(moment: datetime, timeframe: str) -> datetime:
     replay only gets one decision point for the whole day anyway."""
     if timeframe == "1Day":
         return moment.replace(hour=0, minute=0, second=0, microsecond=0)
-    minutes = 60 if timeframe == "1Hour" else 15
+    minutes = {"1Hour": 60, "1Min": 1}.get(timeframe, 15)
     floored = moment.replace(second=0, microsecond=0)
     return floored - timedelta(minutes=floored.minute % minutes)
 
@@ -779,6 +780,57 @@ def _prior_losses(
     return out
 
 
+def _intraday_size(window_hours: float | None) -> str:
+    """WHICH intraday bar, once it is settled that the replay wants one.
+
+    The live engine evaluates every 60 seconds. 15-minute bars are therefore 15x
+    coarser than the decisions being graded, and that gap is not academic: a coin
+    was bought live at 13:18:18, between the replay's 13:15 and 13:30 bars, and
+    came back as a trade the replay missed — which then left it a position slot
+    spare, so it bought something else and that came back as a trade it invented.
+    A single blind spot produces two false verdicts pointing opposite ways.
+
+    Minute bars close it, and are affordable only because the window is short:
+    1,440 bars per crypto pair per day means this can never be the resolution for
+    an ordinary backtest, and MAX_HOURS_FOR_MINUTE_REPLAY is where it stops.
+    Above that a comparison is asking about behaviour in general rather than
+    about particular fills, and 15-minute bars answer that.
+
+    An UNKNOWN length gets the coarser one. There is no window to be short."""
+    if window_hours is not None and window_hours <= MAX_HOURS_FOR_MINUTE_REPLAY:
+        return "1Min"
+    return "15Min"
+
+
+def _replay_floor(
+    params: dict, began: datetime | None, since: datetime, until: datetime
+) -> datetime:
+    """Where the replay may START trading: the beginning of the bar containing
+    go-live, never earlier than the window itself.
+
+    Resolved TWICE on purpose, and the reason only appeared once minute bars did.
+    The floor is the start of a bar, so it needs to know the bar size; the bar
+    size is chosen from the window's LENGTH; and the length depends on the floor,
+    because the floor is where the replay's window opens. Circular.
+
+    It resolves in one step because raising the floor can only SHORTEN the window,
+    and a shorter window can only choose a bar size that is finer or the same. So:
+    pick a size from the widest possible span, floor with it, then re-pick from
+    the span that produces. Anything further is a fixed point already.
+
+    Getting this wrong is not cosmetic. Floor with 15-minute bars a run that then
+    replays 1-minute ones and the replay opens up to fourteen minutes before the
+    engine did — free minutes in which it can buy something the engine never saw,
+    which the report files as a trade the backtest invented. That is the exact
+    verdict the hold-back exists to prevent."""
+    if not began:
+        return since
+    hours = (until - since).total_seconds() / 3600
+    floor = max(since, _bar_floor(began, _timeframe_for(params, hours)))
+    hours = (until - floor).total_seconds() / 3600
+    return max(since, _bar_floor(began, _timeframe_for(params, hours)))
+
+
 def _timeframe_for(params: dict, window_hours: float | None = None) -> str:
     """The bar size the STRATEGY demands, not a hardcoded one. Asking for daily
     bars on a strategy that needs intraday ones gets every entry rejected, and the
@@ -787,14 +839,18 @@ def _timeframe_for(params: dict, window_hours: float | None = None) -> str:
 
     Decided per SEGMENT on a segmented comparison: a strategy that gained a VWAP
     rule partway through the window needs daily bars for the stretch before that
-    edit and intraday ones after it."""
+    edit and intraday ones after it.
+
+    This is a REQUEST, not a promise. The replay drops back to 15-minute bars
+    when minute ones would cover less of the universe, and the response reports
+    what it actually used — see `_scanner_replay`."""
     entry = params.get("entry") or {}
     wants_intraday = bool(
         entry.get("require_above_vwap")
         or (entry.get("entry_window_start") and entry.get("entry_window_end"))
     )
     if _mixed_resolution(params) or (wants_intraday and not _uses_daily_only_signals(params)):
-        return "15Min"
+        return _intraday_size(window_hours)
     # Length matters as much as the rules do. A window shorter than a couple of
     # days holds one daily bar or none, so a daily replay judges nothing and the
     # report reads as "the backtest missed all your trades" — which is how a
@@ -807,7 +863,7 @@ def _timeframe_for(params: dict, window_hours: float | None = None) -> str:
         and window_hours < MIN_HOURS_FOR_DAILY_REPLAY
         and not _uses_daily_only_signals(params)
     ):
-        return "15Min"
+        return _intraday_size(window_hours)
     return "1Day"
 
 
@@ -992,13 +1048,7 @@ async def compare(
     clamped = bool(began and began.replace(hour=0, minute=0, second=0, microsecond=0) > since)
     if clamped:
         since = began.replace(hour=0, minute=0, second=0, microsecond=0)
-    replay_from = (
-        max(since, _bar_floor(began, _timeframe_for(
-            json.loads(strategy.params), (until - since).total_seconds() / 3600
-        )))
-        if began
-        else since
-    )
+    replay_from = _replay_floor(json.loads(strategy.params), began, since, until)
 
     # THE ENGINE COULD NOT ACT BEFORE IT WAS SWITCHED ON. Until now go-live was
     # only ever displayed, never enforced: the window opened at the first trade's

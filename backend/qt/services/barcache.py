@@ -141,6 +141,71 @@ class CryptoIntradayBar(CacheBase):
     vw: Mapped[float | None] = mapped_column(Float, nullable=True)
 
 
+# ---------------------------------------------------------------------------
+# ONE-MINUTE bars — SEPARATE tables again, for a reason that is not stylistic.
+#
+# The intraday tables are keyed (symbol, ts) with NO record of the bar's size,
+# and a 15-minute bar and a 1-minute bar share a timestamp four times an hour
+# (13:15, 13:30, …). Writing both into one table would therefore:
+#
+#   * silently DROP the 1-minute bar wherever a 15-minute one already exists —
+#     the writes are insert-or-ignore, because historical bars are immutable;
+#   * and, worse, serve the survivor back inside a 1-minute series, so a bar
+#     labelled 13:15 would carry the high and low of the whole quarter hour.
+#     Stops are checked against those extremes, so the replay would trigger on a
+#     range that never happened inside that minute — a wrong answer that looks
+#     entirely normal.
+#
+# Adding the size to the primary key would fix the collision and cannot be done:
+# `init_cache` only ever CREATES missing tables (no migrations, by design), so
+# the change would land only after dropping the existing stock intraday table,
+# which is the largest and most expensive thing in this cache.
+#
+# Separate tables are what the crypto tables already do, and for the same reason:
+# create_all adds them without touching anything that exists.
+#
+# WHY THEY EXIST AT ALL: the live engine evaluates every 60 seconds, so a replay
+# on 15-minute bars cannot resolve a decision it made between two of them — a
+# signal that appeared and vanished inside the quarter hour is invisible, and the
+# fidelity report reads that as "the replay missed a trade". These bars are
+# fetched only for a SHORT fidelity window (see MAX_HOURS_FOR_MINUTE_REPLAY);
+# ordinary backtests never touch them, because 1,440 bars per pair per day over a
+# 180-day window is millions of rows to answer a question 15-minute bars already
+# answer well enough.
+# ---------------------------------------------------------------------------
+
+
+class MinuteBar(CacheBase):
+    """One 1-minute stock bar. Same shape as IntradayBar; see the note above for
+    why it is not the same TABLE."""
+
+    __tablename__ = "minute_bars"
+
+    symbol: Mapped[str] = mapped_column(String(32), primary_key=True)
+    ts: Mapped[str] = mapped_column(String(20), primary_key=True)  # ISO 'YYYY-MM-DDTHH:MM:SSZ'
+    o: Mapped[float] = mapped_column(Float, default=0.0)
+    h: Mapped[float] = mapped_column(Float, default=0.0)
+    l: Mapped[float] = mapped_column(Float, default=0.0)
+    c: Mapped[float] = mapped_column(Float, default=0.0)
+    v: Mapped[float] = mapped_column(Float, default=0.0)
+    vw: Mapped[float | None] = mapped_column(Float, nullable=True)
+
+
+class CryptoMinuteBar(CacheBase):
+    """One 1-minute crypto bar, timestamps in real UTC."""
+
+    __tablename__ = "crypto_minute_bars"
+
+    symbol: Mapped[str] = mapped_column(String(32), primary_key=True)
+    ts: Mapped[str] = mapped_column(String(20), primary_key=True)
+    o: Mapped[float] = mapped_column(Float, default=0.0)
+    h: Mapped[float] = mapped_column(Float, default=0.0)
+    l: Mapped[float] = mapped_column(Float, default=0.0)
+    c: Mapped[float] = mapped_column(Float, default=0.0)
+    v: Mapped[float] = mapped_column(Float, default=0.0)
+    vw: Mapped[float | None] = mapped_column(Float, nullable=True)
+
+
 def make_engine(url: str | None = None) -> Engine:
     url = url or bar_cache_url()
     kwargs: dict = {}
@@ -251,13 +316,26 @@ def rank_movers(
 # ---------------------------------------------------------------------------
 
 
+# How many rows go into one INSERT. A bar row binds 8 parameters, and BOTH
+# engines cap the parameters in a single statement — SQLite at 32,766 and
+# Postgres at 65,535 — so a single VALUES list is not something that can be
+# allowed to grow with the caller's appetite. It never did before 1-minute bars:
+# a day of 15-minute bars is 96 rows for a crypto pair, and the fetch is per day.
+# A minute fill covers a contiguous RUN of days in one call, so four days of one
+# crypto pair is 5,760 rows — 46,080 parameters, past SQLite outright, and eight
+# days would be past Postgres too. Chunking costs one extra round trip per 1,000
+# rows and removes the ceiling entirely.
+INSERT_CHUNK_ROWS = 1000
+
+
 def _insert_ignore(sess: OrmSession, model, rows: list[dict]) -> None:
     """Bulk insert, skipping rows that already exist. Historical bars are
     immutable, so 'do nothing' on a primary-key conflict is correct and fast."""
     if not rows:
         return
     ins = pg_insert if sess.bind.dialect.name == "postgresql" else sqlite_insert
-    sess.execute(ins(model).on_conflict_do_nothing().values(rows))
+    for i in range(0, len(rows), INSERT_CHUNK_ROWS):
+        sess.execute(ins(model).on_conflict_do_nothing().values(rows[i : i + INSERT_CHUNK_ROWS]))
 
 
 def save_daily_bars(sess: OrmSession, symbol: str, bars: list[dict], model=DailyBar) -> int:
@@ -531,24 +609,52 @@ def freshest_mover(sess: OrmSession, mover_model=DailyMover, intraday_model=Intr
 # replay that far back, 0 to keep everything forever.
 INTRADAY_KEEP_DAYS = 730
 
+# ONE-MINUTE bars get their own, far shorter window, and it is not a matter of
+# taste: a minute bar is fifteen rows where a 15-minute bar is one — ~1,440 a day
+# for a crypto pair, ~390 for a stock session — and they are fetched for exactly
+# one purpose, grading a fidelity window that is hours long and days old. Nothing
+# in the app can ask for a minute bar older than the newest comparison anyone is
+# still interested in, so keeping them for two years would be paying 15x the disk
+# for history no code path reads. A month is generous for "re-run last week's
+# comparison" and still bounds the table at a small multiple of the 15-minute one.
+# QT_BAR_CACHE_MINUTE_KEEP_DAYS overrides it; 0 keeps them forever.
+MINUTE_KEEP_DAYS = 30
 
-def intraday_keep_days() -> int:
-    """The retention window, from the environment. Invalid values fall back to
+
+def _keep_days(var: str, default: int) -> int:
+    """A retention window read from the environment. Invalid values fall back to
     the default rather than disabling the prune — a typo in an env var should
     not silently be the one setting that lets the disk fill up."""
-    raw = os.environ.get("QT_BAR_CACHE_KEEP_DAYS")
+    raw = os.environ.get(var)
     if raw is None or not raw.strip():
-        return INTRADAY_KEEP_DAYS
+        return default
     try:
         days = int(raw)
     except ValueError:
-        log.warning("QT_BAR_CACHE_KEEP_DAYS=%r is not a number — keeping the default", raw)
-        return INTRADAY_KEEP_DAYS
+        log.warning("%s=%r is not a number — keeping the default", var, raw)
+        return default
     return max(0, days)
 
 
-def prune_intraday(sess: OrmSession, keep_days: int | None = None) -> dict:
-    """Delete intraday bars older than the retention window, both markets.
+def intraday_keep_days() -> int:
+    return _keep_days("QT_BAR_CACHE_KEEP_DAYS", INTRADAY_KEEP_DAYS)
+
+
+def minute_keep_days() -> int:
+    return _keep_days("QT_BAR_CACHE_MINUTE_KEEP_DAYS", MINUTE_KEEP_DAYS)
+
+
+def prune_intraday(
+    sess: OrmSession, keep_days: int | None = None, minute_keep: int | None = None
+) -> dict:
+    """Delete intraday bars older than the retention window, both markets — and
+    1-minute bars older than THEIR (much shorter) window, also both markets.
+
+    The two windows are separate switches. Turning one off keeps that table
+    forever and leaves the other pruning normally, which is the combination that
+    actually matters: minute bars are the ones that grow fastest and are wanted
+    least, so a user with a big cache disk who wants to keep 15-minute history
+    forever should not thereby inherit two years of minute bars as well.
 
     Daily bars are deliberately NOT pruned. They are cheap (one row per symbol
     per day) and they are what every past day's movers list is reconstructed
@@ -558,14 +664,33 @@ def prune_intraday(sess: OrmSession, keep_days: int | None = None) -> dict:
     `ts` is an ISO-8601 UTC string, so a lexical comparison IS a chronological
     one, and the delete works identically on SQLite and Postgres."""
     days = intraday_keep_days() if keep_days is None else keep_days
-    if days <= 0:
-        return {"pruned": False, "keep_days": 0, "stock": 0, "crypto": 0}
-    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%SZ")
-    out = {"pruned": True, "keep_days": days, "cutoff": cutoff}
-    for key, model in (("stock", IntradayBar), ("crypto", CryptoIntradayBar)):
-        out[key] = int(
-            sess.query(model).filter(model.ts < cutoff).delete(synchronize_session=False)
-        )
+    minute_days = minute_keep_days() if minute_keep is None else minute_keep
+
+    def cutoff_for(window: int) -> str:
+        return (datetime.now(timezone.utc) - timedelta(days=window)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    out: dict = {
+        # True when ANY table was pruned, so the historical meaning ("did this
+        # run reclaim anything at all?") still holds for a caller reading it.
+        "pruned": days > 0 or minute_days > 0,
+        "keep_days": days,
+        "minute_keep_days": minute_days,
+        "stock": 0, "crypto": 0, "stock_minute": 0, "crypto_minute": 0,
+    }
+    if days > 0:
+        cutoff = cutoff_for(days)
+        out["cutoff"] = cutoff
+        for key, model in (("stock", IntradayBar), ("crypto", CryptoIntradayBar)):
+            out[key] = int(
+                sess.query(model).filter(model.ts < cutoff).delete(synchronize_session=False)
+            )
+    if minute_days > 0:
+        minute_cutoff = cutoff_for(minute_days)
+        out["minute_cutoff"] = minute_cutoff
+        for key, model in (("stock_minute", MinuteBar), ("crypto_minute", CryptoMinuteBar)):
+            out[key] = int(
+                sess.query(model).filter(model.ts < minute_cutoff).delete(synchronize_session=False)
+            )
     sess.commit()
     return out
 

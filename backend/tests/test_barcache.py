@@ -293,9 +293,16 @@ def test_pruning_can_be_turned_off_entirely(monkeypatch):
     ancient = (datetime.now(timezone.utc) - timedelta(days=3000)).strftime("%Y-%m-%dT%H:%M:%SZ")
     s.add(barcache.IntradayBar(symbol="AAA", ts=ancient, o=1, h=1, l=1, c=1, v=1, vw=1))
     s.commit()
+    s.add(barcache.MinuteBar(symbol="AAA", ts=ancient, o=1, h=1, l=1, c=1, v=1, vw=1))
+    s.commit()
     monkeypatch.setenv("QT_BAR_CACHE_KEEP_DAYS", "0")
-    assert barcache.prune_intraday(s) == {"pruned": False, "keep_days": 0, "stock": 0, "crypto": 0}
+    monkeypatch.setenv("QT_BAR_CACHE_MINUTE_KEEP_DAYS", "0")
+    assert barcache.prune_intraday(s) == {
+        "pruned": False, "keep_days": 0, "minute_keep_days": 0,
+        "stock": 0, "crypto": 0, "stock_minute": 0, "crypto_minute": 0,
+    }
     assert s.query(barcache.IntradayBar).count() == 1
+    assert s.query(barcache.MinuteBar).count() == 1
 
 
 def test_a_typo_in_the_retention_env_var_does_not_disable_pruning(monkeypatch):

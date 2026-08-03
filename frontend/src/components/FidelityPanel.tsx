@@ -18,6 +18,14 @@ import { fmtHm, fmtIsoDate, zoneAbbr } from "../lib/datetime";
  *  your symbols and your order sizes — and the number it produces is meant to go
  *  straight into the spread setting on the form above.
  */
+/** Bar sizes as a human says them. "1Min" is a wire value, not a sentence. */
+const BAR_SIZE: Record<string, string> = {
+  "1Min": "1-minute",
+  "15Min": "15-minute",
+  "1Hour": "1-hour",
+  "1Day": "daily",
+};
+
 export default function FidelityPanel() {
   const [strategies, setStrategies] = useState<StrategyRow[]>([]);
   const [strategyId, setStrategyId] = useState<number | null>(null);
@@ -130,6 +138,22 @@ export default function FidelityPanel() {
 
       {report && d && x && (
         <>
+          {/* WHICH BARS GRADED THESE TRADES. The live engine decides every 60
+              seconds, so the replay's resolution is not a detail: a 50% match
+              rate means something quite different when a coarser bar could not
+              have seen the decision in the first place. The replay picks the
+              finest resolution the window can afford and drops back when the
+              bars aren't there, so this is read off the result rather than
+              assumed. */}
+          {report.timeframe && (
+            <p className="hint">
+              Graded on <strong>{BAR_SIZE[report.timeframe] ?? report.timeframe}</strong> bars.{" "}
+              {report.timeframe === "1Min"
+                ? "That matches the 60-second cycle the live engine decides on, so a mismatch below is a real disagreement rather than a gap between two bars."
+                : "The live engine decides every 60 seconds, so a trade it made between two of these bars was never something the replay could see — read a lone mismatch with that in mind."}
+            </p>
+          )}
+
           {(report.bar_gaps?.length ?? 0) > 0 && (
             <p className="hint warn">
               <IconWarn className="icon-inline" /> <strong>The replay had days with no price data.</strong> Read the

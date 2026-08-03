@@ -58,7 +58,35 @@ def _replay_progress(done: int, total: int) -> None:
     _report("Replaying history…", int(done * 100 / total) if total else 0)
 
 
-TIMEFRAMES = ("15Min", "1Hour", "1Day")
+TIMEFRAMES = ("1Min", "15Min", "1Hour", "1Day")
+
+# The bar sizes that mean "replay the day as it unfolded" rather than "one
+# decision per day". Named because several guards below ask the same question and
+# would otherwise drift apart the next time a size is added.
+INTRADAY_TIMEFRAMES = ("1Min", "15Min")
+
+
+def intraday_model_for(asset_class: str, timeframe: str = "15Min"):
+    """The bar-cache table a given intraday resolution lives in.
+
+    Four tables, not two: stock and crypto keep their own (their "day" means
+    different things), and 1-minute bars keep their own again because a minute
+    bar and a 15-minute bar collide on the (symbol, timestamp) key four times an
+    hour — see the note above MinuteBar in qt.services.barcache. One place to ask,
+    so no caller can read one resolution and write another."""
+    from qt.services import barcache
+
+    crypto = asset_class == "crypto"
+    if timeframe == "1Min":
+        return barcache.CryptoMinuteBar if crypto else barcache.MinuteBar
+    return barcache.CryptoIntradayBar if crypto else barcache.IntradayBar
+
+
+def _bar_label(timeframe: str) -> str:
+    """How to say a bar size to a human watching a progress bar."""
+    return {"1Min": "1-minute bars", "15Min": "15-minute bars"}.get(
+        timeframe, f"{timeframe} bars"
+    )
 
 # Commission per side, as a % of notional. US equities on Alpaca are
 # commission-free (a sell carries tiny SEC/TAF regulatory fees — cents, and not
@@ -211,9 +239,14 @@ async def fetch_held_position_bars(
     *,
     asset_class: str,
     report=None,
+    timeframe: str = "15Min",
 ) -> int:
-    """Download the 15-minute bars for days a position was HELD but the cache only
+    """Download the intraday bars for days a position was HELD but the cache only
     had a daily bar for, and store them. Returns how many symbol-days were filled.
+
+    `timeframe` must be the resolution the DATASET was read at, or this writes
+    bars into a table the reload never looks in and the second pass silently
+    achieves nothing.
 
     Why a second pass rather than fetching up front: which symbols get held, and
     for how long, is a property of the strategy — it cannot be known before the
@@ -229,8 +262,7 @@ async def fetch_held_position_bars(
     """
     from qt.services import barcache, barsweep
 
-    crypto = asset_class == "crypto"
-    intraday_model = barcache.CryptoIntradayBar if crypto else barcache.IntradayBar
+    intraday_model = intraday_model_for(asset_class, timeframe)
 
     spans = held_spans(result)
     if not spans:
@@ -267,14 +299,14 @@ async def fetch_held_position_bars(
         for index, (symbol, (first, last)) in enumerate(sorted(wanted.items()), start=1):
             if report:
                 report(
-                    f"Downloading 15-minute bars for held positions — {symbol} "
+                    f"Downloading {_bar_label(timeframe)} for held positions — {symbol} "
                     f"({index} of {len(wanted)})",
                     int(index * 100 / len(wanted)),
                 )
             end = (date.fromisoformat(last) + timedelta(days=1)).isoformat()
             try:
                 data = await barsweep._bars_with_retry(
-                    client, [symbol], "15Min", first, end,
+                    client, [symbol], timeframe, first, end,
                     asset_class=asset_class, attempts=2, retry_delay=1.0,
                 )
             except Exception as exc:  # noqa: BLE001 — one symbol failing is not a failed run
@@ -322,7 +354,7 @@ def load_scanner_replay_dataset(
     asset_class: str, days: int, replay_top_n: int, scanner_cfg: dict | None = None,
     *, end: datetime | None = None, always_eligible: list[str] | None = None,
     window_hours: float | None = None, seed_by_day: dict[str, list[str]] | None = None,
-    allow_empty_intraday: bool = False,
+    allow_empty_intraday: bool = False, intraday_timeframe: str = "15Min",
 ) -> ScannerReplayDataset:
     """Read the cached historical top-N risers + their bars for `days` back.
     Prefers cached INTRADAY bars (so intraday exits behave); falls back to daily
@@ -355,13 +387,22 @@ def load_scanner_replay_dataset(
 
     `allow_empty_intraday` suppresses the short-window 422 below, for a caller
     that intends to fetch the missing bars and load again. It does not make the
-    empty case acceptable — see `_needs_intraday_sweep_detail`."""
+    empty case acceptable — see `_needs_intraday_sweep_detail`.
+
+    `intraday_timeframe` picks WHICH intraday cache is read: the 15-minute tables
+    (the default, and what every ordinary backtest and the optimizer use) or the
+    1-minute ones. Only the fidelity comparison asks for the finer set, and only
+    over a window of hours — the live engine decides every 60 seconds, so a
+    15-minute replay cannot see a signal that came and went between two of its
+    bars, and every such trade is reported as one the replay missed. The two
+    resolutions live in different tables, so asking for one never reads or writes
+    the other; see intraday_model_for."""
     from qt.services import barcache
 
     crypto = asset_class == "crypto"
     daily_model = barcache.CryptoDailyBar if crypto else barcache.DailyBar
     mover_model = barcache.CryptoDailyMover if crypto else barcache.DailyMover
-    intraday_model = barcache.CryptoIntradayBar if crypto else barcache.IntradayBar
+    intraday_model = intraday_model_for(asset_class, intraday_timeframe)
     daily_stamp = "T12:00:00Z" if crypto else "T14:00:00Z"
     market = "crypto" if crypto else "stock"
     market_key = "crypto" if crypto else "stocks"  # the scanner config's own key
@@ -516,7 +557,7 @@ def load_scanner_replay_dataset(
                 filled = 0
             else:
                 bars, filled = _fill_intraday_gaps(intraday_bars, daily, start_day)
-            timeframe = "15Min"
+            timeframe = intraday_timeframe
         else:
             # From `baseline_day`, for the same reason the intraday branch does:
             # the FIRST day of the window needs a prior bar to measure a day-gain
@@ -587,7 +628,15 @@ class BacktestBody(BaseModel):
     # "before the window" worth inventing; the fidelity comparison fills it from
     # the journal. See run_backtest's `prior_loss_at`.
     prior_loss_at: dict[str, datetime] = Field(default_factory=dict)
-    timeframe: str = Field(default="1Hour", pattern="^(15Min|1Hour|1Day)$")
+    # 1Min is accepted but is NOT a general backtest option: `_check_window`
+    # refuses it past MAX_HOURS_FOR_MINUTE_REPLAY. It exists for the fidelity
+    # comparison, which replays a window of hours and has to resolve decisions
+    # the live engine made on a 60-second cycle. Deliberately reachable through
+    # the ordinary endpoint rather than behind a second door — a caller who
+    # genuinely wants a one-day replay at full resolution should not need a
+    # separate implementation of a backtest to get it — and the length guard is
+    # what stops it becoming an accidental way to download ten million bars.
+    timeframe: str = Field(default="1Hour", pattern="^(1Min|15Min|1Hour|1Day)$")
     starting_cash: float = Field(default=5000, ge=100, le=10_000_000)
     spread_pct: float = Field(default=0.1, ge=0, le=2)
     # None = use the asset class's real-world rate (see DEFAULT_FEE_PCT). An
@@ -608,6 +657,20 @@ class BacktestBody(BaseModel):
             raise ValueError("The window's end must be after its start.")
         if (end - start) > timedelta(days=730):
             raise ValueError("A backtest window can span at most 730 days.")
+        # ONE-MINUTE BARS ARE FOR SHORT WINDOWS AND NOTHING ELSE. 1,440 bars per
+        # crypto pair per day means forty names over 180 days is ten million
+        # bars — infeasible to download, pointless to store, and answering a
+        # question 15-minute bars already answer well at that horizon. The cap is
+        # the same number the fidelity comparison uses to CHOOSE the resolution,
+        # so that path can never build a request this refuses.
+        if self.timeframe == "1Min" and (end - start) > timedelta(
+            hours=MAX_HOURS_FOR_MINUTE_REPLAY
+        ):
+            raise ValueError(
+                f"A 1-minute replay can span at most {MAX_HOURS_FOR_MINUTE_REPLAY} hours — "
+                "past that it is millions of bars to answer a question 15-minute bars "
+                "already answer. Use 15Min."
+            )
         return self
 
     def window(self) -> tuple[datetime, datetime]:
@@ -695,6 +758,22 @@ REPLAY_FILL_MAX_DAYS_PER_SYMBOL = 8
 # gaps are scattered costs a request per run of them.
 REPLAY_FILL_MAX_REQUESTS = 60
 
+# The 1-minute pass needs a ceiling the request count cannot express. A request
+# is a contiguous RUN of days, so the two caps above bound how many CALLS are
+# made and say nothing about how much comes back — and at one minute a call
+# brings back fifteen times the bars a 15-minute call does (1,440 a day for a
+# crypto pair, ~390 for a stock session). Forty symbols each missing three days
+# is forty requests either way; it is ~170,000 minute bars against ~11,000
+# 15-minute ones, and the second number is the one that lands in the owner's
+# Postgres.
+#
+# So the minute pass is budgeted in SYMBOL-DAYS, which is what actually costs:
+# 120 of them is roughly 170k crypto bars or 47k stock bars, downloaded once for
+# a window and read from the cache thereafter. Over budget, the pass stands down
+# entirely and the replay falls back to 15-minute bars — a coarser answer, never
+# a wrong one, and the response says which resolution graded the trades.
+MINUTE_FILL_MAX_SYMBOL_DAYS = 120
+
 
 def _contiguous(days: list[str]) -> list[tuple[str, str]]:
     """Sorted days → the (first, last) runs they form.
@@ -717,9 +796,16 @@ async def fetch_replay_window_intraday(
     *,
     asset_class: str,
     report=None,
+    timeframe: str = "15Min",
 ) -> int:
-    """Download the 15-minute bars the replay WINDOW is missing, straight from
-    the broker, and cache them. Returns how many bars were saved.
+    """Download the intraday bars the replay WINDOW is missing, straight from the
+    broker, and cache them. Returns how many bars were saved.
+
+    `timeframe` is the resolution being replayed, and it selects both what is
+    asked of the broker and which cache table the answer lands in (they are
+    separate per resolution — see intraday_model_for). At 1Min the pass is also
+    budgeted in symbol-days rather than only in requests, because a request
+    returns fifteen times as much: see MINUTE_FILL_MAX_SYMBOL_DAYS.
 
     The intraday sweep cannot do this, and that is the point. It walks
     `daily_movers` rows and fetches each mover-day, so a day with no mover row
@@ -745,7 +831,7 @@ async def fetch_replay_window_intraday(
     from qt.services import barcache, barsweep
 
     crypto = asset_class == "crypto"
-    intraday_model = barcache.CryptoIntradayBar if crypto else barcache.IntradayBar
+    intraday_model = intraday_model_for(asset_class, timeframe)
     daily_model = barcache.CryptoDailyBar if crypto else barcache.DailyBar
     if not ds.union or not ds.baseline_day or not ds.end_day:
         return 0
@@ -764,6 +850,7 @@ async def fetch_replay_window_intraday(
         )
         swept_to = barcache.latest_daily_day(sess, model=daily_model) or ""
         wanted: list[tuple[str, str, str]] = []
+        symbol_days = 0
         for symbol in sorted(ds.union):
             covered = have.get(symbol, set())
             traded = {b["t"][:10] for b in ds.daily.get(symbol) or []}
@@ -773,12 +860,19 @@ async def fetch_replay_window_intraday(
                 if (d not in covered or d == today) and (d in traded or d > swept_to)
             ]
             if missing and len(missing) <= REPLAY_FILL_MAX_DAYS_PER_SYMBOL:
+                symbol_days += len(missing)
                 wanted += [(symbol, first, last) for first, last in _contiguous(missing)]
-        if not wanted or len(wanted) > REPLAY_FILL_MAX_REQUESTS:
+        # The VOLUME budget, which only bites at one minute — see
+        # MINUTE_FILL_MAX_SYMBOL_DAYS. None at 15 minutes, so that pass behaves
+        # exactly as it always has.
+        budget = MINUTE_FILL_MAX_SYMBOL_DAYS if timeframe == "1Min" else None
+        over_budget = budget is not None and symbol_days > budget
+        if not wanted or len(wanted) > REPLAY_FILL_MAX_REQUESTS or over_budget:
             if wanted:
                 log.info(
-                    "replay window fill skipped: %s requests needed (cap %s)",
-                    len(wanted), REPLAY_FILL_MAX_REQUESTS,
+                    "replay window fill skipped (%s): %s requests needed (cap %s), "
+                    "%s symbol-days (budget %s)",
+                    timeframe, len(wanted), REPLAY_FILL_MAX_REQUESTS, symbol_days, budget,
                 )
             return 0
 
@@ -786,7 +880,7 @@ async def fetch_replay_window_intraday(
         for index, (symbol, first, last) in enumerate(wanted, start=1):
             if report:
                 report(
-                    f"Downloading the 15-minute bars this window is missing — {symbol} "
+                    f"Downloading the {_bar_label(timeframe)} this window is missing — {symbol} "
                     f"({index} of {len(wanted)})",
                     int(index * 100 / len(wanted)),
                 )
@@ -796,7 +890,7 @@ async def fetch_replay_window_intraday(
                 # is watching a progress bar, and one symbol failing is not a
                 # failed run.
                 data = await barsweep._bars_with_retry(
-                    client, [symbol], "15Min", first, end_exclusive,
+                    client, [symbol], timeframe, first, end_exclusive,
                     asset_class=asset_class, attempts=2, retry_delay=1.0,
                 )
             except Exception as exc:  # noqa: BLE001
@@ -828,8 +922,9 @@ async def ensure_replay_intraday(
     window_hours: float | None = None,
     seed_by_day: dict[str, list[str]] | None = None,
     allow_empty_intraday: bool = False,
+    timeframe: str = "15Min",
 ) -> tuple[ScannerReplayDataset, bool]:
-    """Fetch the 15-minute bars this replay is missing, then re-read the dataset.
+    """Fetch the intraday bars this replay is missing, then re-read the dataset.
 
     Replay only uses intraday bars when they cover the WHOLE mover set, so a
     single uncached name silently demoted the run to daily bars — where a stop
@@ -850,7 +945,13 @@ async def ensure_replay_intraday(
     `used_intraday`: since a short window accepts PARTIAL coverage (see the
     dataset's note), "already intraday" can mean one symbol with one bar, and
     returning early there is precisely how a four-hour window with the cache a
-    day behind replayed nothing at all."""
+    day behind replayed nothing at all.
+
+    At `timeframe="1Min"` only the FIRST of the two fetches runs. The mover-day
+    sweep produces 15-minute bars and nothing else, so running it here would
+    spend a long download filling a table this dataset is not reading and then
+    reload to find exactly as little as before. The window fill can fetch any
+    resolution, and on a short window it is the pass that matters anyway."""
     if not _wants_intraday_replay(params):
         return ds, False
 
@@ -864,6 +965,7 @@ async def ensure_replay_intraday(
             asset_class, days, replay_top_n, scanner_cfg, end=end,
             always_eligible=always_eligible, window_hours=window_hours,
             seed_by_day=seed_by_day, allow_empty_intraday=allow_empty_intraday,
+            intraday_timeframe=timeframe,
         )
 
     def better(fresh: ScannerReplayDataset) -> bool:
@@ -880,7 +982,7 @@ async def ensure_replay_intraday(
     # cache), and it is the only pass that can reach the window's newest days.
     try:
         filled = await fetch_replay_window_intraday(
-            client, ds, asset_class=asset_class, report=report
+            client, ds, asset_class=asset_class, report=report, timeframe=timeframe,
         )
     except Exception as exc:  # noqa: BLE001 — a failed top-up is not a failed backtest
         log.warning("replay window intraday fill failed (%s); continuing", exc)
@@ -892,6 +994,14 @@ async def ensure_replay_intraday(
             ds, topped_up = fresh, True
 
     if ds.used_intraday:
+        return ds, topped_up
+
+    if timeframe != "15Min":
+        # The sweep below only ever fetches 15-minute bars. At any other
+        # resolution it would download a great deal to fill a table this dataset
+        # does not read, so it is skipped and the caller decides what to do with
+        # a dataset that still has no coverage — which for the fidelity replay is
+        # to drop back to 15-minute bars and say so.
         return ds, topped_up
 
     if report:
@@ -1058,6 +1168,26 @@ WARMUP_DAYS = 150
 # does not produce a rough answer, it produces an empty one — and the fidelity
 # report then reads as "the backtest missed all your trades".
 MIN_HOURS_FOR_DAILY_REPLAY = 48
+
+# Above this, a replay does not get 1-minute bars — a ceiling rather than a
+# floor, because the finer resolution is bought with download volume rather than
+# demanded by anything in the strategy.
+#
+# The live engine evaluates every 60 seconds. A 15-minute replay is therefore 15x
+# coarser than the thing it is grading, and a signal that appeared and vanished
+# inside a quarter hour is invisible to it — measured: a coin bought live at
+# 13:18:18, between the replay's 13:15 and 13:30 bars, came back as a trade the
+# replay missed, which then left the replay a position slot spare, so it bought
+# something else and THAT came back as a trade it invented. One blind spot,
+# two false verdicts pointing opposite ways.
+#
+# A day is where paying for that stops being worth it. A comparison longer than
+# 24 hours is asking whether the strategy behaves the same in general, which
+# 15-minute resolution answers; a comparison shorter than a day is asking about
+# particular fills, which nothing coarser can settle. 24h also bounds the
+# download: with the baseline prefix in front of it, ~3 days of minute bars per
+# crypto symbol and ~6 per stock.
+MAX_HOURS_FOR_MINUTE_REPLAY = 24
 
 # How many replayed symbols are worth listing in a result. Above this the list
 # is dropped and only `universe_size` is reported — a 180-day stock sweep can
@@ -1417,7 +1547,11 @@ async def replay(
             status_code=422,
             detail="This strategy uses the VWAP rule, which needs intraday bars — pick 1Hour or 15Min.",
         )
-    if body.timeframe in ("15Min", "1Hour") and _uses_daily_only_signals(params) and not mixed:
+    if (
+        body.timeframe in INTRADAY_TIMEFRAMES + ("1Hour",)
+        and _uses_daily_only_signals(params)
+        and not mixed
+    ):
         # Still wrong for a MACD/RSI strategy with no price-triggered exit: there
         # is nothing an intraday replay would buy us, and the indicators would be
         # computed off intraday closes. Mixed-resolution runs are exempt — they
@@ -1451,9 +1585,17 @@ async def replay(
     fetch_start = (window_start - timedelta(days=daily_warmup)).strftime("%Y-%m-%dT%H:%M:%SZ")
     baseline_start = (window_start - timedelta(days=baseline_warmup)).strftime("%Y-%m-%dT%H:%M:%SZ")
     window_start_str = window_start.strftime("%Y-%m-%dT%H:%M:%SZ")
-    # The bar size actually REPLAYED. Mixed resolution always replays 15-minute
-    # bars — the finest the free feed gives — whatever the caller asked for.
-    replay_timeframe = "15Min" if mixed else body.timeframe
+    # The bar size actually REPLAYED. A mixed-resolution run is intraday by
+    # definition (that is the point of it), so a caller asking for 1Day or 1Hour
+    # gets 15-minute bars. But a caller who asked for a FINER intraday size is
+    # asking for something mixed resolution can perfectly well give, and pinning
+    # it back to 15Min would silently discard the resolution a fidelity window
+    # requested.
+    replay_timeframe = (
+        (body.timeframe if body.timeframe in INTRADAY_TIMEFRAMES else "15Min")
+        if mixed
+        else body.timeframe
+    )
     daily_bars: dict[str, list[dict]] | None = None
     # Read-through the bar cache (qt.services.barfetch): the same year of history
     # was being re-downloaded on every run. Only the missing recent edge is
@@ -1615,21 +1757,60 @@ async def _scanner_replay(
     # they are asking about (see fetch_replay_window_intraday). The same refusal,
     # word for word, is re-raised below when the fetch did not help — a silent
     # empty replay presented as a verdict remains the worst outcome available.
-    ds = await asyncio.to_thread(
-        load_scanner_replay_dataset, strategy_dict["asset_class"], span, body.replay_top_n, cfg,
-        end=window_end, always_eligible=pinned, window_hours=window_hours,
-        seed_by_day=seed_by_day, allow_empty_intraday=True,
-    )
-    # Missing 15-minute bars are fetched here rather than sent back as an
-    # instruction to go and run a sweep. Runs once per window; afterwards the
-    # cache serves it.
-    ds, topped_up = await ensure_replay_intraday(
-        client, ds, strategy_dict["params"],
-        asset_class=strategy_dict["asset_class"], days=span,
-        replay_top_n=body.replay_top_n, scanner_cfg=cfg, report=_report,
-        end=window_end, always_eligible=pinned, window_hours=window_hours,
-        seed_by_day=seed_by_day, allow_empty_intraday=True,
-    )
+    async def _acquire(tf: str) -> tuple[ScannerReplayDataset, bool]:
+        """Read the dataset at one intraday resolution, fetching what the window
+        is missing. Written once because it is now run at more than one size."""
+        loaded = await asyncio.to_thread(
+            load_scanner_replay_dataset, strategy_dict["asset_class"], span, body.replay_top_n, cfg,
+            end=window_end, always_eligible=pinned, window_hours=window_hours,
+            seed_by_day=seed_by_day, allow_empty_intraday=True, intraday_timeframe=tf,
+        )
+        # Missing bars are fetched here rather than sent back as an instruction
+        # to go and run a sweep. Runs once per window; afterwards the cache
+        # serves it.
+        return await ensure_replay_intraday(
+            client, loaded, strategy_dict["params"],
+            asset_class=strategy_dict["asset_class"], days=span,
+            replay_top_n=body.replay_top_n, scanner_cfg=cfg, report=_report,
+            end=window_end, always_eligible=pinned, window_hours=window_hours,
+            seed_by_day=seed_by_day, allow_empty_intraday=True, timeframe=tf,
+        )
+
+    # WHICH INTRADAY RESOLUTION. 15 minutes unless the caller explicitly asked
+    # for minute bars — which only the fidelity comparison does, and only on a
+    # window short enough to afford them (BacktestBody refuses a longer one).
+    preferred = body.timeframe if body.timeframe == "1Min" else "15Min"
+    ds, topped_up = await _acquire(preferred)
+
+    # A FINER RESOLUTION MUST NEVER MEAN LESS COVERAGE. The minute tables start
+    # empty and the minute fill has a volume budget, so the fetch can quite
+    # legitimately come back covering fewer names than the 15-minute cache
+    # already covers — and a short window accepts PARTIAL coverage, so
+    # `used_intraday` alone is not the test: one symbol with one minute bar
+    # passes it while twenty-nine others are dropped. That is the shape of the
+    # STOCK risk in particular, where the free IEX feed is thin and a mover
+    # union is large; it is also what happens on any cache that has never
+    # fetched a minute bar before.
+    #
+    # So: unless the minute pass covered the whole universe intraday, read the
+    # 15-minute dataset too and keep whichever covers more, minute bars winning a
+    # tie. Full minute coverage cannot be beaten, so the case this feature exists
+    # for pays nothing extra. The resolution actually used travels back on
+    # `timeframe`, so a report always says which bars graded the trades.
+    def _coverage(d: ScannerReplayDataset) -> tuple[bool, int]:
+        """How much of the universe this dataset can replay intraday. A daily
+        fallback scores (False, 0) however many DAILY bars it has — those are not
+        what either resolution is being compared on."""
+        return (d.used_intraday, d.intraday_covered if d.used_intraday else 0)
+
+    if preferred != "15Min" and _coverage(ds) < (True, len(ds.union)):
+        coarse, coarse_topped = await _acquire("15Min")
+        if _coverage(coarse) > _coverage(ds):
+            log.info(
+                "minute replay covered %s of %s symbols; falling back to 15Min (%s)",
+                _coverage(ds)[1], len(ds.union), _coverage(coarse)[1],
+            )
+            ds, topped_up = coarse, topped_up or coarse_topped
     if window_hours < MIN_HOURS_FOR_DAILY_REPLAY and not ds.used_intraday:
         raise HTTPException(
             status_code=422,
@@ -1694,7 +1875,11 @@ async def _scanner_replay(
     # Fetch exactly those days, then replay again on the better data.
     if ds.used_intraday and "error" not in result and ds.daily_filled_days:
         got = await fetch_held_position_bars(
-            client, result, ds, asset_class=strategy_dict["asset_class"], report=_report
+            client, result, ds, asset_class=strategy_dict["asset_class"], report=_report,
+            # The resolution the DATASET ended up at, not the one requested: a
+            # minute run that fell back to 15 minutes must fetch and reload the
+            # same table it is reading, or this pass writes bars nobody looks at.
+            timeframe=ds.timeframe,
         )
         if got:
             ds = await asyncio.to_thread(
@@ -1703,6 +1888,7 @@ async def _scanner_replay(
                 window_hours=window_hours,
                 always_eligible=pinned,
                 seed_by_day=seed_by_day, allow_empty_intraday=True,
+                intraday_timeframe=ds.timeframe,
             )
             _report("Replaying history…", 0)
             replay_daily = ds.daily if _needs_warmup(strategy_dict["params"]) else None

@@ -36,6 +36,18 @@ log = logging.getLogger("qt.services.barfetch")
 
 # Only these two are cached. 1Hour is a legacy backtest option that nothing
 # fetches by default; an uncached timeframe simply passes straight through.
+#
+# 1Min IS DELIBERATELY ABSENT, and adding it here would be a data-corrupting
+# "improvement". Everything below that is not 1Day writes to the INTRADAY table,
+# whose key is (symbol, timestamp) with no record of the bar's size — so a
+# 1-minute bar and a 15-minute bar collide four times an hour, the write is
+# insert-or-ignore, and the survivor gets served back inside whichever series
+# asks next, carrying the wrong high and low. Minute bars have their own tables
+# (barcache.MinuteBar) and their own reader (qt.api.backtest.intraday_model_for);
+# caching them here means teaching _plan and _closed_intraday about a second slot
+# size first. Until then a 1-minute fetch passes straight through to Alpaca,
+# which is correct, merely not thrifty — and it is only ever asked for over a
+# window of hours.
 CACHEABLE = ("1Day", "15Min")
 
 # Daily bars are stored keyed by DAY, so their time-of-day is not preserved and a

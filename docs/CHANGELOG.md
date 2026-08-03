@@ -3,6 +3,30 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Short fidelity windows are graded on 1-minute bars (2026-08-03)
+
+The live engine decides every 60 seconds. The replay's finest bar was 15
+minutes, so it was judging that engine at a fifteenth of its resolution — and
+the damage doubled. A coin bought live at 13:18 fell between the replay's 13:15
+and 13:30 bars, came back as a trade the replay *missed*, and because that left
+a position slot free it caused a second, unrelated buy to be reported as a trade
+the replay *invented*. One blind spot, two false verdicts.
+
+Comparisons over a window of a day or less now use 1-minute bars, for crypto and
+stocks alike. They are kept in their own cache tables for 30 days rather than
+two years, and the download is budgeted so a comparison can never turn into an
+unplanned sweep.
+
+Stocks needed care, because the free IEX feed is genuinely sparse. Rather than
+guess, the replay measures: it reads the minute data, and if that covers less of
+the universe than the 15-minute cache already does, it quietly falls back. The
+worst case for a thinly-traded stock is exactly today's behaviour, never worse —
+and the report now names which resolution graded your trades.
+
+Ordinary backtests are unchanged. A run over months is asking about behaviour in
+general, which 15 minutes answers perfectly well; a window under a day is asking
+about particular fills, which it cannot.
+
 ## The optimizer and the editor stop disagreeing about decimals (2026-08-03)
 
 A search would finish, propose a stop-loss of 1.23%, and save it as a draft

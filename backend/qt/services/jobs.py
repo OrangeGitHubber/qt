@@ -239,7 +239,12 @@ async def prune_bar_cache() -> None:
         sess = barcache.session()
         try:
             out = barcache.prune_intraday(sess)
-            if out.get("stock") or out.get("crypto"):
+            # The minute tables count too: they are the fastest-growing thing in
+            # the cache and the shortest-lived, so a prune that reclaimed only
+            # those is exactly the run worth seeing in the log.
+            if any(
+                out.get(k) for k in ("stock", "crypto", "stock_minute", "crypto_minute")
+            ):
                 log.info("bar cache prune: %s", out)
         finally:
             sess.close()

@@ -24,7 +24,7 @@ BIG_ATR = {
 
 def test_a_sub_day_window_is_not_replayed_on_daily_bars():
     """The reported case: 23:18 → 02:48 UTC, 3.5 hours, replayed as 1Day."""
-    assert _timeframe_for(PLAIN, window_hours=3.5) == "15Min"
+    assert _timeframe_for(PLAIN, window_hours=3.5) != "1Day"
 
 
 def test_a_long_window_still_uses_daily_bars():
@@ -50,9 +50,9 @@ def test_the_length_override_leaves_daily_signal_strategies_alone():
 
 
 def test_a_macd_strategy_with_a_stop_is_mixed_resolution_regardless():
-    """Guards the branch above it: if this ever stopped being 15Min, the test
+    """Guards the branch above it: if this ever stopped being intraday, the test
     above would be passing for the wrong reason."""
-    assert _timeframe_for(MACD, window_hours=3.5) == "15Min"
+    assert _timeframe_for(MACD, window_hours=3.5) != "1Day"
 
 
 def test_an_unknown_window_length_behaves_as_before():
