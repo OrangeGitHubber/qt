@@ -1215,6 +1215,28 @@ export default function Backtest() {
                   )}
                 </p>
               )}
+            {/* THE TOP-N CUT. Said out loud in both directions, because until
+                now it happened in neither: the replay evaluated every symbol it
+                was handed while the live engine only ever looks at the top-N, so
+                a ranked strategy's backtest quietly had more candidates to work
+                with than reality would have given it. */}
+            {result.ranking?.applied && (
+              <p className="hint">
+                <strong>
+                  Only the top {result.ranking.top_n} of {result.ranking.pool_size} were candidates.
+                </strong>{" "}
+                The pool was ranked by {result.ranking.rank_by.replace(/_/g, " ")} on{" "}
+                <em>every</em> replayed bar and cut to the top {result.ranking.top_n} — the same thing the live
+                engine does each cycle, so membership moves through the day exactly as it does live.
+                {result.ranking.benchmark_missing && result.ranking.warning ? ` ${result.ranking.warning}` : ""}
+              </p>
+            )}
+            {result.ranking && !result.ranking.applied && result.ranking.warning && (
+              <p className="hint warn">
+                <IconWarn className="icon-inline" /> <strong>This run drew from a wider pool than live would.</strong>{" "}
+                {result.ranking.warning}
+              </p>
+            )}
             {/* A mover with no cached bars can't be replayed. Never let a
                 shrunken universe pass as a full test. */}
             {result.scanner_replay && (result.universe_dropped?.length ?? 0) > 0 && (

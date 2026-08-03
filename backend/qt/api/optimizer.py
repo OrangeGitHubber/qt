@@ -188,9 +188,25 @@ async def _run_search(
     # it the out-of-sample slice — the honest verdict number — begins mid-window
     # with the signal dead for its first ~35 bars. Daily-only, same as the backtest.
     from qt.api.backtest import WARMUP_DAYS, _needs_warmup
+    from qt.services.backtest import (
+        DAILY_RANK_METRICS,
+        RANK_LOOKBACK_DAYS,
+        ranking_config,
+    )
 
     sim_start: datetime | None = None
     daily_bars: dict[str, list[dict]] | None = None
+    # A ranked strategy scored on a DAILY-BAR metric needs its own (deeper) daily
+    # history — relative_strength is a 200-day average, so live fetches 320 days.
+    # Scanner-replay strategies never rank (the scanner ordered them already), so
+    # this stays 0 down that branch and nothing changes there.
+    rank_cfg = ranking_config(strategy_dict)
+    rank_daily: dict[str, list[dict]] | None = None
+    rank_lookback = (
+        RANK_LOOKBACK_DAYS[rank_cfg[0]] + 5
+        if rank_cfg is not None and rank_cfg[0] in DAILY_RANK_METRICS
+        else 0
+    )
     try:
         if prebuilt_bars is not None:
             bars = prebuilt_bars
@@ -293,6 +309,11 @@ async def _run_search(
             window_start = datetime.now(timezone.utc) - timedelta(days=days)
             needs_warmup = _needs_warmup(strategy_dict["params"])
             warmup = WARMUP_DAYS if (timeframe == "1Day" or mixed) and needs_warmup else 0
+            # The ranking metric's lookback is a claim on the SAME prefix, and a
+            # deeper one than any indicator. Fetch short and the metric is None
+            # across the opening stretch, every member drops out of the ranking,
+            # and the search scores every config at zero trades.
+            warmup = max(warmup, rank_lookback)
             start = (window_start - timedelta(days=warmup)).strftime("%Y-%m-%dT%H:%M:%SZ")
             if mixed:
                 # Two fetches with deliberately different windows, exactly like the
@@ -308,6 +329,20 @@ async def _run_search(
                 )
             else:
                 bars = await barfetch.fetch_bars(client, symbols, asset_class, timeframe, start)
+            if rank_lookback:
+                # A 1Day search IS a daily series (run_backtest reads its own bars
+                # then) and a mixed one already has one; the remaining case is an
+                # intraday search of a strategy with a daily RANKING metric but no
+                # daily indicator. SPY is only ever fetched for rs_vs_spy.
+                if mixed:
+                    rank_daily = daily_bars
+                elif timeframe != "1Day":
+                    rank_daily = await barfetch.fetch_bars(
+                        client, symbols, asset_class, "1Day", start
+                    )
+                if rank_cfg[0] == "rs_vs_spy":
+                    spy = await barfetch.fetch_bars(client, ["SPY"], "stock", "1Day", start)
+                    rank_daily = {**(rank_daily or bars), "SPY": spy.get("SPY") or []}
             if not any(bars.get(s) for s in symbols):
                 raise ValueError("No historical bars for those symbols/timeframe.")
             # A mixed run always gates trading at the window start: its intraday
@@ -335,6 +370,7 @@ async def _run_search(
             progress=on_progress,
             sim_start=sim_start,
             daily_bars_by_symbol=daily_bars,
+            rank_daily_bars_by_symbol=rank_daily,
         )
         result["strategy_name"] = _progress.strategy_name
         # `timeframe` is what was REPLAYED (what the searched stops were checked
@@ -498,6 +534,15 @@ async def start_optimize(
     # request's DB session is open — pass plain dicts/lists into the task.
     strategy_dict = {
         "asset_class": strategy.asset_class,
+        # The universe cut the LIVE engine makes every cycle. Without these the
+        # search evaluated a ranked strategy's whole pool while live evaluates only
+        # its top-N — so every config it scored had more candidates to work with
+        # than it would have had in reality, and the search was tuned against a
+        # more generous world than the one it was tuning for.
+        "universe": strategy.universe,
+        "rank_enabled": strategy.rank_enabled,
+        "rank_by": strategy.rank_by,
+        "top_n": strategy.top_n,
         "swing_mode": strategy.swing_mode,
         "sizing_usd": strategy.sizing_usd,
         "sleeve_usd": strategy.sleeve_usd,

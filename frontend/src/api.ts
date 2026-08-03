@@ -580,6 +580,23 @@ export interface BacktestResult {
   // price-triggered stops were simulated for real. Absent/false = one resolution.
   mixed_resolution?: boolean;
   signal_timeframe?: string; // where MACD/RSI came from on a mixed run ("1Day")
+  // The TOP-N CUT the live engine makes every cycle, reproduced per replayed bar.
+  // null on an unranked universe (scanner/both, or a watchlist that didn't opt
+  // in) — which is NOT the same as a ranking that couldn't be made: that is
+  // `applied: false`, and it means the replay drew from a wider pool than live
+  // would have, so the result reads more permissive than reality.
+  ranking?: {
+    applied: boolean;
+    rank_by: string;
+    top_n: number;
+    pool_size: number;
+    metric_source: string;
+    symbol_bars_ranked: number;
+    symbol_bars_cut: number;
+    symbol_bars_unrankable: number;
+    benchmark_missing: boolean;
+    warning: string | null;
+  } | null;
   days: number;
   starting_cash: number;
   final_equity: number;

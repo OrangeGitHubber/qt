@@ -1352,6 +1352,16 @@ async def compare(
         "scanner_config_is_current": any(r.get("scanner_config_is_current") for r in results),
         "seeded": seeded_symbols,
         "dropped": sorted({s for r in results for s in (r.get("universe_dropped") or [])}),
+        # THE TOP-N CUT, read back off the replay's own results rather than off
+        # the strategy row. A ranked strategy's engine only ever evaluates the
+        # best `top_n` of its pool; the replay now does the same, and this says
+        # whether it managed it. `ranked: false` with a warning means it could
+        # NOT — the replay considered names live would never have looked at, and
+        # any "the replay invented this trade" verdict below has to be read with
+        # that in mind, because that is exactly how such a trade gets invented.
+        "ranking": next(
+            (r["ranking"] for r in results if r.get("ranking")), None
+        ),
     }
 
     # THE RAIL STATE THE REPLAY WAS HANDED, said out loud for the same reason

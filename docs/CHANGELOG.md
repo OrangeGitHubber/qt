@@ -3,6 +3,30 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## The backtester now makes the same top-N cut the engine does (2026-08-03)
+
+A ranked strategy — any basket, or a watchlist with ranking switched on — has
+its pool ranked and trimmed to the top N on every cycle by the live engine. The
+backtester did not rank at all. It evaluated every symbol it was handed.
+
+So every backtest and every optimizer run of a ranked strategy quietly drew from
+a wider pool than live ever would: more candidates, more trades, more chances to
+stumble into a winner. It was found because a fidelity comparison kept reporting
+trades "the replay invented" — BAT, YFI and AVAX — and all three turned out to
+rank #13, #17 and #19 of 24 in a strategy that only ever looks at its top 10.
+
+The replay now ranks on every bar, as the engine does on every cycle, and offers
+candidates strongest-first so a position cap bites from the bottom of the list.
+Rankings that read daily bars — relative strength, RS vs the S&P 500, 30-day
+return, RSI — are computed from the same history live uses. And when the replay
+cannot compute one it says so on screen rather than silently reverting to no
+ranking, which is the bug this fixes wearing a disguise.
+
+**Past optimizer results for ranked strategies are worth re-running.** They were
+searched against that wider pool, and it does not merely shift the scores — a
+wider pool disproportionately flatters permissive settings, so it can change
+which configuration won.
+
 ## Filter the journal by symbol or strategy, and follow a row with your eye (2026-08-03)
 
 The trade journal can now be narrowed to a single symbol or a single strategy,

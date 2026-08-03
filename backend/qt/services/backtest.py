@@ -27,10 +27,12 @@ from math import floor, log10
 from zoneinfo import ZoneInfo
 
 from qt.broker.alpaca import AlpacaClient
-from qt.services import stats
+from qt.services import ranking, stats
 from qt.services.engine import (
+    RSI_PERIOD,
     Candidate,
     RailContext,
+    _rank_note,
     atr_position_size,
     check_rails,
     evaluate_entry,
@@ -398,6 +400,290 @@ def _annotate_rsi(
             bar["rsi"] = stats.rsi_from_closes(closes[:i])
 
 
+# ───────────────────────────── TOP-N RANKING ──────────────────────────────
+#
+# WHAT WAS WRONG. The live engine never evaluates a whole pool. It ranks the
+# strategy's symbols by `rank_by` and hands the entry rules only the top `top_n`
+# (engine._ranked_candidates → engine._pool_metrics → ranking.rank_symbols). The
+# replay ranked nothing, so it evaluated every symbol it was given — including
+# names live would not have looked at. Measured on a 24-pair crypto basket with
+# top_n=10, the replay bought three coins ranked #13, #17 and #19 live. That is
+# not only an instrument fault: EVERY backtest and EVERY optimizer run of a
+# ranked strategy was drawing from a wider pool than live, so results were
+# systematically too permissive — more candidates, more entries, more chances to
+# stumble into a winner — and nothing on screen said so.
+#
+# WHEN IT RANKS. Every evaluation point, exactly like live's 60-second tick, so
+# the top-N MEMBERSHIP MOVES THROUGH THE DAY. Ranking once for the window would
+# be a different wrong answer, not a fix.
+#
+# WHICH UNIVERSES. The same rule the API enforces (qt.api.strategies.StrategyBody
+# ._sanity): a basket is ALWAYS ranked, watchlist/custom opt in via rank_enabled,
+# and scanner/both never rank because the scanner already ordered them — their
+# replay-side equivalent is `eligible_by_day`, which is a different mechanism for
+# a different universe and is left completely alone. Both gates apply if a caller
+# ever passes both; each only narrows.
+
+# The metrics live derives from DAILY bars. momentum_today is the only one that
+# rides on the snapshot alone — and the replay already holds it: `change_pct` on
+# a prepared bar IS the number the snapshot carries (previous session close for
+# stocks, the hour-quantised rolling 24h reference for crypto).
+DAILY_RANK_METRICS = ("return_30d", "relative_strength", "rs_vs_spy", "rsi")
+
+# How much daily history each metric is computed from — copied from live's own
+# fetch window (engine._pool_metrics: 320 days for the two 200-day-average
+# metrics, 60 for the rest) rather than "however much history the replay happens
+# to hold". That is a fidelity requirement, not an optimisation: Wilder's RSI
+# smoothing has unbounded memory, so the same closes over 300 days and over 60
+# give different numbers, and live only ever sees 60. It happens to also be what
+# keeps the cost bounded — see the note on _PoolRanker.
+RANK_LOOKBACK_DAYS = {
+    "return_30d": 60,
+    "rsi": 60,
+    "relative_strength": 320,
+    "rs_vs_spy": 320,
+}
+_RETURN_30D_DAYS = 30       # engine._pool_metrics: stats.pct_change_over(bars, 30, …)
+_SMA_PERIOD = 200           # engine._pool_metrics: stats.vs_sma_pct(bars, 200, …)
+_RS_VS_SPY_DAYS = 90        # engine._pool_metrics.RS_VS_SPY_WINDOW
+
+# A replay whose own bars ARE the daily series can be its own ranking source.
+# Measured off the timeline (see _bar_seconds), tolerant of the odd short day.
+_DAILY_BAR_SECONDS = 82800  # 23h
+
+
+def ranking_config(strategy: dict) -> tuple[str, int] | None:
+    """(rank_by, top_n) when this config's universe is one the LIVE engine ranks,
+    else None. Mirrors qt.api.strategies.StrategyBody._sanity, which is what
+    forces rank_enabled ON for a basket and OFF for scanner/both — so a strategy
+    row saved with rank_enabled=False and universe="basket" still ranks, here as
+    it does live.
+
+    Defaults rather than None for a config snapshot saved before these columns
+    existed: falling through to "don't rank" would be the old bug wearing the hat
+    of backwards compatibility."""
+    if not (strategy.get("rank_enabled") or strategy.get("universe") == "basket"):
+        return None
+    rank_by = strategy.get("rank_by") or "momentum_today"
+    top_n = int(strategy.get("top_n") or 10)
+    if rank_by not in ranking.RANK_METRICS or top_n <= 0:
+        return None
+    return rank_by, top_n
+
+
+class _PoolRanker:
+    """Live's candidate cut, reproduced per evaluation point.
+
+    COST, measured rather than assumed. Ranking is O(pool) per bar plus one sort.
+    The daily-bar metrics call the same qt.services.stats functions the engine
+    calls, over a per-(symbol, day) slice of daily history built ONCE in __init__
+    and trimmed to live's own lookback — the trim is worth a factor of five on
+    its own (81µs for rsi over 320 daily bars, 15µs over 60).
+
+    On the heaviest run the API can produce — a 50-symbol 15-minute replay over
+    180 days, 864k bars, 17,280 evaluation points — against a 9.3s unranked
+    baseline: momentum_today 7.6s, relative_strength 17.3s, rsi 21.8s,
+    return_30d 23.9s. On a real 24-pair basket (414k bars, 4.3s unranked):
+    3.9s / 8.6s / 10.6s / 11.7s.
+
+    momentum_today — the default, and the metric a basket almost always uses —
+    comes out FASTER than not ranking at all, because cutting 24 candidates to 10
+    removes more evaluate_entry calls than the ranking costs. The daily metrics
+    add seconds, not minutes, to runs that are already tens of seconds. No fast
+    path was hand-written for them: a second implementation of Wilder's smoothing
+    that drifted from stats.rsi_from_closes would cost far more than it saved.
+
+    LOOK-AHEAD. The daily prefix comes from _daily_frontier, so a bar on day D
+    reads daily closes through D−1 only. The in-progress day is appended as a
+    synthetic bar carrying the CURRENT price, which is precisely the shape live
+    sees: its daily fetch returns today's partial bar and it passes the live
+    quote as `current_price` on top.
+
+    MISSING DATA AND TIES are not improvised — ranking.rank_symbols is the one
+    implementation, shared with the engine: a symbol whose metric is None is
+    dropped (you cannot rank on data you don't have) and ties break on symbol
+    ascending. momentum_today is rounded to 2dp before ranking because live
+    rounds it in _pool_metrics, and rounding is what decides which near-ties fall
+    through to the symbol tie-break."""
+
+    def __init__(
+        self,
+        rank_by: str,
+        top_n: int,
+        prepared: dict[str, list[dict]],
+        daily_bars_by_symbol: dict[str, list[dict]] | None,
+        day_of,
+        benchmark: str = "SPY",
+    ) -> None:
+        self.rank_by = rank_by
+        self.top_n = top_n
+        self.applied = True
+        self.warning: str | None = None
+        self.pool_size = len(prepared)
+        self.evaluated = 0      # symbol-bars offered to the ranking
+        self.excluded = 0       # …cut by the top-N or unrankable
+        self.unrankable = 0     # …whose metric could not be computed at all
+        self._prefix: dict[str, dict[str, list[dict]]] = {}
+        self._spy: dict[str, float | None] = {}
+        self._spy_missing = False
+        if rank_by not in DAILY_RANK_METRICS:
+            return
+
+        daily = daily_bars_by_symbol or {}
+        if not any(daily.get(symbol) for symbol in prepared):
+            # NOT a silent fall-back to no ranking — that is the bug this class
+            # exists to close. The replay says so in its result instead.
+            self.applied = False
+            self.warning = (
+                f"This strategy ranks its pool by {rank_by.replace('_', ' ')}, which the live "
+                "engine computes from daily bars — and none were available to this replay. It "
+                "therefore evaluated the WHOLE pool, where live would have evaluated only the "
+                f"top {top_n}, so it had more candidates to choose from than live ever did."
+            )
+            return
+
+        lookback = timedelta(days=RANK_LOOKBACK_DAYS[rank_by])
+        # One reference instant per day (its first replayed bar) for the lookback
+        # trim. Day granularity is enough: the trim edge sits 60 or 320 days back,
+        # far outside the 30/90/200-bar windows the metrics actually read from.
+        day_start: dict[str, datetime] = {}
+        for series in prepared.values():
+            for bar in series:
+                d = bar["day"]
+                if d not in day_start or bar["ts"] < day_start[d]:
+                    day_start[d] = bar["ts"]
+        for symbol, series in prepared.items():
+            ordered, cutoff = _daily_frontier(series, daily.get(symbol) or [], day_of)
+            times = [_parse_ts(b["t"]) for b in ordered]
+            self._prefix[symbol] = {
+                d: ordered[bisect_left(times, day_start[d] - lookback, 0, k):k]
+                for d, k in cutoff.items()
+            }
+
+        if rank_by == "rs_vs_spy":
+            spy_bars = daily.get(benchmark) or []
+            # SPY's own return over the window is SUBTRACTED FROM EVERY MEMBER, so
+            # it shifts all the values by one constant and cannot change the ORDER
+            # — which is the only thing eligibility depends on. Without the
+            # benchmark the cut is therefore still exactly live's; only the printed
+            # values differ, and the result says so rather than pretending.
+            self._spy_missing = not spy_bars
+            if spy_bars:
+                ordered, cutoff = _daily_frontier(
+                    [{"day": d} for d in day_start], spy_bars, day_of
+                )
+                for d, k in cutoff.items():
+                    window = ordered[:k]
+                    self._spy[d] = (
+                        stats.pct_change_over(
+                            window, _RS_VS_SPY_DAYS, float(window[-1]["c"])
+                        )
+                        if window
+                        else None
+                    )
+            else:
+                self.warning = (
+                    "Ranking by relative strength vs S&P 500 without SPY's daily bars: the "
+                    "top-N cut is still live's (SPY's return is common to every member, so it "
+                    "cannot reorder them), but the values shown are the member's own 90-day "
+                    "return rather than its out-performance."
+                )
+
+    def _value(self, symbol: str, bar: dict, ts: datetime) -> float | None:
+        if self.rank_by == "momentum_today":
+            change = bar["change_pct"]
+            # 2dp because live rounds here (engine._pool_metrics), and the rounding
+            # is what sends near-ties to the symbol tie-break instead of ordering
+            # them on noise.
+            return None if change is None else round(change, 2)
+        prefix = self._prefix.get(symbol, {}).get(bar["day"]) or []
+        if not prefix:
+            return None
+        price = bar["close"]
+        if self.rank_by == "relative_strength":
+            return stats.vs_sma_pct(prefix + [{"c": price}], _SMA_PERIOD, price)
+        if self.rank_by == "rsi":
+            return stats.rsi(prefix + [{"c": price}], RSI_PERIOD, price)
+        # The two window-return metrics read the synthetic bar's TIMESTAMP (it is
+        # what pct_change_over measures its window back from), so it carries one.
+        window = prefix + [{"t": ts.strftime("%Y-%m-%dT%H:%M:%SZ"), "c": price}]
+        if self.rank_by == "return_30d":
+            return stats.pct_change_over(window, _RETURN_30D_DAYS, price)
+        mine = stats.pct_change_over(window, _RS_VS_SPY_DAYS, price)
+        spy = 0.0 if self._spy_missing else self._spy.get(bar["day"])
+        if mine is None or spy is None:
+            return None
+        return round(mine - spy, 2)
+
+    def rank(self, bars: dict[str, dict], ts: datetime) -> list[tuple[str, int, int]]:
+        """This instant's top-N as (symbol, rank, ranked_of), BEST FIRST.
+
+        The order is load-bearing, not cosmetic: live walks its candidates
+        strictly best-first, so the strongest name gets first refusal on the
+        sleeve and a max_positions cap bites from the bottom of the list. A
+        replay that evaluated the same names in symbol order would fill the last
+        slot with a different one.
+
+        The pool is the symbols with a bar AT THIS INSTANT. A symbol whose feed
+        skipped this bar is treated exactly as live treats a symbol with no
+        metric — dropped, and its place taken by the next one down. Every other
+        decision in this replay is made off the bars present at `ts`; ranking a
+        name the replay cannot then enter would be worse."""
+        metrics: dict[str, dict[str, float | None]] = {}
+        for symbol, bar in bars.items():
+            value = self._value(symbol, bar, ts)
+            metrics[symbol] = {self.rank_by: value}
+            if value is None:
+                self.unrankable += 1
+        ranked = ranking.rank_symbols(metrics, self.rank_by, self.top_n)
+        self.evaluated += len(bars)
+        self.excluded += len(bars) - len(ranked)
+        ranked_of = len(ranked)
+        return [(symbol, i, ranked_of) for i, (symbol, _v) in enumerate(ranked, start=1)]
+
+    def report(self) -> dict:
+        """What the run did about ranking, for the result. Reported whether or not
+        it worked: "the replay could not reproduce live's ordering" is exactly the
+        thing a permissive backtest must not keep to itself."""
+        return {
+            "applied": self.applied,
+            "rank_by": self.rank_by,
+            "top_n": self.top_n,
+            "pool_size": self.pool_size,
+            "metric_source": (
+                "the replay's own day-gain"
+                if self.rank_by not in DAILY_RANK_METRICS
+                else "daily bars"
+            ),
+            "symbol_bars_ranked": self.evaluated,
+            "symbol_bars_cut": self.excluded,
+            "symbol_bars_unrankable": self.unrankable,
+            "benchmark_missing": self._spy_missing,
+            "warning": self.warning,
+        }
+
+
+def _rank_daily_source(
+    explicit: dict[str, list[dict]] | None,
+    indicator_daily: dict[str, list[dict]] | None,
+    replay_bars: dict[str, list[dict]],
+    bar_seconds: float | None,
+) -> dict[str, list[dict]] | None:
+    """Where a daily-bar ranking metric reads its history from, in preference
+    order: a series fetched FOR the ranking (the only one guaranteed to reach
+    back over live's full lookback, and the only one that can carry SPY), then
+    the mixed-resolution indicator series, and finally the replay's own bars when
+    those ARE daily. None when the replay has no daily history at all — reported,
+    never quietly ignored."""
+    if explicit:
+        return explicit
+    if indicator_daily:
+        return indicator_daily
+    if bar_seconds is not None and bar_seconds >= _DAILY_BAR_SECONDS:
+        return replay_bars
+    return None
+
+
 @dataclass
 class SimTrade:
     symbol: str
@@ -406,6 +692,12 @@ class SimTrade:
     entry_at: datetime
     entry_reason: str
     high_water: float
+    # Where this symbol placed in its strategy's ranking on the bar it was
+    # bought, and how many were ranked — the same pair the live journal stamps
+    # ("ranked #10 of 10"), so a fidelity comparison can match on it instead of
+    # inferring it. None on an unranked universe.
+    rank: int | None = None
+    rank_of: int | None = None
     exit_price: float | None = None
     exit_at: datetime | None = None
     exit_reason: str = ""
@@ -787,6 +1079,7 @@ def run_backtest(
     *,
     sim_end: datetime | None = None,
     daily_bars_by_symbol: dict[str, list[dict]] | None = None,
+    rank_daily_bars_by_symbol: dict[str, list[dict]] | None = None,
     progress: Callable[[int, int], None] | None = None,
     prior_loss_at: dict[str, datetime] | None = None,
 ) -> dict:
@@ -837,6 +1130,15 @@ def run_backtest(
     never D's own close. A symbol with no daily bars gets None indicators for
     every bar (the entry/exit rules already treat None as "can't tell").
     None (the default) = single-resolution replay, byte-identical to before.
+
+    `rank_daily_bars_by_symbol` is the daily history a DAILY-BAR ranking metric
+    (relative_strength, rs_vs_spy, return_30d, rsi) is scored from, and must reach
+    back over live's own lookback for that metric — see RANK_LOOKBACK_DAYS. Only
+    needed when the replay has no daily series of its own: a 1Day replay is its
+    own source, and a mixed-resolution run's indicator series is used when it
+    reaches far enough. Include "SPY" in it for rs_vs_spy. When a ranked strategy
+    needs daily bars and none arrive, the replay does NOT quietly fall back to
+    evaluating the whole pool — it says so in `result["ranking"]`.
 
     `progress` is called as (bars_done, bars_total) every so often so a caller
     running this in the background can say how far along it is. Purely an
@@ -897,6 +1199,22 @@ def run_backtest(
     # Measured BEFORE nothing in particular — the poller view rewrites high/low,
     # never close — but read here so it sits next to the model it qualifies.
     bar_move_pct = _median_bar_move_pct(prepared)
+    # The pool cut live makes every cycle. Built here, before the poller view, so
+    # it reads the untouched bars — it scores on close and change_pct, neither of
+    # which _apply_poller_view rewrites, but the ordering makes that a fact rather
+    # than a coincidence.
+    rank_cfg = ranking_config(strategy)
+    ranker = (
+        _PoolRanker(
+            rank_cfg[0], rank_cfg[1], prepared,
+            _rank_daily_source(
+                rank_daily_bars_by_symbol, daily_bars_by_symbol, bars_by_symbol, bar_seconds
+            ),
+            day_of,
+        )
+        if rank_cfg is not None
+        else None
+    )
     poller_view = _apply_poller_view(prepared, bar_seconds)
     # chronological event stream across all symbols
     events: dict[datetime, dict[str, dict]] = {}
@@ -1037,7 +1355,19 @@ def run_backtest(
 
         # ---- entries ----
         eligible = eligible_by_day.get(day) if eligible_by_day is not None else None
-        for symbol, bar in bars.items():
+        # Ranked universe: only the top-N are candidates, and they are offered
+        # BEST FIRST — the sleeve, the cash and max_positions all bite from the
+        # bottom of that list, exactly as they do live. Symbols cut by the rank
+        # are dropped silently rather than tallied as rejections: live never
+        # looked at them, and counting fourteen of a twenty-four-name basket on
+        # every bar would bury the real blocker under "outside the top 10" in
+        # every no-trade-day summary.
+        if ranker is not None and ranker.applied:
+            order = ranker.rank(bars, ts)
+        else:
+            order = [(symbol, None, None) for symbol in bars]
+        for symbol, rank_pos, rank_of in order:
+            bar = bars[symbol]
             if eligible is not None and symbol not in eligible:
                 reject(day, symbol, "not_eligible")
                 continue  # scanner replay: not a top-N riser on this day
@@ -1067,8 +1397,13 @@ def run_backtest(
                 price=bar["close"], change_pct=bar["change_pct"], vwap=bar["vwap"],
                 macd_bullish=bar.get("macd_bullish"),
                 rsi=bar.get("rsi"),
+                rank=rank_pos, rank_of=rank_of,
             )
             ok, entry_reason = evaluate_entry(params, cand, ts.astimezone(ET))
+            # The same sentence the live journal writes (engine._rank_note), so a
+            # replayed entry and the real one it is being compared against read
+            # alike instead of differing for a reason that isn't a difference.
+            entry_reason += _rank_note(rank_cfg[0] if rank_cfg else None, cand)
             if not ok:
                 if "< required" in entry_reason:
                     diag["rejected_day_gain"] += 1
@@ -1142,6 +1477,7 @@ def run_backtest(
             state.open_trades[symbol] = SimTrade(
                 symbol=symbol, qty=qty, entry_price=fill, entry_at=ts,
                 entry_reason=entry_reason, high_water=fill,
+                rank=rank_pos, rank_of=rank_of,
             )
 
         # How much of the account was actually working? (the dilution story)
@@ -1190,6 +1526,7 @@ def run_backtest(
             "entry_day": day_of(trade.entry_at), "entry_reason": trade.entry_reason,
             "mark_price": _price(mark_price),
             "unrealized_pnl": round((mark_price - trade.entry_price) * trade.qty, 2),
+            "rank": trade.rank, "rank_of": trade.rank_of,
         })
 
     min_gain = params.get("entry", {}).get("min_day_gain_pct", 0)
@@ -1285,6 +1622,12 @@ def run_backtest(
         # How far apart two sampling grids one bar out of phase can land — the
         # floor under any exit comparison. See _median_bar_move_pct.
         "median_bar_move_pct": bar_move_pct,
+        # THE TOP-N CUT. Present (and honest) on every run of a ranked strategy:
+        # `applied` false means the replay could not reproduce live's ordering and
+        # therefore drew from a wider pool than live would have — the single
+        # reason a ranked backtest reads more permissive than reality. None on an
+        # unranked universe, which is not the same thing as a failed ranking.
+        "ranking": ranker.report() if ranker is not None else None,
         # What the commissions actually took, in dollars. A rate in the header is
         # abstract; "$412 of fees on 63 round trips" is the number that decides
         # whether a strategy this busy can carry its own costs.
@@ -1329,6 +1672,10 @@ def run_backtest(
                 # UTC for crypto — matching the equity-curve day index).
                 "entry_day": day_of(t.entry_at),
                 "entry_reason": t.entry_reason,
+                # Where this name stood in its own strategy's ranking when it was
+                # bought — the pair the live journal stamps, so the two sides of a
+                # fidelity comparison can be matched on it.
+                "rank": t.rank, "rank_of": t.rank_of,
                 "exit_price": _price(t.exit_price or 0),
                 "exit_at": t.exit_at.isoformat() if t.exit_at else None,
                 "exit_day": day_of(t.exit_at) if t.exit_at else None,
@@ -1360,6 +1707,7 @@ def run_portfolio_backtest(
     daily_bars_by_strategy: dict[int, dict[str, list[dict]]] | None = None,
     sim_end: datetime | None = None,
     prior_loss_at: dict[str, datetime] | None = None,
+    rank_daily_by_strategy: dict[int, dict[str, list[dict]]] | None = None,
 ) -> dict:
     """Portfolio simulation: replay N strategies over ONE merged timeline sharing
     a SINGLE cash account and the GLOBAL risk rails — exactly like the live engine,
@@ -1386,6 +1734,13 @@ def run_portfolio_backtest(
     run_backtest — the rail is account-wide there and here, so one dict keyed by
     symbol covers the whole book. None (the default) starts clean, leaving every
     existing portfolio backtest untouched.
+
+    RANKING is per strategy and per evaluation point, exactly as in run_backtest:
+    a strategy whose universe live ranks (a basket, or watchlist/custom with
+    rank_enabled) offers only its own top-N, best first, while the strategies
+    beside it are untouched. `rank_daily_by_strategy` is the daily history a
+    daily-bar ranking metric is scored from, keyed by strategy id — see
+    run_backtest's `rank_daily_bars_by_symbol`.
     """
     day_of = _day_fn(market)
     slip = spread_pct / 100
@@ -1446,6 +1801,25 @@ def run_portfolio_backtest(
             for symbol, series in by_symbol.items()
         }
     )
+    # One ranker per RANKED strategy (see the _PoolRanker note): each ranks its
+    # own universe by its own metric, and the strategies beside it are unaffected.
+    rankers: dict[int, _PoolRanker] = {}
+    rank_cfg_by_sid: dict[int, tuple[str, int]] = {}
+    for sid, prepared in prepared_by_strategy.items():
+        cfg = ranking_config(strat_by_id[sid])
+        if cfg is None or not prepared:
+            continue
+        rank_cfg_by_sid[sid] = cfg
+        rankers[sid] = _PoolRanker(
+            cfg[0], cfg[1], prepared,
+            _rank_daily_source(
+                (rank_daily_by_strategy or {}).get(sid),
+                (daily_bars_by_strategy or {}).get(sid),
+                bars_by_strategy.get(sid) or {},
+                bar_seconds,
+            ),
+            day_of,
+        )
     poller_view = False
     for by_symbol in prepared_by_strategy.values():
         poller_view = _apply_poller_view(by_symbol, bar_seconds) or poller_view
@@ -1517,7 +1891,27 @@ def run_portfolio_backtest(
             del open_trades[symbol]
 
         # ---- entries (deterministic order: strategy index, then symbol) ----
-        for sid, symbol, bar in sorted(tick, key=lambda e: (order[e[0]], e[1])):
+        # …except inside a RANKED strategy, where the order is its ranking and
+        # only its top-N are offered at all — the account's cash and the global
+        # rails are shared, so which name a strategy puts forward first decides
+        # what the strategy after it can still afford.
+        tick_by_sid: dict[int, dict[str, dict]] = {}
+        for sid, symbol, bar in tick:
+            tick_by_sid.setdefault(sid, {})[symbol] = bar
+        candidates: list[tuple[int, str, dict, int | None, int | None]] = []
+        for sid in sorted(tick_by_sid, key=lambda s: order[s]):
+            ranker = rankers.get(sid)
+            if ranker is not None and ranker.applied:
+                candidates += [
+                    (sid, symbol, tick_by_sid[sid][symbol], pos, of)
+                    for symbol, pos, of in ranker.rank(tick_by_sid[sid], ts)
+                ]
+            else:
+                candidates += [
+                    (sid, symbol, tick_by_sid[sid][symbol], None, None)
+                    for symbol in sorted(tick_by_sid[sid])
+                ]
+        for sid, symbol, bar, rank_pos, rank_of in candidates:
             strat = strat_by_id[sid]
             params = strat["params"]
             if bar["change_pct"] is None:
@@ -1538,8 +1932,12 @@ def run_portfolio_backtest(
                 price=bar["close"], change_pct=bar["change_pct"], vwap=bar["vwap"],
                 macd_bullish=bar.get("macd_bullish"),
                 rsi=bar.get("rsi"),
+                rank=rank_pos, rank_of=rank_of,
             )
             ok, entry_reason = evaluate_entry(params, cand, ts.astimezone(ET))
+            entry_reason += _rank_note(
+                (rank_cfg_by_sid.get(sid) or (None,))[0], cand
+            )
             if not ok:
                 continue
             strat_open = [t for t in open_trades.values() if t.strategy_id == sid]
@@ -1591,6 +1989,7 @@ def run_portfolio_backtest(
             open_trades[symbol] = PortfolioTrade(
                 symbol=symbol, qty=qty, entry_price=fill, entry_at=ts,
                 entry_reason=entry_reason, high_water=fill,
+                rank=rank_pos, rank_of=rank_of,
                 strategy_id=sid, strategy_name=strat.get("name", ""),
             )
 
@@ -1621,6 +2020,7 @@ def run_portfolio_backtest(
             "entry_price": _price(trade.entry_price), "entry_at": trade.entry_at.isoformat(),
             "entry_day": day_of(trade.entry_at), "entry_reason": trade.entry_reason,
             "mark_price": _price(mark_price), "unrealized_pnl": u,
+            "rank": trade.rank, "rank_of": trade.rank_of,
             "strategy_id": trade.strategy_id, "strategy_name": trade.strategy_name,
         })
 
@@ -1679,6 +2079,12 @@ def run_portfolio_backtest(
         "exit_model": "poller" if poller_view else "intrabar",  # see run_backtest
         "bar_seconds": bar_seconds,
         "median_bar_move_pct": bar_move_pct,  # see _median_bar_move_pct
+        # One block per RANKED strategy in the book — the top-N cut it made, and
+        # whether it could be made at all. Empty when nothing in the book ranks.
+        "ranking": [
+            {"strategy_id": sid, "strategy_name": strat_by_id[sid].get("name", ""), **r.report()}
+            for sid, r in rankers.items()
+        ],
         "max_deployed_usd": round(max_deployed, 2),
         "pct_capital_deployed": pct_deployed,
         "return_on_deployed_pct": return_on_deployed,
@@ -1703,6 +2109,7 @@ def run_portfolio_backtest(
                 "entry_price": _price(t.entry_price), "entry_at": t.entry_at.isoformat(),
                 "entry_day": day_of(t.entry_at),
                 "entry_reason": t.entry_reason,
+                "rank": t.rank, "rank_of": t.rank_of,  # see run_backtest's trade_list
                 "exit_price": _price(t.exit_price or 0),
                 "exit_at": t.exit_at.isoformat() if t.exit_at else None,
                 "exit_day": day_of(t.exit_at) if t.exit_at else None,

@@ -1081,7 +1081,7 @@ async def _consider_entries(
                     "decision": "",
                     "reason": "",
                 }
-                rank_note = _rank_note(strategy, cand)
+                rank_note = _rank_note(strategy.rank_by, cand)
                 if not entry_ok:
                     row["decision"], row["reason"] = "skipped", f"{entry_reason}{rank_note}"
                     trace["candidates"].append(row)
@@ -1508,7 +1508,7 @@ async def _pool_metrics(
     return metrics, price_map, vwap_map, trade_at_map
 
 
-def _rank_note(strategy: Strategy, cand: Candidate) -> str:
+def _rank_note(rank_by: str | None, cand: Candidate) -> str:
     """", ranked #4 of 25 by momentum today" — or "" on an unranked universe.
 
     Without this the journal said "up 2.17% today, MACD bullish" whether the buy
@@ -1516,10 +1516,15 @@ def _rank_note(strategy: Strategy, cand: Candidate) -> str:
     candidates strictly best-first, so a low rank means everything above it was
     already held or failed the rules — worth knowing when a strategy that allows
     4 positions keeps ending up in the tail of its own list.
+
+    Takes `rank_by` rather than the Strategy row so the BACKTESTER can produce the
+    identical sentence from a plain config dict — the replay now makes the same
+    top-N cut live does, and a replayed entry reason that reads differently from
+    the journalled one is a difference the fidelity report would have to explain.
     """
     if cand.rank is None:
         return ""
-    metric = (strategy.rank_by or "").replace("_", " ") or "rank"
+    metric = (rank_by or "").replace("_", " ") or "rank"
     of = f" of {cand.rank_of}" if cand.rank_of else ""
     return f", ranked #{cand.rank}{of} by {metric}"
 

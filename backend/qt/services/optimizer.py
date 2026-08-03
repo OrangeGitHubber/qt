@@ -399,6 +399,7 @@ def optimize(
     progress: ProgressFn | None = None,
     sim_start: datetime | None = None,
     daily_bars_by_symbol: dict[str, list[dict]] | None = None,
+    rank_daily_bars_by_symbol: dict[str, list[dict]] | None = None,
 ) -> dict:
     """Search the momentum param space and return the out-of-sample-validated
     findings.
@@ -452,6 +453,13 @@ def optimize(
     daily_kw = (
         {} if daily_bars_by_symbol is None else {"daily_bars_by_symbol": daily_bars_by_symbol}
     )
+    # The RANKING's daily source, and NEVER SPLIT either, for the same reason: it
+    # is a metric source, not a replay timeline, and run_backtest only ever reads
+    # the daily bars completed before each replayed bar's own day. Splitting it
+    # would leave the out-of-sample slice with no 200-day average, every member
+    # unrankable, and a verdict of "no trades" that says nothing about the config.
+    if rank_daily_bars_by_symbol is not None:
+        daily_kw = {**daily_kw, "rank_daily_bars_by_symbol": rank_daily_bars_by_symbol}
 
     # In scanner-replay mode a symbol may only ENTER on the days it was a top-N
     # riser. The same eligible-by-day map is passed to both slices: run_backtest
@@ -608,6 +616,15 @@ def optimize(
             "The winning config never entered a position in the out-of-sample "
             "period — its in-sample result is unconfirmed. Treat it as untested."
         )
+    # THE TOP-N CUT the whole search ran under, read back off the winner's own
+    # out-of-sample run rather than re-derived from the config — unwire the
+    # ranking and this empties instead of going on making a claim. A search that
+    # could NOT reproduce live's ordering scored every config it tried against a
+    # wider pool than live would have offered it, which is a reason to distrust
+    # the ranking of the results and not just their absolute numbers.
+    ranking = oos_full.get("ranking")
+    if ranking and not ranking.get("applied") and ranking.get("warning"):
+        warnings.append(ranking["warning"])
 
     best_draft = _apply_combo(base_strategy, leader["combo"])["params"]
 
@@ -655,5 +672,7 @@ def optimize(
             "beat_hold": beat_hold,
         },
         "symbols": sorted(bars_by_symbol),
+        # None on an unranked universe; see backtest.run_backtest's `ranking`.
+        "ranking": ranking,
         "warnings": warnings,
     }

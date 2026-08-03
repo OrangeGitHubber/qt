@@ -1228,6 +1228,25 @@ def warmup_days_for(params: dict, asset_class: str) -> int:
     return max(baseline, _daily_lookback_days(params, want_atr))
 
 
+def _rank_needs_daily(strategy) -> tuple[bool, int]:
+    """(does this strategy's LIVE ranking metric come from daily bars, how much
+    history it needs). A ranked strategy scored on relative_strength / rs_vs_spy /
+    return_30d / rsi needs a daily series even when it uses no daily INDICATOR at
+    all — without one the replay cannot reproduce live's ordering and says so
+    instead of quietly evaluating the whole pool."""
+    cfg = backtest.ranking_config(
+        {
+            "universe": strategy.universe,
+            "rank_enabled": strategy.rank_enabled,
+            "rank_by": strategy.rank_by,
+            "top_n": strategy.top_n,
+        }
+    )
+    if cfg is None or cfg[0] not in backtest.DAILY_RANK_METRICS:
+        return False, 0
+    return True, backtest.RANK_LOOKBACK_DAYS[cfg[0]]
+
+
 def _needs_warmup(params: dict) -> bool:
     """Whether the strategy uses a daily indicator (MACD / RSI / ATR) that needs
     prior history to be defined — if so, the backtest fetches WARMUP_DAYS before
@@ -1338,9 +1357,33 @@ async def run_portfolio(
                 by_class[s.asset_class].append(sym)
     bars_cache: dict[str, dict[str, list]] = {}
     daily_cache: dict[str, dict[str, list]] = {}
+    # Strategies whose RANKING metric is derived from daily bars, and the deepest
+    # lookback among them (relative_strength wants 320 days — far more than any
+    # indicator warm-up). See _rank_needs_daily.
+    rank_daily_cache: dict[str, dict[str, list]] = {}
+    rank_daily_needed = {s.id: _rank_needs_daily(s) for s in strategies}
+    rank_lookback = max((d for _, d in rank_daily_needed.values()), default=0)
+    rank_start = (window_start - timedelta(days=rank_lookback + 5)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    rank_classes = {s.asset_class for s in strategies if rank_daily_needed[s.id][0]}
+    # SPY is the benchmark rs_vs_spy is measured against and nothing else in a
+    # portfolio run fetches it. Its absence would not change WHICH names make the
+    # cut (its return is subtracted from every member alike), only the values —
+    # but a reported value that isn't the one live computed is still a lie.
+    rank_benchmark = any(
+        rank_daily_needed[s.id][0] and s.rank_by == "rs_vs_spy" for s in strategies
+    )
     try:
         for asset_class, syms in by_class.items():
             if syms:
+                # Fetched separately from the indicator series because it reaches
+                # further back, and skipped entirely on a 1Day run — there the
+                # replay's own bars ARE the daily series (see _rank_daily_source).
+                if asset_class in rank_classes and body.timeframe != "1Day":
+                    rank_daily_cache[asset_class] = await barfetch.fetch_bars(
+                        client,
+                        syms + ["SPY"] if (rank_benchmark and asset_class == "stock") else syms,
+                        asset_class, "1Day", rank_start,
+                    )
                 # Read-through the bar cache, like the single-strategy run. This
                 # is the HEAVIEST fetch in the app — every symbol of every picked
                 # strategy — and it was the one path still re-downloading the same
@@ -1381,11 +1424,29 @@ async def run_portfolio(
         for s in strategies
         if mixed_portfolio and _needs_warmup(json.loads(s.params))
     } or None
+    # A daily-bar RANKING metric needs daily history even when nothing in the book
+    # is mixed-resolution — see the same guard in replay(). One fetch per asset
+    # class, reused by every strategy in it.
+    rank_daily_by_strategy = {
+        s.id: {
+            sym: rank_daily_cache.get(s.asset_class, {}).get(sym, [])
+            for sym in [*symbols_by_strategy[s.id], *(["SPY"] if s.rank_by == "rs_vs_spy" else [])]
+        }
+        for s in strategies
+        if rank_daily_needed[s.id][0] and s.asset_class in rank_daily_cache
+    } or None
     strategy_dicts = [
         {
             "id": s.id,
             "name": s.name,
             "asset_class": s.asset_class,
+            # The universe cut the live engine makes every cycle — without these
+            # a ranked strategy in a portfolio run drew from its whole pool while
+            # live drew from its top-N (see backtest.ranking_config).
+            "universe": s.universe,
+            "rank_enabled": s.rank_enabled,
+            "rank_by": s.rank_by,
+            "top_n": s.top_n,
             "swing_mode": s.swing_mode,
             "sizing_usd": s.sizing_usd,
             "sleeve_usd": s.sleeve_usd,
@@ -1407,6 +1468,7 @@ async def run_portfolio(
         starting_cash=body.starting_cash, spread_pct=body.spread_pct, market=market,
         sim_start=window_start if warmup else None,
         daily_bars_by_strategy=daily_by_strategy,
+        rank_daily_by_strategy=rank_daily_by_strategy,
     )
     if "error" in result:
         raise HTTPException(status_code=422, detail=result["error"])
@@ -1449,6 +1511,19 @@ def replay_strategy(config) -> dict:
     provenance — is irrelevant here, and passing the whole object through would
     invite the replay to quietly start depending on it."""
     get = config.get if isinstance(config, dict) else lambda k: getattr(config, k)
+    # Config versions written before a column existed simply lack the key, and an
+    # ORM row from a partially-migrated DB can lack the attribute. Both must land
+    # on the model's own default rather than on None, because for the ranking
+    # fields below None means "don't rank" — which is precisely the permissive
+    # behaviour this replay path was fixed to stop.
+    def get_or(key, default):
+        # Absent and NULL collapse to the same answer on purpose: `.get`/`getattr`
+        # yield None for a key that was never written, and a partly-migrated row
+        # yields None for a column that exists but is empty. One coalesce covers
+        # both — passing `default` to `.get` as well would be dead code.
+        value = config.get(key) if isinstance(config, dict) else getattr(config, key, None)
+        return default if value is None else value
+
     params = get("params")
     return {
         "asset_class": get("asset_class"),
@@ -1457,6 +1532,15 @@ def replay_strategy(config) -> dict:
         # strategy that has since been switched from "scanner" to "watchlist"
         # must still replay as the scanner strategy it was.
         "universe": get("universe"),
+        # THE TOP-N CUT. The live engine ranks a ranked strategy's pool every
+        # cycle and evaluates only the best `top_n` of it; without these three the
+        # replay evaluated the whole pool and every result came back more
+        # permissive than reality. Carried on the SNAPSHOT like everything else
+        # here, so a strategy whose ranking metric has since been changed still
+        # replays as the strategy it was.
+        "rank_enabled": get_or("rank_enabled", False),
+        "rank_by": get_or("rank_by", "momentum_today"),
+        "top_n": get_or("top_n", 10),
         "swing_mode": get("swing_mode"),
         "sizing_usd": get("sizing_usd"),
         "sleeve_usd": get("sleeve_usd"),
@@ -1580,6 +1664,16 @@ async def replay(
     # a short crypto window evaluate nothing at all.
     asset_class = strategy_dict["asset_class"]
     daily_warmup = warmup_days_for(params, asset_class)
+    # A DAILY-BAR RANKING METRIC is a third claim on the warm-up, and a bigger one
+    # than any indicator: relative_strength is a 200-day average, and live fetches
+    # 320 days to compute it. Fetch short and the metric is None for the opening
+    # stretch of the window, every member drops out of the ranking, and the replay
+    # takes NO trades at all where live took plenty — a failure that looks exactly
+    # like a strategy that stopped working. See backtest.RANK_LOOKBACK_DAYS.
+    rank_cfg = backtest.ranking_config(strategy_dict)
+    rank_needs_daily = rank_cfg is not None and rank_cfg[0] in backtest.DAILY_RANK_METRICS
+    if rank_needs_daily:
+        daily_warmup = max(daily_warmup, backtest.RANK_LOOKBACK_DAYS[rank_cfg[0]] + 5)
     baseline_warmup = BASELINE_WARMUP_DAYS.get(asset_class, 5)
     warmup = daily_warmup
     fetch_start = (window_start - timedelta(days=daily_warmup)).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -1623,6 +1717,20 @@ async def replay(
                 client, symbols, strategy_dict["asset_class"], replay_timeframe,
                 fetch_start if replay_timeframe == "1Day" else baseline_start,
             )
+        # The ranking's own daily source. A 1Day replay IS a daily series and a
+        # mixed run already has one, so this only fires for the remaining case —
+        # an intraday replay of a strategy with no daily INDICATOR but a daily
+        # RANKING metric — plus SPY, which nothing else ever fetches and which
+        # rs_vs_spy is measured against.
+        rank_daily: dict[str, list[dict]] | None = None
+        if rank_needs_daily:
+            if daily_bars is None and replay_timeframe != "1Day":
+                rank_daily = await barfetch.fetch_bars(
+                    client, symbols, strategy_dict["asset_class"], "1Day", fetch_start
+                )
+            if rank_cfg[0] == "rs_vs_spy":
+                spy = await barfetch.fetch_bars(client, ["SPY"], "stock", "1Day", fetch_start)
+                rank_daily = {**(rank_daily or daily_bars or {}), "SPY": spy.get("SPY") or []}
     except AlpacaError as exc:
         raise HTTPException(status_code=502, detail=f"Bar download failed ({exc.status_code}): {exc}")
 
@@ -1662,6 +1770,7 @@ async def replay(
         sim_start=window_start if (warmup or mixed or body.window_start) else None,
         sim_end=sim_end,
         daily_bars_by_symbol=daily_bars,
+        rank_daily_bars_by_symbol=rank_daily,
         progress=_replay_progress,
         # Empty for every ordinary backtest — see BacktestBody.prior_loss_at.
         prior_loss_at=body.prior_loss_at or None,

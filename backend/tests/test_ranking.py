@@ -129,15 +129,15 @@ def test_an_unpriced_symbol_does_not_renumber_the_rest():
 
 
 def test_the_rank_note_names_the_position_and_the_metric():
-    s = Strategy(name="IT", asset_class="stock", params="{}", rank_by="momentum_today", top_n=25)
+    # Takes the metric NAME, not the Strategy row — the backtester writes the same
+    # sentence from a plain config dict (see backtest._PoolRanker).
     cand = engine.Candidate(symbol="AVGO", asset_class="stock", price=397.8, change_pct=2.17,
                             rank=24, rank_of=25)
-    assert engine._rank_note(s, cand) == ", ranked #24 of 25 by momentum today"
+    assert engine._rank_note("momentum_today", cand) == ", ranked #24 of 25 by momentum today"
 
 
 def test_an_unranked_universe_adds_nothing():
     """A scanner strategy has no top-N to place a symbol in — the reason string
     must be left exactly as it was."""
-    s = Strategy(name="Scan", asset_class="stock", params="{}", rank_by="momentum_today", top_n=10)
     cand = engine.Candidate(symbol="AVGO", asset_class="stock", price=397.8, change_pct=2.17)
-    assert engine._rank_note(s, cand) == ""
+    assert engine._rank_note("momentum_today", cand) == ""
