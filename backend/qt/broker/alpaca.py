@@ -198,7 +198,10 @@ class AlpacaClient:
         `notional` (a dollar amount). Notional lets a small $-per-trade buy a
         fractional slice of an expensive name (e.g. $200 of BRK.B). Fills at the
         prevailing price with no limit protection — the trade-off the strategy
-        opted into. Alpaca requires market/day for fractional-equity orders."""
+        opted into. Alpaca requires market/day for fractional-equity orders;
+        crypto accepts `gtc` or `ioc`, and QT sends `ioc` for crypto market
+        entries so the venue kills any unfilled remainder itself rather than
+        leaving an order working after we've stopped watching it."""
         if (qty is None) == (notional is None):
             raise ValueError("submit_market_order needs exactly one of qty or notional.")
         body: dict[str, Any] = {

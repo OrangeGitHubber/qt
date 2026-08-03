@@ -3,6 +3,25 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Crypto buy orders no longer linger at the exchange (2026-08-02)
+
+When QT placed a market order for a coin, that order stayed alive at the broker
+after QT had waited six seconds, given up and moved on. That is how a RENDER
+order sat there doing nothing while the next cycle placed another one, and the
+one after that.
+
+Crypto buys are now **immediate-or-cancel**: the exchange fills whatever it can
+at once and throws the rest away itself, so an order QT has stopped watching
+cannot come back to life. If only part of it fills, QT records what it actually
+bought rather than what it asked for, so the position on the books matches the
+one at the broker. If nothing fills, the trade is logged as rejected with the
+broker's own reason.
+
+Share trading is unchanged, and so is every sell order — deliberately. A buy
+that half-fills is fine; a *sell* that half-fills would leave a position part
+sold while the journal still claimed all of it, and the next cycle would try to
+sell shares that were already gone.
+
 ## Fidelity, part three: "the replay was watching and passed" was a guess (2026-08-02)
 
 The sentence that started all of this — *"The replay was watching this symbol

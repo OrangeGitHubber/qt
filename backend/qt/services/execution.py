@@ -20,6 +20,10 @@ ENTRY_SLIP_PCT = 0.5  # default: buy limit 0.5% through the price = "marketable"
 EXIT_SLIP_PCT = 1.0  # default: sell limit 1% through = exits must fill
 FILL_POLL_SECONDS = (1, 2, 3)  # ~6s total
 
+# Broker statuses that mean the order is SETTLED: it will never fill again, and
+# it can no longer be cancelled. Whatever filled_qty it carries is final.
+DEAD_STATUSES = ("canceled", "expired", "rejected")
+
 # trade.id -> consecutive failed exit attempts, for the escalating exit chase.
 # In-memory: resets on restart (escalation simply restarts from the base buffer).
 _exit_attempts: dict[int, int] = {}
@@ -51,6 +55,26 @@ def market_mode(params: dict) -> bool:
         return False
 
 
+def _entry_tif(asset_class: str, is_market: bool) -> str:
+    """Time-in-force for an ENTRY order.
+
+    A crypto MARKET entry goes IOC (immediate-or-cancel): take whatever is
+    resting on the book right now, and let the venue kill the rest instantly.
+    A crypto GTC market order does the opposite — it stays accepted and working
+    after we've stopped watching, which is how RENDER/USD sat at "new" for
+    minutes while every 60s cycle placed another one. There is nothing to gain
+    from a market order that lingers: if it can't be bought at once, we'd rather
+    be told so and re-decide on the next candidate.
+
+    Everything else keeps the time-in-force it already had. A crypto marketable
+    LIMIT has to be allowed to rest — that's the point of it — so it stays GTC,
+    and stocks stay `day`.
+    """
+    if asset_class != "crypto":
+        return "day"
+    return "ioc" if is_market else "gtc"
+
+
 def _round_price(price: float) -> float:
     # US equities disallow sub-penny limits at >=$1; crypto is fine with more.
     return round(price, 2) if price >= 1 else round(price, 6)
@@ -76,7 +100,7 @@ async def _await_fill(client: AlpacaClient, order_id: str) -> tuple[dict | None,
         order = await client.get_order(order_id)
         if order.get("status") == "filled":
             return order, order
-        if order.get("status") in ("canceled", "expired", "rejected"):
+        if order.get("status") in DEAD_STATUSES:
             return None, order
     return None, order
 
@@ -141,7 +165,7 @@ async def open_trade(
 
     if mode == "paper":
         client_order_id = f"qt-{uuid.uuid4().hex[:20]}"
-        tif = "gtc" if cand.asset_class == "crypto" else "day"
+        tif = _entry_tif(cand.asset_class, is_market)
         try:
             if is_market:
                 # Buy a dollar notional at market — fills fast (so it doesn't
@@ -162,20 +186,35 @@ async def open_trade(
             return None
         filled, last_seen = await _await_fill(client, order["id"])
         if not filled:
-            try:
-                await client.cancel_order(order["id"])
-            except AlpacaError:
-                pass
-            # A cancel can race a late fill (notably crypto GTC orders, which fill
-            # asynchronously): re-check once and adopt whatever actually filled, so
-            # QT's journal matches Alpaca instead of orphaning a real position that
-            # then never shows up in the strategy's holdings.
-            try:
-                final = await client.get_order(order["id"])
-            except AlpacaError:
-                final = None
-            if final and float(final.get("filled_qty") or 0) > 0:
-                filled = final
+            settled = last_seen or {}
+            final = None
+            # A DEAD order is finished: an IOC remainder the venue killed, an
+            # expiry, a rejection. It cannot fill later and cannot be cancelled,
+            # so there is nothing to pull and no race to re-check. Anything else
+            # is still working, and that is the case that must be pulled.
+            if settled.get("status") not in DEAD_STATUSES:
+                try:
+                    await client.cancel_order(order["id"])
+                except AlpacaError:
+                    pass
+                # A cancel can race a late fill (a resting order fills
+                # asynchronously): re-check once and adopt whatever actually
+                # filled, so QT's journal matches Alpaca instead of orphaning a
+                # real position that then never shows up in the strategy's
+                # holdings.
+                try:
+                    final = await client.get_order(order["id"])
+                except AlpacaError:
+                    final = None
+                if final and float(final.get("filled_qty") or 0) > 0:
+                    settled = final
+            if float(settled.get("filled_qty") or 0) > 0:
+                # Something did fill. An IOC market entry routinely comes back
+                # part-filled — it took what was on the book and the venue
+                # cancelled the rest — and that part is a position we really own.
+                # Adopt it; the journalling below uses the filled quantity, not
+                # the quantity we asked for.
+                filled = settled
             else:
                 # Name what the broker actually said. "did not fill" on its own
                 # covers four different failures — still working, cancelled,
@@ -232,6 +271,13 @@ async def close_trade(
 
     if trade.mode == "paper":
         client_order_id = f"qt-x-{uuid.uuid4().hex[:18]}"
+        # Exits deliberately do NOT use the IOC that crypto market ENTRIES use.
+        # An entry that only half-fills is fine — we journal the half and move on.
+        # An exit that only half-fills leaves the position part-sold while this
+        # journal still says we hold all of it, and the next cycle would then try
+        # to sell more than the broker holds. Until close_trade can journal a
+        # partial exit, the exit stays GTC and misses are handled by the
+        # escalating retry below.
         tif = "gtc" if trade.asset_class == "crypto" else "day"
         attempts = _exit_attempts.get(trade.id, 0)
         # Market+fractional strategies sell the whole (possibly fractional)

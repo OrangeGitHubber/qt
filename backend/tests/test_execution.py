@@ -54,6 +54,7 @@ async def test_paper_buy_uses_marketable_limit_and_fill_price(strategy_row):
     assert submitted["side"] == "buy"
     assert submitted["qty"] == 9  # whole shares only for stocks
     assert submitted["limit"] == round(21.2 * 1.005, 2)  # marketable limit, never market
+    assert submitted["tif"] == "day"  # stocks are unaffected by the crypto IOC rule
 
 
 async def test_paper_unfilled_buy_is_cancelled_and_journaled(strategy_row):
@@ -118,9 +119,9 @@ async def test_a_broker_rejection_after_acceptance_is_named_as_such(strategy_row
     """The other side of the same coin: when Alpaca accepts an order and then
     rejects it, the row must say "rejected" — the case that would send us
     chasing liquidity for a problem that is actually the order itself."""
-    # The post-cancel re-read must report something DIFFERENT, or `final` would
-    # quietly supply "rejected" too and this would pass without the poll ever
-    # having captured it (it did exactly that until a mutation caught it).
+    # A rejected order is dead, so QT no longer cancels or re-reads it — the
+    # second entry is here only so a regression that DID re-read couldn't quietly
+    # supply "rejected" from the re-read and pass without the poll capturing it.
     statuses = [
         {"id": "order-10", "status": "rejected", "filled_qty": "0"},
         {"id": "order-10", "status": "canceled", "filled_qty": "0"},
@@ -216,6 +217,115 @@ async def test_market_mode_sell_uses_market_order(strategy_row):
         assert submitted["side"] == "sell"
         assert submitted["qty"] == pytest.approx(0.285714)  # sells the fractional position
         assert submitted["notional"] is None
+
+
+# ---- crypto market entries are immediate-or-cancel ----
+#
+# RENDER/USD on 2026-08-02 was confirmed sitting at broker status "new": a GTC
+# crypto market order Alpaca had accepted and was happily keeping alive while
+# nothing filled it. IOC makes the venue kill the unfilled remainder itself, so
+# an entry we've given up on cannot still be working behind our back.
+
+
+def _crypto_cand(price: float = 3.20):
+    return Candidate(symbol="RENDER/USD", asset_class="crypto", price=price, change_pct=7.0, vwap=3.1)
+
+
+async def _open_crypto_market(strategy_row, poll_result, *, cancels=None, price=3.20):
+    """Run one market-mode crypto entry against a canned poll result.
+    Returns (trade_or_None, submitted-kwargs)."""
+    submitted = {}
+
+    async def fake_market(self, symbol, side, client_order_id, *, qty=None, notional=None, time_in_force="day"):
+        submitted.update(symbol=symbol, side=side, qty=qty, notional=notional, tif=time_in_force)
+        return {"id": "ioc-1", "status": "accepted"}
+
+    async def fake_cancel(self, order_id):
+        if cancels is not None:
+            cancels.append(order_id)
+
+    with (
+        patch.object(AlpacaClient, "submit_market_order", fake_market),
+        patch.object(AlpacaClient, "get_order", new=AsyncMock(return_value=poll_result)),
+        patch.object(AlpacaClient, "cancel_order", fake_cancel),
+        patch("qt.services.execution.FILL_POLL_SECONDS", (0,)),
+    ):
+        with session_scope() as s:
+            strat = s.get(Strategy, strategy_row)
+            strat.params = _MARKET_PARAMS
+            s.flush()
+            trade = await execution.open_trade(
+                s, _client(), strat, None, "paper", _crypto_cand(price), "crypto entry"
+            )
+            if trade is not None:
+                s.flush()
+                trade = dict(qty=trade.qty, entry_price=trade.entry_price, notional=trade.notional,
+                             status=trade.status, order_id=trade.entry_order_id)
+    return trade, submitted
+
+
+async def test_crypto_market_entry_is_submitted_immediate_or_cancel(strategy_row):
+    filled = {"id": "ioc-1", "status": "filled", "filled_avg_price": "3.20", "filled_qty": "62.5"}
+    trade, submitted = await _open_crypto_market(strategy_row, filled)
+    assert trade is not None
+    assert submitted["tif"] == "ioc"  # NOT gtc — the order must not outlive our attention
+
+
+async def test_crypto_limit_entry_still_rests_as_gtc(strategy_row):
+    """Only MARKET entries go IOC. A marketable limit is placed precisely so it
+    can rest a moment and get price protection; IOC would gut it."""
+    submitted = {}
+
+    async def fake_submit(self, symbol, qty, side, limit_price, client_order_id, time_in_force="day"):
+        submitted.update(tif=time_in_force)
+        return {"id": "lim-1", "status": "accepted"}
+
+    filled = {"id": "lim-1", "status": "filled", "filled_avg_price": "3.21", "filled_qty": "62"}
+    with (
+        patch.object(AlpacaClient, "submit_order", fake_submit),
+        patch.object(AlpacaClient, "get_order", new=AsyncMock(return_value=filled)),
+        patch("qt.services.execution.FILL_POLL_SECONDS", (0,)),
+    ):
+        with session_scope() as s:
+            strat = s.get(Strategy, strategy_row)  # default params: limit mode
+            trade = await execution.open_trade(
+                s, _client(), strat, None, "paper", _crypto_cand(), "crypto limit entry"
+            )
+            assert trade is not None
+    assert submitted["tif"] == "gtc"
+
+
+async def test_partial_ioc_fill_is_journalled_at_the_qty_that_actually_filled(strategy_row):
+    """An IOC market order takes what's on the book and the venue cancels the
+    rest — so it comes back "canceled" carrying a real filled_qty. That slice is
+    a position we own, and the journal has to say 20 units, not the 62.5 we
+    asked for, or the exit later tries to sell coins we never bought."""
+    cancels = []
+    partial = {"id": "ioc-1", "status": "canceled", "filled_avg_price": "3.25", "filled_qty": "20"}
+    trade, _ = await _open_crypto_market(strategy_row, partial, cancels=cancels)
+
+    assert trade is not None  # a part-fill is a real position, not a rejection
+    assert trade["qty"] == pytest.approx(20)  # what filled, NOT the 62.5 requested
+    assert trade["entry_price"] == pytest.approx(3.25)  # the real average, not the quote
+    assert trade["notional"] == pytest.approx(65.0)  # 20 x 3.25, not the $200 budget
+    assert trade["order_id"] == "ioc-1"
+    # The venue already killed the remainder: cancelling a dead order is a call
+    # that can only fail, and there is no late fill left to race.
+    assert cancels == []
+
+
+async def test_zero_ioc_fill_still_rejects_with_the_broker_status(strategy_row):
+    """The honest reject row survives IOC: nothing filled, so there is no
+    position — and the row still names what the broker said and how much of the
+    order got done, which is the whole point of that message."""
+    dead = {"id": "ioc-1", "status": "canceled", "filled_qty": "0"}
+    trade, _ = await _open_crypto_market(strategy_row, dead)
+    assert trade is None
+
+    with session_scope() as s:
+        row = s.query(Trade).filter(Trade.strategy_id == strategy_row, Trade.status == "rejected").one()
+        assert "broker status: canceled" in row.entry_reason
+        assert "filled 0 of 62.5" in row.entry_reason
 
 
 async def test_cancel_race_adopts_a_late_fill(strategy_row):

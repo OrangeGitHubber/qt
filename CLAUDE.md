@@ -1,5 +1,16 @@
 # Working agreements for QT
 
+## Don't ask for approval — act
+
+Werner does not want to be asked whether to proceed. Make the judgement call,
+do the work, and tell him what you did and why. This covers committing,
+pushing, deleting scratch resources you created, picking between reasonable
+implementation options, and continuing to the next queue item.
+
+Ask only when proceeding would be unsafe or destructive to something you did
+not create — real trade history, live money, his data. There, state the risk
+and stop. Everything else: decide, act, report.
+
 ## Commit and push without asking
 
 When work is finished and the suite is green, **commit and push it. Do not ask
