@@ -1,5 +1,5 @@
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
-import { FeeSummary, getFeeSummary, getJournal, JournalRow , JOURNAL_LIMIT } from "../api";
+import { FeeSummary, getFeeSummary, getJournal, getStrategies, JournalRow, JOURNAL_LIMIT, StrategyRow } from "../api";
 import ColumnPicker, { useColumnPrefs } from "../components/ColumnPicker";
 import AccountSelect from "../components/AccountSelect";
 import { fmtDateTime as when, instantMs, zoneAbbr } from "../lib/datetime";
@@ -47,6 +47,14 @@ export default function Journal() {
   const [status, setStatus] = useState<"" | "trades" | "rejected">("trades");
   const [assetClass, setAssetClass] = useState<"" | "stock" | "crypto">("");
   const [account, setAccount] = useState<string>("");
+  // Symbol is free text rather than a dropdown: the options could only be built
+  // from the rows already fetched, so a picker would silently omit any symbol
+  // whose trades fell outside the current page — exactly the ones you open this
+  // filter to find. The datalist below suggests what IS loaded without limiting
+  // the choice to it.
+  const [symbol, setSymbol] = useState<string>("");
+  const [strategyId, setStrategyId] = useState<number | "">("");
+  const [strategies, setStrategies] = useState<StrategyRow[]>([]);
   const [expanded, setExpanded] = useState<string | null>(null);
   const [feeSummary, setFeeSummary] = useState<FeeSummary | null>(null);
   const [cols, toggleCol] = useColumnPrefs<JCol>(
@@ -56,14 +64,23 @@ export default function Journal() {
   );
 
   const refresh = useCallback(() => {
-    getJournal(mode || undefined, status || undefined, assetClass || undefined, account || undefined).then(setRows);
+    getJournal(
+      mode || undefined, status || undefined, assetClass || undefined, account || undefined,
+      undefined, symbol.trim() || undefined, strategyId === "" ? undefined : strategyId,
+    ).then(setRows);
     // Fees are account-scoped, not row-scoped, so they follow the account
     // filter only. A failure leaves it null, which renders as "unknown" — the
     // journal itself must still load.
     getFeeSummary(account || undefined)
       .then(setFeeSummary)
       .catch(() => setFeeSummary(null));
-  }, [mode, status, assetClass, account]);
+  }, [mode, status, assetClass, account, symbol, strategyId]);
+
+  // The strategy list is small and static enough to fetch once; a name is far
+  // more useful in the picker than the id the API filters on.
+  useEffect(() => {
+    getStrategies().then(setStrategies).catch(() => undefined);
+  }, []);
 
   useEffect(() => {
     refresh();
@@ -110,6 +127,31 @@ export default function Journal() {
           <option value="">All modes</option>
           <option value="shadow">Shadow</option>
           <option value="paper">Paper</option>
+        </select>
+        <input
+          className="filter-symbol"
+          list="journal-symbols"
+          value={symbol}
+          placeholder="Symbol…"
+          aria-label="Filter by symbol"
+          onChange={(e) => setSymbol(e.target.value)}
+        />
+        <datalist id="journal-symbols">
+          {[...new Set((rows ?? []).map((r) => r.symbol))].sort().map((sym) => (
+            <option key={sym} value={sym} />
+          ))}
+        </datalist>
+        <select
+          value={strategyId}
+          aria-label="Filter by strategy"
+          onChange={(e) => setStrategyId(e.target.value ? Number(e.target.value) : "")}
+        >
+          <option value="">All strategies</option>
+          {strategies.map((st) => (
+            <option key={st.id} value={st.id}>
+              {st.name}
+            </option>
+          ))}
         </select>
         <AccountSelect value={account} onChange={setAccount} />
         <button className="small btn-ghost" onClick={refresh}>

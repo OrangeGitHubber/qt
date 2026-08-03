@@ -378,6 +378,8 @@ def journal(
     status: str | None = None,
     asset_class: str | None = None,
     account: str | None = None,
+    symbol: str | None = None,
+    strategy_id: int | None = None,
     limit: int = 100,
     session: Session = Depends(get_session),
 ) -> list[dict]:
@@ -388,6 +390,15 @@ def journal(
         q = q.filter(Trade.mode == mode)
     if asset_class in ("stock", "crypto"):
         q = q.filter(Trade.asset_class == asset_class)
+    # Symbol and strategy filter HERE, not in the browser, for the same reason
+    # the status filter does: the row limit is applied after filtering, so
+    # narrowing client-side would only search the most recent page. "Every
+    # AAVE/USD trade" has to mean every one, not every one in the last 500 rows —
+    # and rejected candidates alone run to hundreds a day.
+    if symbol:
+        q = q.filter(Trade.symbol == symbol.strip().upper())
+    if strategy_id:
+        q = q.filter(Trade.strategy_id == strategy_id)
     # Filter server-side so hiding the (often numerous) rejected rows doesn't
     # get eaten by the row limit — "trades" = actually-executed (open+closed).
     if status == "trades":

@@ -2999,3 +2999,27 @@ details.fold > summary > .cache-head {
   white-space: nowrap;
   max-width: 14rem;
 }
+
+/* Journal symbol filter. Sized for a ticker, not a sentence — it sits in a
+   toolbar of segmented buttons and selects, and a full-width text input there
+   reads as the primary control when it is one filter among five. */
+.filter-symbol {
+  width: 9rem;
+}
+
+/* Row hover on the Strategies tables — holdings, the last-run trace and the
+ * ranking list all share `.holdings-table`.
+ *
+ * These rows are wide and mostly numeric: symbol on the far left, the figure you
+ * came for on the far right, and nothing in between to keep your eye on the
+ * line. A faint tint is enough to bind the row together while you track across
+ * it, and it has to stay faint — these tables are read for their numbers, and a
+ * highlight strong enough to notice is strong enough to distract from them.
+ *
+ * `--panel` sits one step off the card background, so it reads as a lift rather
+ * than a colour. No transition: a fade lags behind the cursor on a long list and
+ * makes the pointer feel disconnected from the row it is over.
+ */
+.holdings-table tbody tr:hover {
+  background: var(--panel);
+}

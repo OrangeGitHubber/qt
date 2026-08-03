@@ -3,6 +3,26 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Filter the journal by symbol or strategy, and follow a row with your eye (2026-08-03)
+
+The trade journal can now be narrowed to a single symbol or a single strategy,
+alongside the outcome, asset-class, mode and account filters it already had.
+
+Both filter on the server rather than in the browser, and that distinction
+matters more than it sounds: the journal returns the most recent rows and stops.
+Narrowing in the page would only search what had already been fetched, so "every
+AAVE/USD trade" would quietly have meant "every AAVE/USD trade in the last 500
+rows" — and with rejected candidates running to hundreds a day, that is a much
+shorter history than it appears. The symbol box is free text with suggestions
+rather than a dropdown, for the same reason: a dropdown could only offer symbols
+from the rows already loaded, which excludes exactly the older ones you opened
+the filter to find.
+
+On the Strategies page, hovering a row in the holdings, ranking or last-run
+tables now tints the whole line. Those rows are wide and mostly numeric — symbol
+at one end, the figure you want at the other, nothing in between to hold your
+eye on the line.
+
 ## The fidelity comparison stops corrupting its own measurements (2026-08-03)
 
 Four faults in the instrument itself, found while trying to establish that the

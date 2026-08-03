@@ -399,12 +399,18 @@ export const getJournal = (
   assetClass?: string,
   account?: string,
   limit: number = JOURNAL_LIMIT,
+  symbol?: string,
+  strategyId?: number,
 ) => {
   const qs = new URLSearchParams();
   if (mode) qs.set("mode", mode);
   if (status) qs.set("status", status);
   if (assetClass) qs.set("asset_class", assetClass);
   if (account) qs.set("account", account);
+  // Sent to the server, not filtered in the browser: the row limit is applied
+  // after filtering, so a client-side narrow would only search the last page.
+  if (symbol) qs.set("symbol", symbol);
+  if (strategyId) qs.set("strategy_id", String(strategyId));
   qs.set("limit", String(limit));
   const q = qs.toString();
   return fetch(`/api/engine/journal${q ? `?${q}` : ""}`).then((r) => handle<JournalRow[]>(r));

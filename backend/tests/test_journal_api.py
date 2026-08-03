@@ -93,3 +93,40 @@ def test_journal_and_pnl_account_filter(client):
             set_setting(s, "current_account_id", "")
             set_setting(s, "engine_mode", "off")
         client.delete(f"/api/strategies/{sid}")
+
+
+def test_journal_filters_by_symbol_and_strategy_server_side(client):
+    """Both filters run in SQL, before the row limit. Narrowing in the browser
+    would only search the page already fetched, so "every AAVE/USD trade" would
+    quietly mean "every one in the last 500 rows" — and rejected candidates
+    alone run to hundreds a day."""
+    a = client.post("/api/strategies", json={**STRAT, "name": "Filter A"}).json()["id"]
+    b = client.post("/api/strategies", json={**STRAT, "name": "Filter B"}).json()["id"]
+    with session_scope() as s:
+        s.add_all([
+            Trade(strategy_id=a, mode="paper", symbol="AAVE/USD", asset_class="crypto",
+                  qty=1, notional=90, status="closed", entry_price=90, exit_price=91, pnl=1),
+            Trade(strategy_id=a, mode="paper", symbol="GRT/USD", asset_class="crypto",
+                  qty=1, notional=1, status="closed", entry_price=1, exit_price=1.1, pnl=0.1),
+            Trade(strategy_id=b, mode="paper", symbol="AAVE/USD", asset_class="crypto",
+                  qty=2, notional=180, status="closed", entry_price=90, exit_price=92, pnl=4),
+        ])
+
+    def syms(**params):
+        q = "&".join(f"{k}={v}" for k, v in params.items())
+        return sorted(r["symbol"] for r in client.get(f"/api/engine/journal?{q}").json())
+
+    def strats(**params):
+        q = "&".join(f"{k}={v}" for k, v in params.items())
+        return sorted(r["strategy"] for r in client.get(f"/api/engine/journal?{q}").json())
+
+    assert syms(symbol="AAVE/USD") == ["AAVE/USD", "AAVE/USD"]
+    # Case-insensitive: the journal stores upper case, a user types what they see.
+    assert syms(symbol="aave/usd") == ["AAVE/USD", "AAVE/USD"]
+    assert strats(strategy_id=a) == ["Filter A", "Filter A"]
+    # And they compose — one symbol within one strategy.
+    rows = client.get(f"/api/engine/journal?symbol=AAVE/USD&strategy_id={a}").json()
+    assert [(r["symbol"], r["strategy"]) for r in rows] == [("AAVE/USD", "Filter A")]
+    # No filter still returns everything, or the filters would be hiding rows
+    # rather than selecting them.
+    assert len(client.get("/api/engine/journal?limit=500").json()) >= 3
