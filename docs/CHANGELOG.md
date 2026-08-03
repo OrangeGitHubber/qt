@@ -18,10 +18,16 @@ rather than a dropdown, for the same reason: a dropdown could only offer symbols
 from the rows already loaded, which excludes exactly the older ones you opened
 the filter to find.
 
-On the Strategies page, hovering a row in the holdings, ranking or last-run
-tables now tints the whole line. Those rows are wide and mostly numeric — symbol
-at one end, the figure you want at the other, nothing in between to hold your
-eye on the line.
+Hovering any row in any table — journal, holdings, ranking, last-run, backtest
+results — now tints the whole line. Those rows are wide and mostly numeric: an
+identifier at one end, the figure you want at the other, and nothing in between
+to hold your eye on the line.
+
+The tint layers over whatever a cell already has rather than replacing it, so
+the expanded-detail row in the journal and the top-N styling in the ranking list
+both survive being hovered. (The first attempt tinted the row with a palette
+colour that turned out to be the same one the card behind it uses — visible in
+the stylesheet, invisible on screen.)
 
 ## The fidelity comparison stops corrupting its own measurements (2026-08-03)
 

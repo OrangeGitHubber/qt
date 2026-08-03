@@ -3007,19 +3007,33 @@ details.fold > summary > .cache-head {
   width: 9rem;
 }
 
-/* Row hover on the Strategies tables — holdings, the last-run trace and the
- * ranking list all share `.holdings-table`.
+/* Row hover, every data table in the app.
  *
- * These rows are wide and mostly numeric: symbol on the far left, the figure you
- * came for on the far right, and nothing in between to keep your eye on the
- * line. A faint tint is enough to bind the row together while you track across
- * it, and it has to stay faint — these tables are read for their numbers, and a
- * highlight strong enough to notice is strong enough to distract from them.
+ * These rows are wide and mostly numeric: an identifier at one end, the figure
+ * you came for at the other, and nothing between them to keep your eye on the
+ * line. A faint tint binds the row together while you track across it, and it
+ * has to stay faint — these tables are read for their numbers, and a highlight
+ * strong enough to notice is strong enough to distract from them.
  *
- * `--panel` sits one step off the card background, so it reads as a lift rather
- * than a colour. No transition: a fade lags behind the cursor on a long list and
- * makes the pointer feel disconnected from the row it is over.
+ * Two things this has to get right, both learned by getting them wrong:
+ *
+ * It is a background-IMAGE on the cells, not a background-color on the row.
+ * `.card` is already `--panel`, so tinting the row with a palette colour was
+ * invisible against the card behind it; and cells that set their own colour
+ * (`td.detail` uses `--bg`) paint over any row-level background anyway. A
+ * translucent gradient layer composites ON TOP of whatever the cell already
+ * has, so the expanded-detail row and the ranking table's top-N styling both
+ * survive being hovered.
+ *
+ * `color-mix` off `--text` rather than a hardcoded white, so the tint tracks
+ * the palette instead of assuming a dark theme forever.
+ *
+ * No transition: a fade lags behind the cursor on a long list and makes the
+ * pointer feel disconnected from the row it is over.
  */
-.holdings-table tbody tr:hover {
-  background: var(--panel);
+tbody tr:hover > td {
+  background-image: linear-gradient(
+    color-mix(in srgb, var(--text) 7%, transparent),
+    color-mix(in srgb, var(--text) 7%, transparent)
+  );
 }
