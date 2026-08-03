@@ -3,6 +3,25 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## The optimizer and the editor stop disagreeing about decimals (2026-08-03)
+
+A search would finish, propose a stop-loss of 1.23%, and save it as a draft
+quite happily — and then the strategy editor would refuse to save that same
+strategy at all, insisting the number could only have one decimal place.
+
+The editor was the one in the wrong, and not by a technicality: the backtester
+and the live engine both use the full number, and a stop at 1.23% really does
+sell on a day a stop at 1.20% would hold. The whole restriction turned out to be
+a single `step="0.1"` on the number inputs — nothing in the backend ever asked
+for tenths. It was also inconsistent with itself: **Save** was blocked while
+**Save & backtest** quietly accepted the same value.
+
+Inputs now take whatever precision the setting genuinely has, whole numbers stay
+whole (MACD periods will still refuse 12.5), and the search no longer proposes
+values below what the editor will accept — it was suggesting trailing stops of
+0.29% that could never have been saved. Strategies you have already tuned open
+and save unchanged; nothing has been rounded or rewritten behind your back.
+
 ## Backtest fidelity gets its own tab (2026-08-03)
 
 It used to be a collapsed fold at the very foot of the Backtest page, on the

@@ -70,12 +70,30 @@ def test_any_value_at_all_is_on_its_own_grid():
     """The old fixed grids held 3.0 and 4.0, so a strategy sitting at 3.5 was
     never actually evaluated at its own setting and "the winner beat your 3.5"
     was a comparison nobody had run. Anchored grids make that impossible: the
-    value the strategy is on is always one of the values tried, whatever it is."""
-    for odd in (3.5, 0.07, 12.345, 49.9):
+    value the strategy is on is always one of the values tried, whatever it is —
+    including the odd decimals a previous search produced."""
+    for odd in (3.5, 0.87, 12.345, 49.9):
         s = _strategy(exit={"trailing_stop_pct": odd, "stop_loss_pct": 4, "take_profit_pct": 0})
         b = _baseline(s)
         assert b["trailing_stop_pct"]["value"] == odd
         assert b["trailing_stop_pct"]["in_grid"] is True
+
+
+def test_a_value_below_what_the_editor_allows_is_left_alone_entirely():
+    """A trailing stop of 0.07% cannot be typed into the strategy editor (its
+    floor is 0.5%) but an older row imported through the API could hold one. The
+    search will not tune it: every neighbouring step is also below the floor, so
+    there is nothing it could propose that the user could then save.
+
+    What it must NOT do is quietly renormalize. The knob is dropped from the
+    search — and therefore from the before/after panel — rather than appearing
+    there with a value silently pulled up to 0.5, which would show the user a
+    "current setting" their strategy does not have."""
+    s = _strategy(exit={"trailing_stop_pct": 0.07, "stop_loss_pct": 4, "take_profit_pct": 0})
+    assert "trailing_stop_pct" not in _active_param_space(s)
+    assert "trailing_stop_pct" not in _baseline(s)
+    # The strategy itself is untouched — nothing rewrote the stored value.
+    assert s["params"]["exit"]["trailing_stop_pct"] == 0.07
 
 
 def test_a_missing_knob_is_simply_not_searched():

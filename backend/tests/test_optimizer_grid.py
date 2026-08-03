@@ -60,6 +60,21 @@ def test_the_anchor_is_always_tested_exactly():
         assert anchor in _geometric_grid(anchor, 0.15, PCT)
 
 
+def test_the_anchor_survives_even_when_it_is_below_the_floor():
+    """The floors match the strategy EDITOR's minimums, which are stricter than
+    the schema's — the editor won't accept a trailing stop under 0.5%. An older
+    row imported through the API can still hold one, and clamping it away would
+    mean the search never evaluated the config the user is actually running,
+    turning the whole before/after panel into a comparison nobody ran.
+
+    So the anchor is exempt from the clamp while its NEIGHBOURS are not: the one
+    value that survives is the strategy's own. (Such a knob then drops out of the
+    search entirely for having a single-value grid — see
+    test_optimizer_baseline.py — which is the honest outcome: there is nothing
+    the search could propose that could then be saved.)"""
+    assert _geometric_grid(0.07, 0.15, PCT) == [0.07]
+
+
 def test_the_grid_spans_a_step_in_both_directions():
     grid = _geometric_grid(10.0, 0.15, PCT)
     assert len(grid) == STEPS_EACH_WAY * 2 + 1
