@@ -71,6 +71,7 @@ class OpenTradeView:
     entry_order_id: str | None
     entry_confirmed: bool  # did we record a confirmed entry fill?
     last_price: float | None  # best price to book a reconciled close at
+    asset_class: str = "stock"  # crypto pays its fee IN THE COIN — see case (d)
 
 
 @dataclass(frozen=True)
@@ -92,12 +93,25 @@ class OrderView:
 @dataclass(frozen=True)
 class Action:
     kind: str  # confirm_entry | await_entry | reject_entry | close_reconciled |
-    #            alert_orphan_position | alert_qty_mismatch
+    #            alert_orphan_position | alert_qty_mismatch |
+    #            adjust_qty_fee_in_kind
     trade_id: int | None = None
     symbol: str = ""
     qty: float = 0.0
     price: float | None = None
     reason: str = ""
+
+
+# Alpaca charges crypto commission IN THE COIN it delivers, so the position that
+# lands is smaller than the order's own filled_qty by the fee rate. QT journals
+# filled_qty, so every crypto entry leaves the journal reading ~0.25% above the
+# broker — real, expected, and not drift. Observed exactly: QT 2.1322 AAVE/USD
+# against the broker's 2.12687, a shortfall of 0.249977%.
+#
+# The band is deliberately a little above Alpaca's top tier so a fee change or a
+# second fee-bearing fill stays inside it, and deliberately far below anything a
+# genuine mis-journalled position would look like.
+CRYPTO_FEE_IN_KIND_MAX_PCT = 0.5
 
 
 def _nonzero(qty: float) -> bool:
@@ -206,6 +220,29 @@ def reconcile(
         if not _nonzero(ours):
             continue
         if abs(ours - pos.qty) > max(1e-6, abs(pos.qty) * 1e-6):
+            # The crypto fee-in-kind case, told apart from real drift by three
+            # things at once: crypto, a SHORTFALL (never a surplus — a fee cannot
+            # give coins back), and a size inside the fee band. Unlike general
+            # drift this IS attributable: every fill in the group paid it, in
+            # proportion to its own size, so scaling each trade down to match the
+            # broker restores the truth rather than guessing at it.
+            shortfall_pct = (ours - pos.qty) / ours * 100 if ours else 0.0
+            all_crypto = all(t.asset_class == "crypto" for t in group)
+            if all_crypto and 0 < shortfall_pct <= CRYPTO_FEE_IN_KIND_MAX_PCT:
+                for t in group:
+                    if not t.entry_confirmed:
+                        continue
+                    actions.append(
+                        Action(
+                            "adjust_qty_fee_in_kind", t.id, t.symbol,
+                            qty=t.qty * (pos.qty / ours),
+                            reason=(
+                                f"crypto fee taken in coin: {shortfall_pct:.3f}% of "
+                                f"{t.symbol} — journal aligned to the broker"
+                            ),
+                        )
+                    )
+                continue
             actions.append(
                 Action(
                     "alert_qty_mismatch", symbol=group[0].symbol, qty=pos.qty,
@@ -274,6 +311,7 @@ async def apply_reconciliation(session, client, mode: str) -> list[Action]:
             entry_order_id=t.entry_order_id,
             entry_confirmed=t.entry_price is not None and t.entry_order_id is not None,
             last_price=t.high_water or t.entry_price,
+            asset_class=t.asset_class or "stock",
         )
         for t in open_trades
     ]
@@ -332,6 +370,22 @@ async def apply_reconciliation(session, client, mode: str) -> list[Action]:
             session.add(AuditLog(
                 category="reconcile",
                 message=f"[{mode}] reconciled ENTRY {trade.symbol} confirmed filled",
+                detail=action.reason,
+            ))
+
+        elif action.kind == "adjust_qty_fee_in_kind" and trade is not None:
+            # Quietly correct, and say so in the audit log — but NO Slack alert.
+            # This fires on every crypto entry by construction, so alerting would
+            # train the user to ignore the channel that also carries real drift.
+            before = trade.qty
+            trade.qty = action.qty
+            trade.notional = (trade.entry_price or 0.0) * trade.qty
+            session.add(AuditLog(
+                category="reconcile",
+                message=(
+                    f"[{mode}] {trade.symbol} qty {before:g} -> {trade.qty:g} "
+                    "(crypto fee paid in coin)"
+                ),
                 detail=action.reason,
             ))
 

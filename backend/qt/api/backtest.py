@@ -505,8 +505,22 @@ def load_scanner_replay_dataset(
                 bars, filled = _fill_intraday_gaps(intraday_bars, daily, start_day)
             timeframe = "15Min"
         else:
+            # From `baseline_day`, for the same reason the intraday branch does:
+            # the FIRST day of the window needs a prior bar to measure a day-gain
+            # against — the previous session for stocks, ~24h back for crypto —
+            # and `_simulate` drops a bar whose change_pct is None in silence. A
+            # daily replay was therefore blind on day one of every window it was
+            # ever asked about, and a one-day window saw nothing at all.
+            #
+            # Costs no extra reading: `daily` is already loaded from `warm_start`
+            # (the indicator warm-up, far deeper than this). The trim exists only
+            # to stop the equity curve spanning the whole warm-up, so moving it a
+            # couple of days earlier is free. `sim_start` keeps the prefix
+            # untradeable, and `replayed` below still measures from `start_day`,
+            # so coverage numbers are unchanged.
             bars = {
-                s: [b for b in series if b["t"][:10] >= start_day] for s, series in daily.items()
+                s: [b for b in series if b["t"][:10] >= baseline_day]
+                for s, series in daily.items()
             }
             timeframe = "1Day"
             filled = 0  # a daily replay is daily everywhere; nothing to fill

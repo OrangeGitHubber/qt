@@ -3,6 +3,44 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Crypto fees are paid in the coin, and QT now knows it (2026-08-03)
+
+A stream of Slack alerts said things like *"QT's open trades total 2.1322
+AAVE/USD but the broker holds 2.12687 — not auto-corrected."* Nothing was wrong
+with either number.
+
+Alpaca charges crypto commission **in the coin it delivers**, so the position
+that lands is smaller than the order's own reported fill by the fee rate. QT
+recorded the fill, the broker held the fill minus the fee, and the reconciler —
+which tolerates a mismatch of one part in a million — flagged every crypto entry
+as unexplained drift. The gap in that alert is 0.249977%, which is Alpaca's
+crypto fee to five decimal places.
+
+Unlike genuine drift this is attributable: every fill paid it, in proportion to
+its own size. So the journal is now scaled to match the broker and the
+correction is written to the audit log, with no alert — a warning that fires on
+every crypto entry teaches you to ignore the channel that also carries the real
+ones.
+
+Three guards keep it from swallowing anything else. It only applies to crypto
+(US equities are commission-free and pay nothing in kind). It only applies to a
+shortfall, never a surplus — a fee cannot give coins back. And it only applies
+inside a band a little above Alpaca's top fee tier; anything larger is still
+reported as before, untouched and unabsorbed.
+
+## The daily replay was blind on the first day of every window (2026-08-03)
+
+The same fault as the intraday one fixed earlier, in the other branch. A
+day-gain needs a prior bar to measure against — the previous session for stocks,
+24 hours back for crypto — and the daily scanner replay trimmed its bars to the
+window's own first day, so that day had nothing to measure against and was
+skipped without a word. A one-day window saw nothing at all.
+
+It now loads a few days of reference bars ahead of the window. Those bars can
+never trade, coverage figures still count only what is inside the window, and no
+extra data is fetched — the bars were already loaded for the indicator warm-up
+and were simply being thrown away.
+
 ## The fidelity replay can finally see the window it is judging (2026-08-03)
 
 Two faults, both of which made a crypto comparison of the last few hours judge

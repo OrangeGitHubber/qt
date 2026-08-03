@@ -209,3 +209,67 @@ def test_a_short_window_with_no_intraday_at_all_refuses_loudly(monkeypatch):
         load_scanner_replay_dataset("crypto", 1, 10, window_hours=4.0)
     assert caught.value.status_code == 422
     assert "intraday" in caught.value.detail
+
+
+# --- the DAILY replay needs a baseline for its first window day too ----------
+
+
+def _seed_daily_window(monkeypatch, *, days_before: int = 4, window_days: int = 3):
+    """Daily bars running from before the window through to today, with a mover
+    on the window's FIRST day — the day that used to be unjudgeable.
+
+    `first_day` is derived the way the loader derives `start_day` (finish minus
+    `days`), not from the seed's own shape. Getting that wrong is how the first
+    version of this test passed against the very bug it was written for: the
+    assertion landed a day inside the window, where a baseline already existed.
+    """
+    Sess = _cache(monkeypatch)
+    today = datetime.now(timezone.utc)
+    first_day = (today - timedelta(days=window_days)).strftime("%Y-%m-%d")
+    bars = []
+    for i in range(days_before + window_days):
+        d = today - timedelta(days=days_before + window_days - 1 - i)
+        c = 100 + i
+        bars.append({"t": d.strftime("%Y-%m-%dT00:00:00Z"), "o": c, "h": c, "l": c,
+                     "c": c, "v": 1e6, "vw": c})
+    with Sess() as s:
+        barcache.save_daily_bars(s, "BTC/USD", bars, model=barcache.CryptoDailyBar)
+        for i in range(window_days + 1):
+            day = (today - timedelta(days=window_days - i)).strftime("%Y-%m-%d")
+            barcache.store_movers(s, day, [("BTC/USD", 5.0, 105.0, 1e8)],
+                                  model=barcache.CryptoDailyMover)
+        s.commit()
+    return first_day
+
+
+def test_a_daily_replay_can_judge_the_first_day_of_its_window(monkeypatch):
+    """The daily path trimmed its bars to the window's own first day, so that day
+    had nothing to measure a day-gain against — and `_simulate` drops a bar whose
+    change_pct is None without a word. Every daily scanner replay was blind on
+    day one, and a one-day window saw nothing at all.
+
+    Asserted on the OUTCOME, not the trim: the first in-window bar must come out
+    of `_prepare` with a real change_pct."""
+    from qt.services.backtest import _day_fn, _prepare
+
+    first_day = _seed_daily_window(monkeypatch)
+    ds = load_scanner_replay_dataset("crypto", 3, 10)
+
+    assert ds.timeframe == "1Day"
+    prepared = _prepare(ds.bars["BTC/USD"], _day_fn("crypto"), rolling_24h=True)
+    in_window = [b for b in prepared if b["day"] >= first_day]
+    assert in_window, "no bars landed inside the window at all — seed is wrong"
+    assert in_window[0]["change_pct"] is not None, (
+        "the window's first day had no prior bar to measure against, so the "
+        "replay silently skipped it"
+    )
+
+
+def test_the_baseline_prefix_is_not_counted_as_coverage(monkeypatch):
+    """The prefix exists to be a reference price and can never trade. A symbol
+    holding only prefix bars must not inflate the replayed universe — otherwise
+    widening the baseline would quietly make coverage look better."""
+    _seed_daily_window(monkeypatch)
+    ds = load_scanner_replay_dataset("crypto", 3, 10)
+    assert ds.replayed == ["BTC/USD"]
+    assert ds.dropped == []
