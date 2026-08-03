@@ -3,6 +3,35 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## The Strategies page is a list you can read again (2026-08-02)
+
+Twenty-three strategies in a card grid meant five columns of ~270px, and at that
+width nothing fitted: the summary line wrapped, and the "why it did / didn't buy"
+trace — which is prose — wrapped to one word per column. The cause was that a
+folded row and an expanded one want opposite widths, and one grid has to serve
+both.
+
+**One full-width row per strategy** now, with the fields in fixed columns, so the
+whole list reads as a table you scan down with every sleeve and open-count
+aligned. Expanding gives the row the entire page, which is what the trace and the
+holdings table needed all along.
+
+**Search drafts are folded under the strategy they came from.** A lot of the
+crowding was not strategies at all but optimizer lineage — six entries for one
+scalper, each a search off the last. The parent-child link was already recorded;
+it just wasn't shown. A family is now one row plus a quiet "▸ 4 more from
+parameter searches on this". The one rule that overrides it: **an enabled
+strategy is always a top-level row**, never tucked behind a disclosure, because
+something that is trading must not be a click away.
+
+That meant the Enabled / Disabled split had to go — a family is usually one
+enabled parent and a pile of disabled drafts, and the split tore it in half.
+State is a filter now, with enabled-first as the default order, alongside search
+(names **and** symbols — "what's trading NVDA?" is a question you ask the list),
+an asset-class filter, and sorting. Grouping can be switched off, because it is a
+claim about how rows relate and you should be able to see the raw list when you
+doubt it.
+
 ## Fixed: a strategy edited before its first trade crashed the fidelity report (2026-08-02)
 
 The exact shape of a new strategy's first hour — create it, tweak it once or

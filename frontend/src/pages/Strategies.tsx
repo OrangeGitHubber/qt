@@ -22,7 +22,16 @@ import {
 import InfoTip from "../components/InfoTip";
 import NumberField from "../components/NumberField";
 import UniverseSymbols from "../components/UniverseSymbols";
-import { IconDelete, IconEdit, IconOptimize, IconPause, IconPlay, IconWarn } from "../components/icons";
+import {
+  IconCrypto,
+  IconDelete,
+  IconEdit,
+  IconOptimize,
+  IconPause,
+  IconPlay,
+  IconStock,
+  IconWarn,
+} from "../components/icons";
 import { consumeNav, requestNav } from "../lib/nav";
 
 const RANK_LABELS: Record<RankBy, string> = {
@@ -1244,6 +1253,62 @@ function Editor({
   );
 }
 
+// ---- Optimizer lineage ---------------------------------------------------
+// The list's worst problem was never width. A parameter search leaves its output
+// BESIDE its input, so "… v2 with ATR", "… v2 with ATR (search draft)" and
+// "… (search draft) (search draft)" are one idea wearing six names — six full
+// rows for one thing you own. The optimizer already stamps optimized_from_id on
+// everything it creates (see Optimizer.tsx), so the page can put descendants
+// back under the strategy they were searched from instead of listing them as
+// strangers that happen to share a prefix.
+interface Family {
+  root: StrategyRow;
+  members: StrategyRow[]; // root first, then descendants by generation, then id
+}
+
+/** Group every strategy under its oldest surviving ancestor, and record how many
+ *  searches deep each one sits. One upward walk per row, stopping on a missing
+ *  parent (deleted mid-chain — the orphan becomes its own root rather than
+ *  vanishing off the page) and on a repeated id (a hand-edited a→b→a cycle would
+ *  otherwise spin forever, the same guard the Optimizer's walk uses). */
+function buildFamilies(rows: StrategyRow[]): { families: Family[]; depth: Map<number, number> } {
+  const byId = new Map(rows.map((r) => [r.id, r]));
+  const depth = new Map<number, number>();
+  const kin = new Map<number, StrategyRow[]>();
+  for (const r of rows) {
+    let cur = r;
+    let d = 0;
+    const seen = new Set<number>([r.id]);
+    while (cur.optimized_from_id != null) {
+      const parent = byId.get(cur.optimized_from_id);
+      if (!parent || seen.has(parent.id)) break;
+      seen.add(parent.id);
+      cur = parent;
+      d += 1;
+    }
+    depth.set(r.id, d);
+    const list = kin.get(cur.id);
+    if (list) list.push(r);
+    else kin.set(cur.id, [r]);
+  }
+  const families = [...kin.entries()].map(([rootId, members]) => ({
+    root: byId.get(rootId)!,
+    members: members.sort((a, b) => depth.get(a.id)! - depth.get(b.id)! || a.id - b.id),
+  }));
+  return { families, depth };
+}
+
+type StatusFilter = "all" | "enabled" | "paused";
+type AssetFilter = "all" | "stock" | "crypto";
+type SortKey = "state" | "name" | "open" | "new";
+
+const SORT_LABELS: Record<SortKey, string> = {
+  state: "Enabled first",
+  name: "Name (A–Z)",
+  open: "Open positions",
+  new: "Newest first",
+};
+
 export default function Strategies() {
   const [rows, setRows] = useState<StrategyRow[] | null>(null);
   const [presets, setPresets] = useState<Record<string, Preset>>({});
@@ -1252,6 +1317,19 @@ export default function Strategies() {
   const [note, setNote] = useState<string | null>(null);
   const [equity, setEquity] = useState<number | null>(null);
   const editorRef = useRef<HTMLDivElement>(null);
+
+  // List controls. Filtering beats sectioning here: the old Enabled / Disabled
+  // split is the very thing that made lineage impossible to show, because a
+  // family is normally one enabled parent plus a pile of disabled drafts and
+  // the split tore it in half. State is now a FILTER over one list, and
+  // "enabled first" is the default sort instead.
+  const [query, setQuery] = useState("");
+  const [status, setStatus] = useState<StatusFilter>("all");
+  const [asset, setAsset] = useState<AssetFilter>("all");
+  const [sort, setSort] = useState<SortKey>("state");
+  const [grouped, setGrouped] = useState(true);
+  // Which families have their search variants unfolded, keyed by root id.
+  const [openFamilies, setOpenFamilies] = useState<Set<number>>(() => new Set());
 
   // The editor opens at the TOP of the page — scroll it into view so clicking
   // Edit far down the list doesn't look like nothing happened.
@@ -1324,106 +1402,257 @@ export default function Strategies() {
     }
   }
 
-  const live = (rows ?? []).filter((r) => r.enabled);
-  const paused = (rows ?? []).filter((r) => !r.enabled);
+  // One pass over the list: group into optimizer families, apply the filters to
+  // the MEMBERS (a family survives while anything in it matches), then order.
+  const view = useMemo(() => {
+    const all = rows ?? [];
+    const q = query.trim().toLowerCase();
+    const keep = (r: StrategyRow) => {
+      if (status !== "all" && r.enabled !== (status === "enabled")) return false;
+      if (asset !== "all" && r.asset_class !== asset) return false;
+      if (!q) return true;
+      // Symbols too: "why is NVDA being traded" is a list question, and the
+      // strategy holding it rarely has NVDA in its name.
+      return r.name.toLowerCase().includes(q) || r.symbols.some((s) => s.toLowerCase().includes(q));
+    };
 
-  function strategyCard(r: StrategyRow) {
-    // Compact by default: one folded row per strategy (name, state, a one-line
-    // summary); the full detail — holdings, ranking, last run, actions — shows
-    // only when the row is expanded. Keeps a long list scannable.
+    const { families, depth } = buildFamilies(all);
+    const groups = (grouped ? families : all.map((r) => ({ root: r, members: [r] })))
+      .map((f) => ({ root: f.root, members: f.members.filter(keep) }))
+      .filter((f) => f.members.length > 0);
+
+    // A family sorts by its strongest member, not its root: a family whose
+    // 4th-generation draft is the enabled one is still a live family.
+    const best = (f: Family, pick: (m: StrategyRow) => number) => Math.max(...f.members.map(pick));
+    groups.sort((a, b) => {
+      const byName = a.root.name.localeCompare(b.root.name);
+      if (sort === "name") return byName;
+      if (sort === "open") return best(b, (m) => m.open_trades ?? 0) - best(a, (m) => m.open_trades ?? 0) || byName;
+      if (sort === "new") return best(b, (m) => m.id) - best(a, (m) => m.id);
+      return best(b, (m) => (m.enabled ? 1 : 0)) - best(a, (m) => (m.enabled ? 1 : 0)) || byName;
+    });
+
+    return {
+      groups,
+      depth,
+      byId: new Map(all.map((r) => [r.id, r])),
+      shown: groups.reduce((n, f) => n + f.members.length, 0),
+      total: all.length,
+      liveCount: all.filter((r) => r.enabled).length,
+    };
+  }, [rows, query, status, asset, sort, grouped]);
+
+  const filtered = query.trim() !== "" || status !== "all" || asset !== "all";
+  function clearFilters() {
+    setQuery("");
+    setStatus("all");
+    setAsset("all");
+  }
+
+  function toggleFamily(rootId: number) {
+    setOpenFamilies((cur) => {
+      const next = new Set(cur);
+      if (!next.delete(rootId)) next.add(rootId);
+      return next;
+    });
+  }
+
+  function strategyRow(r: StrategyRow, variant = false) {
+    // Folded: ONE full-width line whose fields land in fixed columns, so 23 of
+    // them read as a table you can scan down (every sleeve, every open count
+    // aligned) instead of 23 paragraphs. Expanded: the whole page width, which
+    // is what the "why it did / didn't buy" trace needed all along — in a 270px
+    // card its Why column wrapped to one word per line.
     const universeShort =
       r.universe === "basket"
         ? `basket "${basketName(r.basket_id)}" top ${r.top_n}`
         : r.universe === "custom"
           ? `${r.symbols.length} symbol${r.symbols.length === 1 ? "" : "s"}`
           : r.universe;
+    const gen = (view.depth.get(r.id) ?? 0) + 1;
+    const parent = r.optimized_from_id != null ? view.byId.get(r.optimized_from_id) : undefined;
+    const AssetIcon = r.asset_class === "crypto" ? IconCrypto : IconStock;
+    const open = r.open_trades ?? 0;
     return (
-      <details className={`card fold strat-fold${r.enabled ? " card-live" : ""}`} key={r.id}>
+      <details className={`strat-row${r.enabled ? " card-live" : ""}${variant ? " strat-variant" : ""}`} key={r.id}>
         <summary>
-          <div className="strat-head">
-            <h3>
-              {r.name}{" "}
-              <span className={`pill ${r.enabled ? "ok pill-live" : "muted"}`}>
-                {r.enabled ? "● ENABLED" : "disabled"}
-              </span>
-            </h3>
-            <span className="hint">
-              {r.asset_class} · {universeShort} · {r.swing_mode ? "swing" : "intraday"} · $
-              {r.sleeve_usd.toLocaleString()} sleeve
-              {(r.open_trades ?? 0) > 0 ? ` · ${r.open_trades} open` : ""}
+          <span className="sr-name">
+            {variant && <span className="sr-branch" aria-hidden>↳</span>}
+            <span className="sr-title">{r.name}</span>
+            <span className={`pill ${r.enabled ? "ok pill-live" : "muted"}`}>
+              {r.enabled ? "● ENABLED" : "disabled"}
             </span>
-          </div>
+            {gen > 1 && (
+              <span
+                className="pill muted sr-gen"
+                title={`Generation ${gen} — produced by a parameter search${
+                  parent ? ` from "${parent.name}"` : ""
+                }${r.optimized_days ? ` over ${r.optimized_days} days` : ""}`}
+              >
+                gen {gen}
+              </span>
+            )}
+          </span>
+          <span className="sr-meta">
+            <AssetIcon className="icon-inline" /> {r.asset_class} · {universeShort} ·{" "}
+            {r.swing_mode ? "swing" : "intraday"}
+          </span>
+          <span className="sr-num">
+            ${r.sleeve_usd.toLocaleString()}
+            <span className="sr-cap"> sleeve</span>
+          </span>
+          {/* An open position is the one number worth interrupting a scan for —
+              it means real money is in the market under this config. */}
+          <span className={`sr-num${open > 0 ? " sr-open" : ""}`}>
+            {open > 0 ? (
+              <>
+                {open}
+                <span className="sr-cap"> open</span>
+              </>
+            ) : (
+              <span className="sr-cap">—</span>
+            )}
+          </span>
+          <span className="sr-num sr-cap">v{r.version}</span>
         </summary>
-        <dl>
-          <dt>Trades</dt>
-          <dd>
-            {r.asset_class} ·{" "}
-            {r.universe === "basket"
-              ? `basket "${basketName(r.basket_id)}" · top ${r.top_n} by ${RANK_LABELS[r.rank_by]}`
-              : r.universe === "custom"
-              ? `custom: ${r.symbols.join(", ") || "(none)"}`
-              : r.universe}{" "}
-            · {r.swing_mode ? "swing" : "intraday"}
-          </dd>
-          <dt>Entry</dt>
-          <dd>
-            +{r.params.entry.min_day_gain_pct}% day{r.params.entry.require_above_vwap ? ", above VWAP" : ""}
-          </dd>
-          <dt>Exit</dt>
-          <dd>
-            trail {r.params.exit.trailing_stop_pct}% · stop{" "}
-            {Number(r.params.atr?.stop_mult || 0) > 0
-              ? `${Number(r.params.atr!.stop_mult)}×ATR`
-              : `${r.params.exit.stop_loss_pct}%`}
-            {r.params.exit.take_profit_pct ? ` · target ${r.params.exit.take_profit_pct}%` : ""}
-          </dd>
-          <dt>Sizing</dt>
-          <dd>
-            ${r.sizing_usd} / trade, ${r.sleeve_usd} sleeve, max {r.max_positions}
-          </dd>
-          <dt>Config</dt>
-          <dd>
-            v{r.version} · {r.open_trades ?? 0} open trade(s)
-          </dd>
-        </dl>
-        {/* Readable without opening the editor — notes you have to dig for are
-            notes you stop writing. pre-wrap keeps the line breaks you typed. */}
-        {r.notes && (
-          <>
-            <span className="field-cap">Your notes</span>
-            <p className="hint strat-notes">{r.notes}</p>
-          </>
-        )}
-        {(r.open_trades ?? 0) > 0 && <HoldingsView strategyId={r.id} count={r.open_trades ?? 0} />}
-        {(r.rank_enabled || r.universe === "basket") && <RankingView strategyId={r.id} />}
-        <LastRunView strategyId={r.id} />
-        <div className="card-actions">
-          <button
-            className={`small btn-icon ${r.enabled ? "btn-pause" : "btn-enable"}`}
-            onClick={() => toggle(r)}
-            title={r.enabled ? "Stop this strategy from opening new trades" : "Arm this strategy (it trades once the engine is on)"}
-          >
-            {r.enabled ? <IconPause /> : <IconPlay />}
-            {r.enabled ? "Pause" : "Enable"}
-          </button>
-          <button className="small btn-icon btn-ghost" onClick={() => startEdit(r)} title="Edit this strategy's settings">
-            <IconEdit />
-            Edit
-          </button>
-          <button
-            className="small btn-icon btn-ghost"
-            onClick={() => leaveFor("optimizer", r.id)}
-            title="Search better settings for this strategy (opens the Optimizer)"
-          >
-            <IconOptimize />
-            Optimize
-          </button>
-          <button className="small btn-icon danger" onClick={() => remove(r)} title="Delete this strategy permanently">
-            <IconDelete />
-            Delete
-          </button>
+        <div className="strat-body">
+          {/* Each dt/dd pair is wrapped so the whole set can flow into columns —
+              the label-above-value shape survives a 4-column layout, where the
+              old auto/1fr grid stretched one value across the full page. */}
+          <dl className="strat-dl">
+            <div>
+              <dt>Trades</dt>
+              <dd>
+                {r.asset_class} ·{" "}
+                {r.universe === "basket"
+                  ? `basket "${basketName(r.basket_id)}" · top ${r.top_n} by ${RANK_LABELS[r.rank_by]}`
+                  : r.universe === "custom"
+                  ? `custom: ${r.symbols.join(", ") || "(none)"}`
+                  : r.universe}{" "}
+                · {r.swing_mode ? "swing" : "intraday"}
+              </dd>
+            </div>
+            <div>
+              <dt>Entry</dt>
+              <dd>
+                +{r.params.entry.min_day_gain_pct}% day{r.params.entry.require_above_vwap ? ", above VWAP" : ""}
+              </dd>
+            </div>
+            <div>
+              <dt>Exit</dt>
+              <dd>
+                trail {r.params.exit.trailing_stop_pct}% · stop{" "}
+                {Number(r.params.atr?.stop_mult || 0) > 0
+                  ? `${Number(r.params.atr!.stop_mult)}×ATR`
+                  : `${r.params.exit.stop_loss_pct}%`}
+                {r.params.exit.take_profit_pct ? ` · target ${r.params.exit.take_profit_pct}%` : ""}
+              </dd>
+            </div>
+            <div>
+              <dt>Sizing</dt>
+              <dd>
+                ${r.sizing_usd} / trade, ${r.sleeve_usd} sleeve, max {r.max_positions}
+              </dd>
+            </div>
+            <div>
+              <dt>Config</dt>
+              <dd>
+                v{r.version} · {r.open_trades ?? 0} open trade(s)
+              </dd>
+            </div>
+            {/* Where this config came from. The row only has room for "gen 3";
+                the answer you actually want — searched from WHAT, over how long —
+                is the thing that tells you whether the number is trustworthy. */}
+            {gen > 1 && (
+              <div>
+                <dt>Lineage</dt>
+                <dd>
+                  generation {gen}
+                  {parent ? ` · searched from "${parent.name}"` : " · parent deleted"}
+                  {r.optimized_days ? ` over ${r.optimized_days} days` : ""}
+                </dd>
+              </div>
+            )}
+          </dl>
+          {/* Readable without opening the editor — notes you have to dig for are
+              notes you stop writing. pre-wrap keeps the line breaks you typed. */}
+          {r.notes && (
+            <>
+              <span className="field-cap">Your notes</span>
+              <p className="hint strat-notes">{r.notes}</p>
+            </>
+          )}
+          {(r.open_trades ?? 0) > 0 && <HoldingsView strategyId={r.id} count={r.open_trades ?? 0} />}
+          {(r.rank_enabled || r.universe === "basket") && <RankingView strategyId={r.id} />}
+          <LastRunView strategyId={r.id} />
+          <div className="card-actions">
+            <button
+              className={`small btn-icon ${r.enabled ? "btn-pause" : "btn-enable"}`}
+              onClick={() => toggle(r)}
+              title={r.enabled ? "Stop this strategy from opening new trades" : "Arm this strategy (it trades once the engine is on)"}
+            >
+              {r.enabled ? <IconPause /> : <IconPlay />}
+              {r.enabled ? "Pause" : "Enable"}
+            </button>
+            <button className="small btn-icon btn-ghost" onClick={() => startEdit(r)} title="Edit this strategy's settings">
+              <IconEdit />
+              Edit
+            </button>
+            {/* Same unsaved-changes guard as Optimize: leaving a half-edited form
+                behind for a page that reloads the strategy from the server would
+                drop the edits silently. */}
+            <button
+              className="small btn-ghost"
+              onClick={() => leaveFor("backtest", r.id)}
+              title="Test this strategy against history (opens Backtest)"
+            >
+              Backtest
+            </button>
+            <button
+              className="small btn-icon btn-ghost"
+              onClick={() => leaveFor("optimizer", r.id)}
+              title="Search better settings for this strategy (opens the Optimizer)"
+            >
+              <IconOptimize />
+              Optimize
+            </button>
+            <button className="small btn-icon danger" onClick={() => remove(r)} title="Delete this strategy permanently">
+              <IconDelete />
+              Delete
+            </button>
+          </div>
         </div>
       </details>
+    );
+  }
+
+  // A family renders as its LIVE members plus a fold holding the rest. Anything
+  // enabled stays a top-level row on purpose: a strategy that trades real money
+  // must never be two clicks away because it happens to be someone's descendant.
+  // With nothing enabled the root stands in, so a family is never headless.
+  function familyBlock(f: Family) {
+    if (f.members.length === 1) return strategyRow(f.members[0]);
+    const enabled = f.members.filter((m) => m.enabled);
+    const shown = enabled.length > 0 ? enabled : [f.members[0]];
+    const tucked = f.members.filter((m) => !shown.includes(m));
+    const open = openFamilies.has(f.root.id);
+    return (
+      <div className="strat-family" key={`fam-${f.root.id}`}>
+        {shown.map((m) => strategyRow(m))}
+        {tucked.length > 0 && (
+          <>
+            <button
+              type="button"
+              className="fam-toggle"
+              aria-expanded={open}
+              onClick={() => toggleFamily(f.root.id)}
+            >
+              {open ? "▾" : "▸"} {tucked.length} more from parameter searches on this
+            </button>
+            {open && <div className="fam-kids">{tucked.map((m) => strategyRow(m, true))}</div>}
+          </>
+        )}
+      </div>
     );
   }
 
@@ -1472,22 +1701,70 @@ export default function Strategies() {
         </div>
       ) : (
         <>
-          {live.length > 0 && (
-            <section className="strat-section">
-              <h3 className="section-head">
-                Enabled <span className="section-count">{live.length}</span>
-                <span className="section-sub">armed — they trade once the engine is on</span>
-              </h3>
-              <div className="grid">{live.map(strategyCard)}</div>
-            </section>
-          )}
-          {paused.length > 0 && (
-            <section className="strat-section">
-              <h3 className="section-head section-head-muted">
-                Disabled / drafts <span className="section-count">{paused.length}</span>
-              </h3>
-              <div className="grid">{paused.map(strategyCard)}</div>
-            </section>
+          <div className="strat-controls">
+            <input
+              className="strat-search"
+              type="search"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search name or symbol…"
+              aria-label="Search strategies by name or symbol"
+            />
+            <div className="seg" role="group" aria-label="Filter by state">
+              {(["all", "enabled", "paused"] as StatusFilter[]).map((s) => (
+                <button
+                  key={s}
+                  className={status === s ? "active" : ""}
+                  aria-pressed={status === s}
+                  onClick={() => setStatus(s)}
+                >
+                  {s === "all" ? "All" : s === "enabled" ? "Enabled" : "Paused"}
+                </button>
+              ))}
+            </div>
+            <div className="seg" role="group" aria-label="Filter by asset class">
+              {(["all", "stock", "crypto"] as AssetFilter[]).map((a) => (
+                <button
+                  key={a}
+                  className={asset === a ? "active" : ""}
+                  aria-pressed={asset === a}
+                  onClick={() => setAsset(a)}
+                >
+                  {a === "all" ? "All" : a === "stock" ? "Stocks" : "Crypto"}
+                </button>
+              ))}
+            </div>
+            <select value={sort} onChange={(e) => setSort(e.target.value as SortKey)} aria-label="Sort strategies">
+              {(Object.keys(SORT_LABELS) as SortKey[]).map((k) => (
+                <option key={k} value={k}>
+                  {SORT_LABELS[k]}
+                </option>
+              ))}
+            </select>
+            {/* An escape hatch, not a preference to fiddle with: grouping is a
+                claim about how these rows relate, and you should be able to see
+                the raw list when you doubt it. */}
+            <label className="check" title="Fold each strategy's optimizer descendants under it">
+              <input type="checkbox" checked={grouped} onChange={(e) => setGrouped(e.target.checked)} />
+              Group search variants
+            </label>
+          </div>
+          <p className="hint strat-summary">
+            {filtered ? `${view.shown} of ${view.total}` : `${view.total}`} strategies
+            {grouped && view.groups.length !== view.shown ? ` in ${view.groups.length} groups` : ""} ·{" "}
+            <strong>{view.liveCount} enabled</strong> — armed, they trade once the engine is on.
+          </p>
+          {view.groups.length === 0 ? (
+            <div className="card">
+              <p className="hint">
+                No strategy matches these filters.{" "}
+                <button className="small btn-ghost" onClick={clearFilters}>
+                  Clear filters
+                </button>
+              </p>
+            </div>
+          ) : (
+            <div className="strat-list">{view.groups.map(familyBlock)}</div>
           )}
         </>
       )}
