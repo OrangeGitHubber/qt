@@ -1002,6 +1002,21 @@ def run_backtest(
                 "Entries qualified but were blocked by risk rails or position sizing "
                 "(sleeve/exposure/cash — check $ per trade vs share price)."
             )
+        elif not diag["bars_evaluated"]:
+            # Nothing was ever judged, so nothing can be said about the rules.
+            # Reporting a rule verdict here is how a 3.5-hour crypto window
+            # replayed on daily bars came back as "the rules rejected your
+            # trades" — the replay had not looked at a single bar. A day-gain
+            # baseline needs a prior bar to measure from (the previous session
+            # for stocks, 24h back for crypto); without one every bar is
+            # unusable and silently skipped.
+            diag["summary"] = (
+                "The replay could not evaluate a single bar in this window — so this says "
+                "nothing about your rules. Either no bars were returned for the window, or "
+                "none had a day-gain baseline to measure against (that needs history from "
+                "before the window starts). A window shorter than a day replayed on daily "
+                "bars is the usual cause."
+            )
         else:
             diag["summary"] = "No bars satisfied all entry conditions simultaneously."
     else:

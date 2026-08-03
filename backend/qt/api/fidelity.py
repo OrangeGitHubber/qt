@@ -680,7 +680,13 @@ def _iso(ts: datetime | None) -> str | None:
     return aware.isoformat() if aware else None
 
 
-def _timeframe_for(params: dict) -> str:
+# Below this, a daily replay has too few bars to judge anything (a one-day
+# window holds a single daily bar, and that bar needs a prior one to measure a
+# day-gain against).
+MIN_HOURS_FOR_DAILY_REPLAY = 48
+
+
+def _timeframe_for(params: dict, window_hours: float | None = None) -> str:
     """The bar size the STRATEGY demands, not a hardcoded one. Asking for daily
     bars on a strategy that needs intraday ones gets every entry rejected, and the
     report would then read "the backtest missed all 20 trades" when the truth is
@@ -695,6 +701,19 @@ def _timeframe_for(params: dict) -> str:
         or (entry.get("entry_window_start") and entry.get("entry_window_end"))
     )
     if _mixed_resolution(params) or (wants_intraday and not _uses_daily_only_signals(params)):
+        return "15Min"
+    # Length matters as much as the rules do. A window shorter than a couple of
+    # days holds one daily bar or none, so a daily replay judges nothing and the
+    # report reads as "the backtest missed all your trades" — which is how a
+    # 3.5-hour crypto segment came back with six live buys and zero replayed
+    # ones. Strategies with daily-only signals are left alone: replaying those
+    # intraday would compute MACD/RSI off intraday closes, which is a worse lie
+    # than the one being fixed.
+    if (
+        window_hours is not None
+        and window_hours < MIN_HOURS_FOR_DAILY_REPLAY
+        and not _uses_daily_only_signals(params)
+    ):
         return "15Min"
     return "1Day"
 
@@ -731,7 +750,9 @@ async def _replay_segments(
                     window_start=start,
                     window_end=segment.end,
                     scanner_replay=segment.scanner_replay,
-                    timeframe=_timeframe_for(config["params"]),
+                    timeframe=_timeframe_for(
+                        config["params"], (segment.end - start).total_seconds() / 3600
+                    ),
                     # The sleeve THAT config had. Starting every segment from
                     # today's would answer a question about today's budget.
                     starting_cash=max(config.get("sleeve_usd") or 0, 100),
@@ -845,7 +866,13 @@ async def compare(
     clamped = bool(began and began.replace(hour=0, minute=0, second=0, microsecond=0) > since)
     if clamped:
         since = began.replace(hour=0, minute=0, second=0, microsecond=0)
-    replay_from = max(since, _bar_floor(began, _timeframe_for(json.loads(strategy.params)))) if began else since
+    replay_from = (
+        max(since, _bar_floor(began, _timeframe_for(
+            json.loads(strategy.params), (until - since).total_seconds() / 3600
+        )))
+        if began
+        else since
+    )
 
     # THE ENGINE COULD NOT ACT BEFORE IT WAS SWITCHED ON. Until now go-live was
     # only ever displayed, never enforced: the window opened at the first trade's
@@ -989,7 +1016,9 @@ async def compare(
                 window_end=until,
                 symbols=symbols,
                 scanner_replay=scanner_replay,
-                timeframe=_timeframe_for(json.loads(strategy.params)),
+                timeframe=_timeframe_for(
+                    json.loads(strategy.params), (until - replay_from).total_seconds() / 3600
+                ),
                 starting_cash=max(strategy.sleeve_usd, 100),
                 spread_pct=spread_pct,
                 fee_pct=fee_pct,

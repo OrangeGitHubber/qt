@@ -709,6 +709,37 @@ def _mixed_resolution(params: dict) -> bool:
 # bars, comfortably above MACD's slow+signal warm-up.
 WARMUP_DAYS = 150
 
+# Calendar days of history a replay needs BEFORE its window even when no daily
+# indicator is involved — purely so the first bar has a day-gain baseline to
+# measure against. Crypto measures against the close ~24h back (one prior day,
+# plus one so a partial first day can't be the only candidate); stocks measure
+# against the previous SESSION close, which can be four days back over a long
+# weekend. Without this the first day of every window is silently unusable:
+# `_prepare` leaves change_pct None and `_simulate` skips those bars, so a short
+# window evaluates NOTHING and the report blames the strategy's rules.
+BASELINE_WARMUP_DAYS = {"crypto": 2, "stock": 5}
+
+
+def warmup_days_for(params: dict, asset_class: str) -> int:
+    """How much history to fetch before the window, from the strategy's OWN
+    indicator settings rather than one constant for everybody.
+
+    Deliberately delegates to the LIVE engine's `_daily_lookback_days`: the
+    replay is only faithful if its MACD/RSI/ATR see the same span of history the
+    live engine gave them. A 26/9 MACD needs 35 completed bars, a 50-period ATR
+    needs 110 — one flat number is either wasteful for the first or wrong for
+    the second, and 'wrong' means the indicator is undefined for the opening
+    stretch of the window and every entry there is silently dropped.
+    """
+    from qt.services.engine import _daily_lookback_days
+
+    baseline = BASELINE_WARMUP_DAYS.get(asset_class, 5)
+    if not _needs_warmup(params):
+        return baseline
+    atr = params.get("atr") or {}
+    want_atr = float(atr.get("stop_mult", 0) or 0) > 0 or float(atr.get("risk_usd", 0) or 0) > 0
+    return max(baseline, _daily_lookback_days(params, want_atr))
+
 
 def _needs_warmup(params: dict) -> bool:
     """Whether the strategy uses a daily indicator (MACD / RSI / ATR) that needs
@@ -792,12 +823,13 @@ async def run_portfolio(
     # ~35 fewer usable bars once MACD warms up, hence the dead zone. Intraday
     # windows already hold plenty of bars for any indicator (and MACD/RSI are
     # 422-blocked there anyway), so warm-up is a daily-only concern.
-    warmup = (
-        WARMUP_DAYS
-        if (body.timeframe == "1Day" or mixed_portfolio)
-        and any(_needs_warmup(json.loads(s.params)) for s in strategies)
-        else 0
-    )
+    # The deepest requirement across the picked strategies — each read off its
+    # own indicator settings — because one fetch serves all of them. The
+    # per-asset-class baseline is folded in by warmup_days_for, so even an
+    # indicator-free portfolio still gets a day-gain reference.
+    warmup = max(
+        warmup_days_for(json.loads(s.params), s.asset_class) for s in strategies
+    ) if strategies else 0
     start = (window_start - timedelta(days=warmup)).strftime("%Y-%m-%dT%H:%M:%SZ")
     by_class: dict[str, list[str]] = {}
     for s in strategies:
@@ -1036,9 +1068,18 @@ async def replay(
     # trimming the download. Costs a few extra bars; the alternative is a second
     # fetch path and a second thing to get wrong.
     sim_end = body.window_end
-    needs_warmup = _needs_warmup(params)
-    warmup = WARMUP_DAYS if (body.timeframe == "1Day" or mixed) and needs_warmup else 0
-    fetch_start = (window_start - timedelta(days=warmup)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    # Two different warm-ups, because they answer two different questions. The
+    # DAILY series needs enough history for this strategy's own indicators to be
+    # defined (read off its real MACD/ATR settings, not a flat constant). The
+    # replayed series needs only enough to give the first bar a day-gain baseline
+    # — but it needs that ALWAYS, indicators or not, and its absence is what made
+    # a short crypto window evaluate nothing at all.
+    asset_class = strategy_dict["asset_class"]
+    daily_warmup = warmup_days_for(params, asset_class)
+    baseline_warmup = BASELINE_WARMUP_DAYS.get(asset_class, 5)
+    warmup = daily_warmup
+    fetch_start = (window_start - timedelta(days=daily_warmup)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    baseline_start = (window_start - timedelta(days=baseline_warmup)).strftime("%Y-%m-%dT%H:%M:%SZ")
     window_start_str = window_start.strftime("%Y-%m-%dT%H:%M:%SZ")
     # The bar size actually REPLAYED. Mixed resolution always replays 15-minute
     # bars — the finest the free feed gives — whatever the caller asked for.
@@ -1059,11 +1100,16 @@ async def replay(
                 client, symbols, strategy_dict["asset_class"], "1Day", fetch_start
             )
             bars = await barfetch.fetch_bars(
-                client, symbols, strategy_dict["asset_class"], replay_timeframe, window_start_str
+                client, symbols, strategy_dict["asset_class"], replay_timeframe, baseline_start
             )
         else:
+            # 1Day replays reach back over the indicator warm-up; intraday ones
+            # only need the baseline days — 15-minute crypto bars run 96 per
+            # symbol per day, so pulling 120 days of them would be an enormous
+            # download for bars that exist only to be a reference price.
             bars = await barfetch.fetch_bars(
-                client, symbols, strategy_dict["asset_class"], replay_timeframe, fetch_start
+                client, symbols, strategy_dict["asset_class"], replay_timeframe,
+                fetch_start if replay_timeframe == "1Day" else baseline_start,
             )
     except AlpacaError as exc:
         raise HTTPException(status_code=502, detail=f"Bar download failed ({exc.status_code}): {exc}")

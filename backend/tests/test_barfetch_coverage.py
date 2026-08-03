@@ -108,7 +108,11 @@ def test_a_second_backtest_downloads_nothing(client, configured, fresh_cache):
     sid = client.post("/api/strategies", json=_strategy()).json()["id"]
     req = {"strategy_id": sid, "symbols": ["NVDA"], "days": 20,
            "timeframe": "1Day", "starting_cash": 5000, "spread_pct": 0}
-    bars = _daily()
+    # Deeper than the 20-day window: the replay also fetches a few days BEFORE it
+    # so the first bar has a day-gain baseline (see warmup_days_for). Supplying
+    # only the window itself leaves that lead-in uncached, and the second run
+    # would be re-downloading a real gap rather than failing to use the cache.
+    bars = _daily(30)
 
     cold = AsyncMock(return_value={"NVDA": bars, "SPY": bars})
     with patch.object(AlpacaClient, "historical_bars", new=cold):
@@ -127,7 +131,7 @@ def test_the_portfolio_backtest_uses_the_cache_too(client, configured, fresh_cac
     sid = client.post("/api/strategies", json=_strategy()).json()["id"]
     req = {"strategy_ids": [sid], "days": 20, "timeframe": "1Day",
            "starting_cash": 5000, "spread_pct": 0}
-    bars = _daily()
+    bars = _daily(30)  # includes the pre-window baseline days, as above
 
     cold = AsyncMock(return_value={"NVDA": bars, "SPY": bars})
     with patch.object(AlpacaClient, "historical_bars", new=cold):

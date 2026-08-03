@@ -3,6 +3,37 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## The fidelity report was blaming your strategy for its own blind spot (2026-08-02)
+
+A 3.5-hour crypto stretch came back reading "you bought ADA/USD, the replay did
+not — this is the kind that points at a real bug", six times over. It was a real
+bug, but in the comparison, not in the strategy: the replay had not examined a
+single bar. Three faults stacked up.
+
+**It replayed a 3.5-hour window on daily bars.** The bar size was chosen purely
+from which rules a strategy uses, never from how long the window is — and a
+window shorter than a day holds one daily bar or none. Window length is now part
+of that decision. Strategies whose signals are daily (MACD, RSI) are left on
+daily bars deliberately: computing those off 15-minute closes would be a worse
+distortion than the one being fixed.
+
+**Nothing was fetched from before the window.** A day-gain needs something to
+measure against — the previous session's close for a stock, the price 24 hours
+back for crypto. History before the window was only fetched when a strategy used
+MACD, RSI or ATR, so for everyone else the opening stretch had no baseline, and
+bars without one are skipped in silence. Every replay now reaches back far
+enough for its first bar to mean something.
+
+**The warm-up is now read from each strategy's own settings** rather than one
+number for everybody, and it is the same lookback the live engine uses — which
+is the entire point of a fidelity check. A 12/26/9 MACD gets the engine's
+120-day window; a 90-period ATR gets more, because a flat constant would leave
+its stop undefined for the start of the window and quietly drop those entries.
+
+**And when a replay evaluates nothing, it now says so** instead of reporting
+"no bars satisfied all entry conditions" — a sentence that sends you tuning
+rules which were never consulted.
+
 ## Crypto pairs that aren't actually trading are skipped (2026-08-02)
 
 The clue that explained RENDER/USD was hiding in plain sight: its last trade
