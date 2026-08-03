@@ -568,35 +568,44 @@ export default function Optimizer() {
       </div>
 
       <div className="card card-form">
+        {/* One line inline, the lesson behind a fold. Three stacked teaching
+            blocks above the form were the page's tallest column of grey — and a
+            wall of text nobody re-reads after the first visit. */}
         <p className="hint">
-          A <strong>parameter search</strong> — not "AI". It runs the same backtester across many settings so you find
-          configs that actually held up, instead of guessing numbers. Every setting is tried{" "}
-          <strong>relative to what it is now</strong> — a few steps up and down from your own value, each step the same
-          percentage — so the search refines the strategy you have rather than sweeping numbers it invented. Only
-          settings you've switched on are tuned; it won't turn a rule on for you. Every guard here exists to fight{" "}
-          <strong>overfitting</strong> <InfoTip k="overfitting" />:
+          A <strong>parameter search</strong>, not "AI": it re-runs the same backtester across settings near the ones
+          you already have, and reports only how they did on history it never saw. The result is an editable{" "}
+          <strong>disabled draft</strong> to review — a hypothesis, never a verdict. Past results predict nothing.
         </p>
-        <ul className="hint">
-          <li>
-            The search only sees the <strong>first ~70%</strong> of the history (in-sample). Every winner is then re-run
-            on the <strong>final ~30% it never saw</strong> (out-of-sample) — and only that number is treated as real.
-          </li>
-          <li>
-            It always tells you <strong>how many combinations were tested</strong> — a winner out of 12 tries means far
-            less than a winner out of 2,000.
-          </li>
-          <li>
-            It shows the <strong>neighbourhood</strong> around the winner: a good setting sits on a plateau, a lone spike
-            is noise.
-          </li>
-          <li>
-            It compares the winner to simply <strong>buying and holding</strong> the same symbols.
-          </li>
-        </ul>
-        <p className="hint">
-          The result is a <strong>hypothesis</strong>: an editable draft strategy, born <strong>disabled</strong>, that
-          still has to earn its way up shadow → paper. Past results predict nothing.
-        </p>
+        <details className="prose-fold">
+          <summary>How the search works, and the four guards against overfitting</summary>
+          <p className="hint">
+            Every setting is tried <strong>relative to what it is now</strong> — a few steps up and down from your own
+            value, each step the same percentage — so the search refines the strategy you have rather than sweeping
+            numbers it invented. Only settings you've switched on are tuned; it won't turn a rule on for you. Every
+            guard here exists to fight <strong>overfitting</strong> <InfoTip k="overfitting" />:
+          </p>
+          <ul className="hint">
+            <li>
+              The search only sees the <strong>first ~70%</strong> of the history (in-sample). Every winner is then
+              re-run on the <strong>final ~30% it never saw</strong> (out-of-sample) — and only that number is treated
+              as real.
+            </li>
+            <li>
+              It always tells you <strong>how many combinations were tested</strong> — a winner out of 12 tries means
+              far less than a winner out of 2,000.
+            </li>
+            <li>
+              It shows the <strong>neighbourhood</strong> around the winner: a good setting sits on a plateau, a lone
+              spike is noise.
+            </li>
+            <li>
+              It compares the winner to simply <strong>buying and holding</strong> the same symbols.
+            </li>
+          </ul>
+          <p className="hint">
+            The draft is born <strong>disabled</strong> and still has to earn its way up shadow → paper.
+          </p>
+        </details>
 
         <form className="backtest-form" onSubmit={start}>
           <div className="filter-grid">
@@ -986,12 +995,16 @@ export default function Optimizer() {
               Plateau check — is the winner on solid ground?{" "}
               <span className="hint">(scores of the values either side of the winner, in-sample)</span>
             </h3>
-            <p className="hint">
-              For each knob, the bar in the middle-ish is the winning value; the bars around it are the values one step
-              either side. When neighbours score <strong>similarly</strong>, the setting is a dependable plateau. When
-              the winner <strong>towers alone</strong> over bad neighbours, it's likely a fluke that won't repeat — and
-              a bigger step size makes that easier to tell apart, because neighbours are further away.
-            </p>
+            <details className="prose-fold">
+              <summary>How to read these bars</summary>
+              <p className="hint">
+                For each knob, the bar in the middle-ish is the winning value; the bars around it are the values one
+                step either side. When neighbours score <strong>similarly</strong>, the setting is a dependable
+                plateau. When the winner <strong>towers alone</strong> over bad neighbours, it's likely a fluke that
+                won't repeat — and a bigger step size makes that easier to tell apart, because neighbours are further
+                away.
+              </p>
+            </details>
             <div className="plateau-grid">
               {KNOB_ORDER.filter((k) => result.neighbourhood[k]).map((k) => (
                 <Plateau key={k} knob={k} points={result.neighbourhood[k]} />
@@ -1054,16 +1067,23 @@ export default function Optimizer() {
         <h3>
           Basket sweep — which theme would have beaten SPY? <InfoTip k="parameter_search" />
         </h3>
+        {/* The template sizing is run-specific and stays inline; the standing
+            caveats about what the ranking means fold away. */}
         <p className="hint">
-          Runs the <strong>same parameter search across every basket</strong> with one identical momentum template
+          The <strong>same parameter search across every basket</strong>, with one identical momentum template
           {sweepResult
             ? ` ($${sweepResult.template_sizing.sizing_usd.toLocaleString()}/trade, $${sweepResult.template_sizing.sleeve_usd.toLocaleString()} sleeve, max ${sweepResult.template_sizing.max_positions} positions, daily bars)`
             : " ($1,000/trade, $5,000 sleeve, max 5 positions, daily bars)"}
-          , then ranks the winners by their <strong>out-of-sample margin over SPY</strong> — measured only on the slice
-          of history each search never saw. A winner with no out-of-sample trades ranks last as untested. Every row is a{" "}
-          <strong>hypothesis to shadow- and paper-trade</strong>, never a verdict; the numbers come from the backtester,
-          not from anyone's opinion.
+          , ranked by <strong>out-of-sample margin over SPY</strong>.
         </p>
+        <details className="prose-fold">
+          <summary>What that ranking does and doesn't tell you</summary>
+          <p className="hint">
+            The margin is measured only on the slice of history each search never saw. A winner with no out-of-sample
+            trades ranks last as untested. Every row is a <strong>hypothesis to shadow- and paper-trade</strong>, never
+            a verdict; the numbers come from the backtester, not from anyone's opinion.
+          </p>
+        </details>
         <p className="hint warn">
           <IconWarn className="icon-inline" /> <strong>The sweep ranks on daily bars, so its stop values are
           indicative.</strong>{" "}

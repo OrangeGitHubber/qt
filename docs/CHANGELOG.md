@@ -3,6 +3,26 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Explanatory text stops sitting in a narrow column inside a wide card (2026-08-02)
+
+The width rule for prose was measured in `ch` — the width of a "0" — which
+scales with font size, so two paragraphs in the same card ended at two
+different places: 550px for a grey hint, 666px for the verdict line beside it.
+It also only applied to paragraphs sitting *directly* inside a card, so
+anything nested one level deeper ran the full window width next to a capped
+neighbour. Three different right edges in one card.
+
+Prose now uses one fixed measure everywhere inside a card, so every paragraph,
+list and verdict lines up on the same edge. Tables, charts and stat rows are
+untouched and still use the full width — that is what the wide layout is for.
+
+The longer teaching passages on the Optimizer — how the search works, how to
+read the plateau bars, what the basket ranking does and doesn't tell you — moved
+behind one-line "how this works" toggles, so the page leads with your results
+instead of three paragraphs of explanation. Warnings, and anything describing
+what a particular run actually did, stay visible and cannot be collapsed: a
+caveat you have to click to discover is not a caveat.
+
 ## Clone a strategy, and see where each one came from (2026-08-02)
 
 **Clone.** Every strategy row has a Clone button. It makes an exact copy under

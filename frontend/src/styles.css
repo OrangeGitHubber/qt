@@ -1137,24 +1137,76 @@ form.card.editor {
   max-width: 62rem;
 }
 
-/* Prose inside a RESULT card.
+/* THE PROSE MEASURE — one width, one right edge, everywhere inside a card.
  *
  * Output cards deliberately keep the shell's full width (see above) so tables,
- * charts and stat rows can use it. That is right for those, and wrong for the
+ * charts and stat rows can use it. That is right for those and wrong for the
  * sentences between them: at 1600px a paragraph runs past 200 characters a
- * line, and the eye loses its place tracking back to the next one. The fix is
- * to cap the MEASURE, not the card — the table beside it keeps every pixel.
+ * line and the eye loses its place tracking back to the next one. So prose in
+ * a full-width card gets a measure. The question is only which one, and the
+ * previous answer — `75ch` on direct children — was wrong twice over.
  *
- * Direct children only, so a <p> nested inside a grid cell or a legend keeps
- * whatever width its own layout gives it.
+ * `ch` is the width of the "0" glyph, so it scales with font-size. The SAME
+ * 75ch rendered a 0.85rem `.hint` at 550px and a bold 1rem `.verdict` at 666px:
+ * two paragraphs stacked in one card, ending on two different pixels. Character
+ * parity is what `ch` buys and edge alignment is what a stacked layout needs,
+ * and it bought the wrong one.
  *
- * 75ch, measured rather than assumed: `ch` is the width of the "0" glyph, which
- * in this proportional font is narrower than the average character, so 75ch
- * renders as ~88 actual characters — the top of the comfortable band. (The
- * uncapped paragraphs measured 212.) */
-.card > p,
-.card > .verdicts > p {
-  max-width: 75ch;
+ * Direct children only meant every <p class="hint"> nested one level deeper —
+ * inside the <form>, inside a <details>, inside a .verdicts wrapper — escaped
+ * the rule entirely and ran the full 1526px right beside a capped sibling.
+ *
+ * Hence: a fixed rem measure, on block-level prose, wherever it sits.
+ *
+ * 36rem = 576px. At 0.85rem (.hint) that is ~92 characters and at 1rem bold
+ * (.verdict) ~77 — both inside the comfortable band, both ending on the same
+ * pixel, which is the part you can actually see. It is also within 26px of what
+ * `.hint` already rendered at, so the pages that were already capped do not move.
+ *
+ * BLOCK-LEVEL ONLY, deliberately: `.hint` is also worn by <span> (chart
+ * readouts, picker rows) and by <td> (the Optimizer sweep table). max-width does
+ * nothing to an inline box but WOULD lean on table column sizing, so the
+ * selectors name the elements rather than trusting the class.
+ *
+ * A descendant selector is safe against narrow containers, because a cap only
+ * bites when the container is wider than it: prose in a grid cell or a form
+ * field keeps whatever width its own layout gives it, exactly as before.
+ *
+ * The measure is half the answer. A capped paragraph alone in a 1526px card is
+ * a grey ribbon with framed emptiness beside it — the failure mode named in the
+ * comment above. The measure keeps lines readable; `.prose-fold` stops the long
+ * teaching prose from forming a tall column for it to be narrow about. */
+.card p.hint,
+.card ul.hint,
+.card ol.hint,
+.card p.verdict,
+.card > p {
+  max-width: 36rem;
+}
+
+/* Long teaching prose, folded away — the same job `.cache-help` does in
+ * Settings. A card should lead with what happened; the paragraph explaining why
+ * it matters belongs one click below, not stacked three deep above the numbers.
+ * Collapsed, it is a single accent-coloured line, so there is no tower for the
+ * measure above to leave emptiness beside.
+ *
+ * Reserved for prose that TEACHES A CONCEPT. Anything reporting what this
+ * particular run did, and every warning, stays inline and unfoldable — a caveat
+ * you have to click to discover is not a caveat. */
+.prose-fold {
+  margin: 0 0 0.75rem;
+}
+.prose-fold > summary {
+  cursor: pointer;
+  color: var(--accent);
+  font-weight: 600;
+  font-size: 0.85rem;
+}
+.prose-fold > summary:hover {
+  text-decoration: underline;
+}
+.prose-fold > :not(summary) {
+  margin-top: 0.6rem;
 }
 
 /* Short teaching intro at the top of a page. */
