@@ -1,4 +1,5 @@
 import { useMemo, useRef, useState } from "react";
+import { fmtDate, fmtDateMed } from "../lib/datetime";
 import type { MacdSeries, Num } from "../lib/indicators";
 
 export interface PricePoint {
@@ -226,9 +227,7 @@ export default function PriceChart({
         </div>
         <div className="cr-meta">
           <span className="cr-date-slot">
-            {hp
-              ? new Date(hp.t).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" })
-              : "—"}
+            {hp ? fmtDateMed(hp.t) : "—"}
           </span>
           <span className={`cr-change ${hp ? (Number(hoverChange) >= 0 ? "up" : "down") : ""}`}>
             {hp ? `${Number(hoverChange) >= 0 ? "+" : ""}${hoverChange}% from start of window` : "—"}
@@ -492,9 +491,9 @@ export default function PriceChart({
         )}
 
         {/* ---- x-axis date labels at the very bottom (reflect the visible window) ---- */}
-        <text x={padL} y={totalH - 8} className="chart-label">{new Date(points[viewStart].t).toLocaleDateString()}</text>
+        <text x={padL} y={totalH - 8} className="chart-label">{fmtDate(points[viewStart].t)}</text>
         <text x={W - padR} y={totalH - 8} textAnchor="end" className="chart-label">
-          {new Date(points[viewEnd].t).toLocaleDateString()}
+          {fmtDate(points[viewEnd].t)}
         </text>
       </svg>
     </div>

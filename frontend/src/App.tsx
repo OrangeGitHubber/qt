@@ -13,6 +13,7 @@ import Setup from "./pages/Setup";
 import Strategies from "./pages/Strategies";
 import Watchlist from "./pages/Watchlist";
 import { IconWarn } from "./components/icons";
+import { setDisplayZone, useDisplayZone } from "./lib/datetime";
 import { onNav } from "./lib/nav";
 
 type Tab =
@@ -46,10 +47,16 @@ export default function App() {
     getStatus()
       .then((s) => {
         setStatus(s);
+        setDisplayZone(s.display_timezone);
         setLoadError(null);
       })
       .catch((e: Error) => setLoadError(e.message));
   }, []);
+
+  // Subscribing to the display zone HERE, at the root, is what makes saving it
+  // in Settings redraw every timestamp on every page at once — the formatters
+  // themselves read a module-level value, so nothing below needs to know.
+  useDisplayZone();
 
   const signedIn = !!auth?.email;
 

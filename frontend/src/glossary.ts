@@ -127,6 +127,12 @@ export const GLOSSARY: Record<string, GlossaryEntry> = {
       "A ceiling on how far a stock can already be up before the bot will buy it. Momentum buys strength, but a stock already up 20%+ is often near exhaustion — buying it means chasing a blow-off top that's prone to reverse. Set e.g. 10 to skip anything already up more than 10% today. 0 turns the ceiling off (no limit).",
     url: "https://www.investopedia.com/terms/b/blowofftop.asp",
   },
+  display_timezone: {
+    term: "Display timezone",
+    explain:
+      "Which clock QT writes its times on. Every timestamp is stored in UTC and stays that way — this only changes how those moments are shown, so switching it can never alter a trade, a backtest or a stored record. The default is New York (ET) because that is the clock the US market keeps: 09:30 ET is the open wherever you happen to be sitting. Pick a zone by NAME rather than an offset and daylight saving takes care of itself.",
+    url: "https://en.wikipedia.org/wiki/Tz_database",
+  },
   regime_filter: {
     term: "Regime filter",
     explain:

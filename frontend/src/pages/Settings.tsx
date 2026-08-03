@@ -21,6 +21,7 @@ import {
   runIntradaySweep,
   runCryptoSweep,
   runCryptoIntradaySweep,
+  setDisplayTimezone,
   setRegimeEnabled,
   setRisk,
   setSlack,
@@ -32,6 +33,74 @@ import {
 import InfoTip from "../components/InfoTip";
 import NumberField from "../components/NumberField";
 import { IconWarn } from "../components/icons";
+import { browserZone, fmtDateTime, setDisplayZone, useDisplayZone, ZONE_CHOICES, zoneAbbr } from "../lib/datetime";
+
+// Which clock every timestamp in the app is drawn on. Display only — the
+// database is UTC and stays UTC — but it is the difference between "the replay
+// sold three hours later" being a bug report and being an artefact of reading a
+// New York market on a Johannesburg clock. Saved server-side, so it holds
+// across a container restart and reads the same on a phone as on the desktop.
+function DisplayZoneCard({ onError }: { onError: (msg: string) => void }) {
+  const zone = useDisplayZone();
+  const [busy, setBusy] = useState(false);
+  // Extra rows below the fixed list: the browser's own zone, and — if the saved
+  // setting is some other IANA name (the API accepts any valid one) — that too,
+  // so the select never renders blank against a value it has no option for.
+  const known = new Set(ZONE_CHOICES.map((c) => c.zone));
+  const mine = browserZone();
+  const extras: { zone: string; label: string }[] = [];
+  if (!known.has(mine)) extras.push({ zone: mine, label: `${mine} — this browser's zone` });
+  if (!known.has(zone) && zone !== mine) extras.push({ zone, label: zone });
+
+  async function save(next: string) {
+    const previous = zone;
+    setDisplayZone(next); // optimistic: the sample below updates as you pick
+    setBusy(true);
+    try {
+      await setDisplayTimezone(next);
+    } catch (err) {
+      setDisplayZone(previous);
+      onError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <details className="card fold">
+      <summary>
+        <div className="cache-head">
+          <h3>Display</h3>
+          <span className="pill muted">{zoneAbbr()}</span>
+        </div>
+      </summary>
+      <p className="hint">
+        The clock QT shows you. Everything is <strong>stored</strong> in UTC and nothing here changes that — this
+        only decides how those moments are written out. It defaults to New York because that is the market's own
+        clock: an entry at 09:45 ET means something, and the same instant as 15:45 at home does not.
+      </p>
+      <label>
+        Timezone <InfoTip k="display_timezone" />
+        <select value={zone} disabled={busy} onChange={(e) => save(e.target.value)}>
+          {ZONE_CHOICES.map((c) => (
+            <option key={c.zone} value={c.zone}>
+              {c.label}
+            </option>
+          ))}
+          {extras.map((c) => (
+            <option key={c.zone} value={c.zone}>
+              {c.label}
+            </option>
+          ))}
+        </select>
+      </label>
+      <p className="hint">
+        Right now that reads <strong>{fmtDateTime(new Date().toISOString())}</strong> ({zoneAbbr()}). Daylight saving
+        is handled by the zone itself, so a summer trade and a winter one both come out right.
+      </p>
+    </details>
+  );
+}
 
 // One asset class's cache totals, rendered identically for stocks and crypto so
 // the two columns line up row-for-row. `stats` is null until that class has been
@@ -380,6 +449,8 @@ export default function Settings() {
         </details>
       </details>
 
+      <DisplayZoneCard onError={setNote} />
+
       <details className="card fold">
         <summary>
           <h3>Risk rails (apply to every strategy, every mode)</h3>
@@ -481,7 +552,7 @@ export default function Settings() {
               {assetStatus.stale && <span className="pill warn">needs sync</span>}
             </dd>
             <dt>Updated</dt>
-            <dd>{assetStatus.updated_at ? new Date(assetStatus.updated_at).toLocaleString() : "never"}</dd>
+            <dd>{assetStatus.updated_at ? fmtDateTime(assetStatus.updated_at) : "never"}</dd>
           </dl>
         )}
         <button

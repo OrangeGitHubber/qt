@@ -8,6 +8,12 @@ from qt.models import Setting
 DEFAULTS: dict[str, Any] = {
     "trading_mode": "paper",  # paper | live_approval | live_auto (ladder enforced later)
     "app_name": "QT Auto-Trader",
+    # Display only — every stored timestamp is and stays UTC. This is the wall
+    # clock the UI renders them on, and it defaults to the market's own zone
+    # because the times worth comparing (an entry, a close, an edit) are market
+    # times. Server-side rather than per-browser so it survives a restart and
+    # reads the same from every device.
+    "display_timezone": "America/New_York",
 }
 
 

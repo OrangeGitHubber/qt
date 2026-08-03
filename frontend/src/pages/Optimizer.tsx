@@ -20,6 +20,7 @@ import NumberField from "../components/NumberField";
 import { IconWarn } from "../components/icons";
 import RunStatus from "../components/RunStatus";
 import UniverseChips, { resolveUniverse } from "../components/UniverseChips";
+import { fmtIsoDate } from "../lib/datetime";
 import { consumeNav } from "../lib/nav";
 
 // Human labels for the four searched knobs (keys match the backend PARAM_SPACE).
@@ -828,10 +829,10 @@ export default function Optimizer() {
             )}
             <p className="hint">
               <strong>Out-of-sample is the real result.</strong> The search optimized on{" "}
-              {result.in_sample_window.days} days ({result.in_sample_window.start.slice(0, 10)} →{" "}
-              {result.in_sample_window.end.slice(0, 10)}) and this headline is measured on the{" "}
+              {result.in_sample_window.days} days ({fmtIsoDate(result.in_sample_window.start)} →{" "}
+              {fmtIsoDate(result.in_sample_window.end)}) and this headline is measured on the{" "}
               {result.out_of_sample_window.days} days <em>after</em> that, which the search never saw (
-              {result.out_of_sample_window.start.slice(0, 10)} → {result.out_of_sample_window.end.slice(0, 10)}). A
+              {fmtIsoDate(result.out_of_sample_window.start)} → {fmtIsoDate(result.out_of_sample_window.end)}). A
               backtest can only kill bad ideas cheaply, never prove good ones.
             </p>
 

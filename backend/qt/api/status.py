@@ -25,6 +25,10 @@ async def status(
     result: dict = {
         "version": __version__,
         "trading_mode": get_setting(session, "trading_mode"),
+        # Ride along on status rather than needing its own fetch: the shell
+        # already blocks its first render on this call, so the zone is known
+        # before any timestamp is drawn and nothing ever renders twice.
+        "display_timezone": get_setting(session, "display_timezone"),
         "alpaca_configured": False,
         "leverage_unlockable": leverage_unlockable(),
         "data_persistent": boot.get("data_persistent"),

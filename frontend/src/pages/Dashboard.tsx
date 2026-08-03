@@ -15,6 +15,7 @@ import {
   StrategyPnl,
   StrategyPnlDaily,
 } from "../api";
+import { fmtDateTime, instantMs, zoneAbbr } from "../lib/datetime";
 import { requestNav } from "../lib/nav";
 import AccountSelect from "../components/AccountSelect";
 import ColumnPicker, { useColumnPrefs } from "../components/ColumnPicker";
@@ -40,14 +41,12 @@ function money(v: string | undefined, currency = "USD") {
   return new Intl.NumberFormat("en-US", { style: "currency", currency }).format(Number(v));
 }
 
-function when(iso: string | undefined) {
-  if (!iso) return "—";
-  return new Date(iso).toLocaleString();
-}
-
 function heartbeat(iso: string | null): { label: string; stale: boolean } {
   if (!iso) return { label: "no tick yet", stale: true };
-  const ageMs = Date.now() - new Date(iso).getTime();
+  // An AGE, so the display zone is irrelevant — but the parse is not: the
+  // heartbeat comes back without a UTC marker, and read as local time it would
+  // report a live engine as hours stale (or eternally "just now").
+  const ageMs = Date.now() - instantMs(iso);
   const mins = Math.floor(ageMs / 60000);
   const label = mins < 1 ? "just now" : mins === 1 ? "1 min ago" : `${mins} min ago`;
   return { label, stale: ageMs > 5 * 60_000 };
@@ -94,7 +93,7 @@ export default function Dashboard({ status }: { status: StatusResponse; onRefres
                 <span className={`pill ${market.is_open ? "ok" : "muted"}`}>{market.is_open ? "OPEN" : "CLOSED"}</span>
               </dd>
               <dt>{market.is_open ? "Closes" : "Next open"}</dt>
-              <dd>{when(market.is_open ? market.next_close : market.next_open)}</dd>
+              <dd>{fmtDateTime(market.is_open ? market.next_close : market.next_open)}</dd>
               <dt>Crypto market</dt>
               <dd>
                 <span className="pill ok">OPEN 24/7</span>
@@ -478,7 +477,7 @@ function OpenPositionsCard() {
                 {cols.has("cost") && <th>Cost</th>}
                 {cols.has("value") && <th>Value</th>}
                 <th>Unrealized</th>
-                {cols.has("held") && <th>Held since</th>}
+                {cols.has("held") && <th>Held since ({zoneAbbr()})</th>}
                 <th></th>
               </tr>
             </thead>
@@ -505,7 +504,7 @@ function OpenPositionsCard() {
                       : "—"}
                   </td>
                   {cols.has("held") && (
-                    <td className="hint">{p.entry_at ? new Date(p.entry_at).toLocaleString() : "—"}</td>
+                    <td className="hint">{fmtDateTime(p.entry_at)}</td>
                   )}
                   <td>
                     <button

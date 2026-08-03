@@ -17,6 +17,10 @@ export interface MarketInfo {
 export interface StatusResponse {
   version: string;
   trading_mode: string;
+  /** IANA zone the UI renders every stored timestamp in. Storage stays UTC —
+   *  see src/lib/datetime.ts. Carried on status so the shell knows it before
+   *  the first date is drawn. */
+  display_timezone: string;
   alpaca_configured: boolean;
   data_persistent: boolean | null;
   data_persistent_reason: string;
@@ -364,6 +368,13 @@ export const setRegimeEnabled = (enabled: boolean) =>
 export const setSlack = (url: string) =>
   fetch("/api/engine/slack", { ...json({ url }), method: "PUT" }).then((r) => handle(r));
 export const testSlack = () => fetch("/api/engine/slack/test", { method: "POST" }).then((r) => handle(r));
+
+/** Display timezone. A presentation setting stored server-side (not in the
+ *  browser) so it survives a container restart and reads the same everywhere. */
+export const setDisplayTimezone = (tz: string) =>
+  fetch("/api/settings/display", { ...json({ display_timezone: tz }), method: "PUT" }).then((r) =>
+    handle<{ display_timezone: string }>(r),
+  );
 
 export interface SlackPrefCategory {
   key: string;

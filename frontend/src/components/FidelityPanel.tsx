@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { FidelityReport, getStrategies, runFidelity, StrategyRow } from "../api";
 import InfoTip from "../components/InfoTip";
 import { IconWarn } from "../components/icons";
+import { fmtHm, fmtIsoDate, zoneAbbr } from "../lib/datetime";
 
 /** Does the backtester actually reproduce what really happened?
  *
@@ -117,7 +118,7 @@ export default function FidelityPanel() {
 
       {window && (
         <p className="hint">
-          Comparing <strong>{window.start.slice(0, 10)}</strong> to <strong>{window.end.slice(0, 10)}</strong> — a
+          Comparing <strong>{fmtIsoDate(window.start)}</strong> to <strong>{fmtIsoDate(window.end)}</strong> — a
           stretch with no edits in it.{" "}
           <button type="button" className="btn-ghost" onClick={() => setWindow(null)}>
             Use the whole period instead
@@ -260,8 +261,8 @@ export default function FidelityPanel() {
           {report.config?.stable_window && (
             <p className="hint">
               <strong>
-                The longest stretch you didn't edit runs {report.config.stable_window.start.slice(0, 10)} to{" "}
-                {report.config.stable_window.end.slice(0, 10)} ({report.config.stable_window.days} days,{" "}
+                The longest stretch you didn't edit runs {fmtIsoDate(report.config.stable_window.start)} to{" "}
+                {fmtIsoDate(report.config.stable_window.end)} ({report.config.stable_window.days} days,{" "}
                 {report.config.stable_window.live_trades} trades).
               </strong>{" "}
               Comparing that measures the backtester; comparing a window you edited repeatedly mostly measures the
@@ -293,7 +294,7 @@ export default function FidelityPanel() {
                 <table>
                   <thead>
                     <tr>
-                      <th>When</th>
+                      <th>When ({zoneAbbr()})</th>
                       <th>What changed</th>
                       <th>Trades after it</th>
                     </tr>
@@ -301,7 +302,7 @@ export default function FidelityPanel() {
                   <tbody>
                     {report.config!.changes!.map((c) => (
                       <tr key={c.at}>
-                        <td>{c.at.slice(0, 10)}</td>
+                        <td>{fmtIsoDate(c.at)}</td>
                         <td className="hint">
                           {c.changed.length
                             ? c.changed
@@ -321,11 +322,11 @@ export default function FidelityPanel() {
           {report.window?.clamped_to_first_trade && (
             <p className="hint">
               <strong>
-                Compared {report.window.start.slice(0, 10)} to {report.window.end.slice(0, 10)} ({report.window.days}{" "}
+                Compared {fmtIsoDate(report.window.start)} to {fmtIsoDate(report.window.end)} ({report.window.days}{" "}
                 days).
               </strong>{" "}
               That is this strategy's whole {report.mode} life — its first activity was{" "}
-              {report.window.first_trade_at?.slice(0, 10)}. Anything earlier would be replaying a period it didn't
+              {fmtIsoDate(report.window.first_trade_at)}. Anything earlier would be replaying a period it didn't
               exist in.
             </p>
           )}
@@ -422,7 +423,7 @@ export default function FidelityPanel() {
           {report.quiet && (
             <p className="hint">
               <strong>Nothing traded on either side.</strong> The strategy has been live
-              {report.activated_at ? ` since ${report.activated_at.slice(0, 10)} ${report.activated_at.slice(11, 16)}` : ""},
+              {report.activated_at ? ` since ${fmtIsoDate(report.activated_at)} ${fmtHm(report.activated_at)}` : ""},
               and neither it nor the replay of it took a trade in that time. That is an agreement, not a
               failure — the two are behaving identically. Give it longer, or loosen the entry rules if you
               expected activity by now.
@@ -435,13 +436,15 @@ export default function FidelityPanel() {
               <p className="hint">
                 Every buy, every sell, and every edit in between — at the moment each happened, not grouped by day.
                 This is the part that names a bug: "the replay sold three hours later" is something to go and fix,
-                where a percentage is not. An edit in the middle explains the rows after it.
+                where a percentage is not. An edit in the middle explains the rows after it. Times are shown in{" "}
+                <strong>{zoneAbbr()}</strong> — the whole point of the column is comparing when things happened, so
+                which clock it is has to be on the page. Change it under Settings → Display.
               </p>
               <div className="table-scroll">
                 <table>
                   <thead>
                     <tr>
-                      <th>When</th>
+                      <th>When ({zoneAbbr()})</th>
                       <th>Symbol</th>
                       <th>What</th>
                       <th>Verdict</th>
@@ -454,9 +457,12 @@ export default function FidelityPanel() {
                         key={`${r.at ?? r.day}-${r.symbol}-${i}`}
                         className={r.kind === "edit" || r.kind === "activated" ? "cmp-win" : ""}
                       >
+                        {/* `at` is an instant and moves with the display zone;
+                            `day` is already a bucketed calendar day and must
+                            not be converted, so it is printed as it came. */}
                         <td className="tabular">
-                          {r.at ? r.at.slice(0, 10) : r.day}
-                          {r.at && r.at.includes("T") ? <span className="hint"> {r.at.slice(11, 16)}</span> : null}
+                          {r.at ? fmtIsoDate(r.at) : r.day}
+                          {r.at && r.at.includes("T") ? <span className="hint"> {fmtHm(r.at)}</span> : null}
                         </td>
                         <td>{r.symbol || "—"}</td>
                         <td>{r.action}</td>

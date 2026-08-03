@@ -32,6 +32,7 @@ import {
   IconStock,
   IconWarn,
 } from "../components/icons";
+import { fmtClock, fmtDateTime, zoneAbbr } from "../lib/datetime";
 import { consumeNav, requestNav } from "../lib/nav";
 
 const RANK_LABELS: Record<RankBy, string> = {
@@ -213,7 +214,9 @@ function AsOf({ at, loading }: { at: Date | null; loading: boolean }) {
   if (!at) return null;
   return (
     <span className="hint as-of">
-      as of {at.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
+      {/* `at` is a local clock reading, but it is read next to server times in
+          the panel beside it, so it has to be on the same clock as those. */}
+      as of {fmtClock(at)} {zoneAbbr(at)}
     </span>
   );
 }
@@ -301,7 +304,7 @@ function LastRunView({ strategyId }: { strategyId: number }) {
       {data && data.ran && (
         <>
           <p className="hint">
-            Ran <strong>{data.ran_at ? new Date(data.ran_at).toLocaleString() : "—"}</strong>
+            Ran <strong>{fmtDateTime(data.ran_at)}</strong>
             {data.universe ? <> · looks in: {data.universe}</> : null}
           </p>
           <p className="hint">

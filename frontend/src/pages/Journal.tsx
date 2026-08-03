@@ -2,14 +2,11 @@ import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { FeeSummary, getFeeSummary, getJournal, JournalRow , JOURNAL_LIMIT } from "../api";
 import ColumnPicker, { useColumnPrefs } from "../components/ColumnPicker";
 import AccountSelect from "../components/AccountSelect";
+import { fmtDateTime as when, instantMs, zoneAbbr } from "../lib/datetime";
 
 function money(v: number | null) {
   if (v === null || v === undefined) return "—";
   return `$${v.toLocaleString(undefined, { maximumFractionDigits: 4 })}`;
-}
-
-function when(iso: string | null) {
-  return iso ? new Date(iso).toLocaleString() : "—";
 }
 
 // One position (a Trade) becomes up to two rows: a Bought and, once it exits, a
@@ -86,7 +83,7 @@ export default function Journal() {
         }
       }
     }
-    out.sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime());
+    out.sort((a, b) => instantMs(b.at) - instantMs(a.at));
     return out;
   }, [rows]);
 
@@ -139,7 +136,7 @@ export default function Journal() {
           <table>
             <thead>
               <tr>
-                <th>Time</th>
+                <th>Time ({zoneAbbr()})</th>
                 <th></th>
                 {cols.has("mode") && <th>Mode</th>}
                 {cols.has("strategy") && <th>Strategy</th>}

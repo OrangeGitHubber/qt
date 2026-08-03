@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { parseInstant } from "../lib/datetime";
 
 /** "Still working" line for anything long-running: a spinner, the phase the
  *  server reports, an optional percentage, and a clock.
@@ -40,7 +41,10 @@ export default function RunStatus({
 
   if (!running) return null;
 
-  const parsed = startedAt ? Date.parse(startedAt) : NaN;
+  // Via the shared parser, not Date.parse: an unstamped server timestamp read
+  // as local time puts the start in the future east of Greenwich, and the clamp
+  // below then pins this clock at "0s" for the whole run.
+  const parsed = parseInstant(startedAt)?.getTime() ?? NaN;
   const startMs = Number.isNaN(parsed) ? (localStart.current ?? now) : parsed;
   const secs = Math.max(0, Math.round((now - startMs) / 1000));
   const since = secs >= 60 ? `${Math.floor(secs / 60)}m ${secs % 60}s` : `${secs}s`;

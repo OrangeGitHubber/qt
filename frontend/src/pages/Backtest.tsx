@@ -17,6 +17,7 @@ import NumberField from "../components/NumberField";
 import RunStatus from "../components/RunStatus";
 import UniverseChips, { resolveUniverse } from "../components/UniverseChips";
 import { IconEdit, IconWarn } from "../components/icons";
+import { calendarDayMs, fmtCalendarDate, fmtDate, instantMs, zoneAbbr } from "../lib/datetime";
 import { consumeNav, requestNav } from "../lib/nav";
 
 type TradeEvent = {
@@ -293,7 +294,7 @@ export default function Backtest() {
     };
     push(result, compareResult ? aName : undefined, SERIES_A_COLOR);
     if (compareResult) push(compareResult, bName, SERIES_B_COLOR);
-    rows.sort((a, b) => new Date(a.at).getTime() - new Date(b.at).getTime());
+    rows.sort((a, b) => instantMs(a.at) - instantMs(b.at));
     return rows;
   }, [result, compareResult, zoomRange, strategies, strategyId, compareId]);
 
@@ -347,7 +348,7 @@ export default function Backtest() {
         reason: `${p.entry_reason} — still open at test end`,
       });
     }
-    out.sort((a, b) => new Date(a.at).getTime() - new Date(b.at).getTime());
+    out.sort((a, b) => instantMs(a.at) - instantMs(b.at));
     return out;
   }, [result]);
 
@@ -364,9 +365,9 @@ export default function Backtest() {
     const rows: (
       | { kind: "trade"; sortAt: number; ev: TradeEvent }
       | { kind: "gap"; sortAt: number; span: NonNullable<BacktestResult["no_trade_spans"]>[number] }
-    )[] = events.map((ev) => ({ kind: "trade", sortAt: new Date(ev.at).getTime(), ev }));
+    )[] = events.map((ev) => ({ kind: "trade", sortAt: instantMs(ev.at), ev }));
     for (const span of result.no_trade_spans ?? []) {
-      rows.push({ kind: "gap", sortAt: new Date(`${span.from_day}T00:00:00`).getTime(), span });
+      rows.push({ kind: "gap", sortAt: calendarDayMs(span.from_day), span });
     }
     rows.sort((a, b) => a.sortAt - b.sortAt);
     return rows;
@@ -507,7 +508,7 @@ export default function Backtest() {
         reason: `${p.entry_reason} — still open at test end`, strategy: p.strategy_name ?? "",
       });
     }
-    out.sort((a, b) => new Date(a.at).getTime() - new Date(b.at).getTime());
+    out.sort((a, b) => instantMs(a.at) - instantMs(b.at));
     return out;
   }, [portfolioResult]);
 
@@ -821,7 +822,7 @@ export default function Backtest() {
                             <td className={p.unrealized_pnl >= 0 ? "up" : "down"}>
                               {p.unrealized_pnl >= 0 ? "+" : ""}${p.unrealized_pnl.toFixed(2)}
                             </td>
-                            <td>{new Date(`${p.entry_day}T00:00:00`).toLocaleDateString()}</td>
+                            <td>{fmtCalendarDate(p.entry_day)}</td>
                           </tr>
                         ))}
                       </tbody>
@@ -841,7 +842,7 @@ export default function Backtest() {
                   <table className="log-table">
                     <thead>
                       <tr>
-                        <th>Date</th>
+                        <th>Date ({zoneAbbr()})</th>
                         <th>Strategy</th>
                         <th>Action</th>
                         <th>Symbol</th>
@@ -853,7 +854,7 @@ export default function Backtest() {
                     <tbody>
                       {portfolioEvents.map((ev, i) => (
                         <tr key={i}>
-                          <td>{new Date(ev.at).toLocaleDateString()}</td>
+                          <td>{fmtDate(ev.at)}</td>
                           <td className="hint">{ev.strategy}</td>
                           <td className={actionTone(ev.action, ev.pnl)}>
                             {ev.action}
@@ -1469,7 +1470,7 @@ export default function Backtest() {
                             <td className={p.unrealized_pnl >= 0 ? "up" : "down"}>
                               {p.unrealized_pnl >= 0 ? "+" : ""}${p.unrealized_pnl.toFixed(2)}
                             </td>
-                            <td>{new Date(`${p.entry_day}T00:00:00`).toLocaleDateString()}</td>
+                            <td>{fmtCalendarDate(p.entry_day)}</td>
                           </tr>
                         ))}
                       </tbody>
@@ -1497,7 +1498,7 @@ export default function Backtest() {
                     <table className="log-table">
                       <thead>
                         <tr>
-                          <th>Date</th>
+                          <th>Date ({zoneAbbr()})</th>
                           {compareResult && <th>Strategy</th>}
                           <th>Action</th>
                           <th>Symbol</th>
@@ -1509,7 +1510,7 @@ export default function Backtest() {
                       <tbody>
                         {zoomEvents.map((ev, i) => (
                           <tr key={i}>
-                            <td>{new Date(ev.at).toLocaleDateString()}</td>
+                            <td>{fmtDate(ev.at)}</td>
                             {compareResult && (
                               <td style={{ color: ev.strategyColor, fontWeight: 600 }}>{ev.strategy}</td>
                             )}
@@ -1548,7 +1549,7 @@ export default function Backtest() {
             <table className="log-table">
               <thead>
                 <tr>
-                  <th>Date</th>
+                  <th>Date ({zoneAbbr()})</th>
                   <th>Action</th>
                   <th>Symbol</th>
                   <th>Price</th>
@@ -1560,7 +1561,7 @@ export default function Backtest() {
                 {logRows.map((r, i) =>
                   r.kind === "trade" ? (
                     <tr key={i}>
-                      <td>{new Date(r.ev.at).toLocaleDateString()}</td>
+                      <td>{fmtDate(r.ev.at)}</td>
                       <td className={actionTone(r.ev.action, r.ev.pnl)}>
                         {r.ev.action}
                       </td>
@@ -1580,10 +1581,8 @@ export default function Backtest() {
                           Date column for every other row — let this one wrap. */}
                       <td className="wrap">
                         {r.span.from_day === r.span.to_day
-                          ? new Date(`${r.span.from_day}T00:00:00`).toLocaleDateString()
-                          : `${new Date(`${r.span.from_day}T00:00:00`).toLocaleDateString()} – ${new Date(
-                              `${r.span.to_day}T00:00:00`,
-                            ).toLocaleDateString()}`}
+                          ? fmtCalendarDate(r.span.from_day)
+                          : `${fmtCalendarDate(r.span.from_day)} – ${fmtCalendarDate(r.span.to_day)}`}
                       </td>
                       <td colSpan={4} className="hint">
                         no entries · {r.span.days} day{r.span.days === 1 ? "" : "s"}

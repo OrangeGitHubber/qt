@@ -3,6 +3,27 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Times are shown in a timezone you choose — ET by default (2026-08-02)
+
+Timestamps were being displayed wrong, and the cause was not the formatting: the
+API emits UTC, but most endpoints stamped it *without an offset*. A browser reads
+an offset-less timestamp as **local** time, so UTC wall-clock values were shown
+wearing a local label — every one of them off by your distance from Greenwich.
+
+**Settings → Display** now sets the zone every time in the app is rendered in,
+defaulting to **America/New_York** because that is the market's zone. Storage is
+untouched: the database and the API stay UTC, and this is purely how it is drawn.
+Columns whose whole point is *when* something happened now name the zone in their
+header, so a time in a comparison table can't be misread.
+
+It also fixed a bug nobody had reported: the run-status elapsed clock parsed one
+of those unstamped timestamps, so east of Greenwich the start time landed in the
+future and the clock sat at "0s" for entire runs.
+
+Calendar days — a trading day like `2026-08-03` — are deliberately NOT converted.
+They are already resolved to the market's day, and pushing them through a zone
+would shift them by one.
+
 ## The Strategies page is a list you can read again (2026-08-02)
 
 Twenty-three strategies in a card grid meant five columns of ~270px, and at that
