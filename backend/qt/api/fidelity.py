@@ -846,6 +846,27 @@ async def compare(
     if clamped:
         since = began.replace(hour=0, minute=0, second=0, microsecond=0)
     replay_from = max(since, _bar_floor(began, _timeframe_for(json.loads(strategy.params)))) if began else since
+
+    # THE ENGINE COULD NOT ACT BEFORE IT WAS SWITCHED ON. Until now go-live was
+    # only ever displayed, never enforced: the window opened at the first trade's
+    # midnight and the replay was held back only to that trade's bar, so a
+    # strategy enabled at 23:18 that first traded after midnight handed the
+    # backtest the whole preceding evening. It bought there — correctly, by its
+    # own rules — and every one of those buys was reported as a trade it
+    # invented, which is a verdict about a period the engine did not exist in.
+    #
+    # Applied whenever go-live is known, including when activity predates it.
+    # enabled_at records the LATEST switch-on, so earlier activity belongs to an
+    # earlier live period that was paused — a different run of the strategy, and
+    # not what "how is it doing since I turned it on" is asking about. Judging
+    # this run against trades from that one is how a paused-and-resumed strategy
+    # ends up compared over hours its current configuration never traded.
+    if switched_on and switched_on < until:
+        since = max(since, switched_on)
+        # replay_from needs no clamp of its own: it is max(since, ...) above, so
+        # raising `since` raises it too. A second clamp here would look like
+        # belt-and-braces and be unreachable.
+        replay_from = max(replay_from, since)
     if until <= since:
         raise HTTPException(
             status_code=422,

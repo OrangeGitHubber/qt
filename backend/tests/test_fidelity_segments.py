@@ -301,6 +301,64 @@ def test_a_stretch_that_ends_before_its_replay_starts_is_skipped_not_fatal(clien
     assert seg.error and "before the replay could start" in seg.error
 
 
+def test_the_replay_cannot_trade_the_evening_before_go_live(client, configured):
+    """Werner's report: "how can the replay have bought something if the strategy
+    only went live at 23:18?"
+
+    It could because go-live was displayed and never enforced. The window opened
+    at the first trade's MIDNIGHT and the replay was held back only to that
+    trade's bar, so a strategy switched on late one evening that first traded
+    after midnight handed the backtest the whole preceding evening. The backtest
+    bought there — correctly, by its own rules — and every one of those buys came
+    back as a trade it "invented", a verdict about a period the engine did not
+    exist in."""
+    body = {**_strategy_body(3, ["GOLIVE"], name="late go-live"), "swing_mode": False}
+    sid = client.post("/api/strategies", json=body).json()["id"]
+
+    # Switched on at 23:18; first trade at 00:57 the NEXT day — the shape that
+    # puts midnight between the two.
+    live_at = (NOW - timedelta(days=2)).replace(hour=23, minute=18, second=0, microsecond=0)
+    first = live_at + timedelta(hours=1, minutes=39)
+    client.post(f"/api/strategies/{sid}/toggle")
+    with session_scope() as s:
+        s.get(Strategy, sid).enabled_at = live_at
+    with session_scope() as s:
+        # A REJECTED row from the earlier evening — the strategy had been live
+        # before, was paused, and was switched on again at 23:18. This is what
+        # dragged the window back: first_trade_at counts rejections (they are the
+        # proof a rail refused rather than the backtest inventing), so the window
+        # opened at midnight of THAT day and the replay got the whole evening.
+        s.add(Trade(
+            strategy_id=sid, mode="paper", symbol="GOLIVE", asset_class="stock",
+            status="rejected", qty=0, notional=0, entry_price=0.0,
+            entry_reason="rail: max open positions reached",
+            created_at=live_at - timedelta(hours=5),
+        ))
+        s.add(Trade(
+            strategy_id=sid, mode="paper", symbol="GOLIVE", asset_class="stock",
+            status="open", qty=10, notional=1000, entry_price=100.0,
+            entry_reason="gain", entry_at=first,
+        ))
+
+    with patch.object(AlpacaClient, "historical_bars",
+                      new=AsyncMock(return_value={"GOLIVE": _bars(3, 140.0)})):
+        r = client.post("/api/fidelity/compare", json={"strategy_id": sid})
+    assert r.status_code == 200, r.text
+    report = r.json()
+    assert report["window"]["start"] == live_at.isoformat()
+    # Nothing the replay did may predate go-live. Asserting on the timeline
+    # rather than on the window alone: the window is the mechanism, and a replay
+    # that still reached back would show up here as an "invented" buy.
+    early = [
+        e for e in report["timeline"]
+        if e["kind"] == "trade" and e["at"] and e["at"] < live_at.isoformat()
+    ]
+    assert early == []
+    # And go-live leads the timeline, rather than sitting under trades that
+    # supposedly happened before the strategy was allowed to act.
+    assert report["timeline"][0]["kind"] == "activated"
+
+
 def test_too_many_edits_declines_to_split_and_says_why(client, configured):
     """Past a handful of cuts the resets say more than the comparison does —
     every stretch starting with a full wallet and no positions. Handing back a
