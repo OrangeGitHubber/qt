@@ -14,6 +14,7 @@ they need.
 """
 
 from datetime import datetime, timedelta, timezone
+import pytest
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -143,3 +144,68 @@ def test_the_warmup_reaches_back_the_full_lookback(monkeypatch):
     earliest = min(b["t"][:10] for b in ds.daily["BTC/USD"])
     limit = (datetime.strptime(ds.start_day, "%Y-%m-%d") - timedelta(days=WARMUP_DAYS)).strftime("%Y-%m-%d")
     assert earliest >= limit
+
+
+# --- short windows cannot be served by daily bars ---------------------------
+
+
+def _seed_short(monkeypatch, *, with_intraday: bool, second_symbol: bool = False):
+    """Today's movers with a daily bar each, optionally with intraday cover.
+
+    A daily bar is stamped at the START of its day, so for a window of a few
+    hours it sits BEFORE the window and can never trade — which is the whole
+    problem: the daily fallback looks safe and yields an empty replay."""
+    Sess = _cache(monkeypatch)
+    day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    symbols = ["BTC/USD"] + (["ETH/USD"] if second_symbol else [])
+    with Sess() as s:
+        for sym in symbols:
+            barcache.save_daily_bars(s, sym, [
+                {"t": f"{day}T00:00:00Z", "o": 100, "h": 106, "l": 99, "c": 105, "v": 1e6, "vw": 103},
+            ], model=barcache.CryptoDailyBar)
+        # Only the FIRST symbol gets intraday, so a second symbol makes coverage
+        # partial — the case that used to flip the whole replay to daily.
+        if with_intraday:
+            barcache.save_intraday_bars(s, "BTC/USD", [
+                {"t": f"{day}T{h:02d}:00:00Z", "o": 100, "h": 106, "l": 99, "c": 100 + h, "v": 1e4, "vw": 100 + h}
+                for h in range(20, 24)
+            ], model=barcache.CryptoIntradayBar)
+        barcache.store_movers(
+            s, day, [(sym, 5.0, 105.0, 1e8) for sym in symbols],
+            model=barcache.CryptoDailyMover,
+        )
+        s.commit()
+    return day
+
+
+def test_a_short_window_uses_intraday_even_on_partial_coverage(monkeypatch):
+    """Full intraday coverage is the rule everywhere else, and rightly so. Here
+    it must bend: falling back to daily on a 4-hour window returns nothing at
+    all, which the fidelity report then blames on the strategy."""
+    _seed_short(monkeypatch, with_intraday=True, second_symbol=True)
+    ds = load_scanner_replay_dataset("crypto", 1, 10, window_hours=4.0)
+    assert ds.used_intraday is True
+    assert ds.timeframe == "15Min"
+    assert ds.bars.get("BTC/USD"), "the covered symbol must still be replayed"
+
+
+def test_a_long_window_still_demands_full_coverage(monkeypatch):
+    """The bend applies ONLY to short windows — otherwise one incidentally
+    cached symbol would flip a 180-day replay to intraday and silently drop
+    every uncovered name."""
+    _seed_short(monkeypatch, with_intraday=True, second_symbol=True)
+    ds = load_scanner_replay_dataset("crypto", 30, 10, window_hours=24 * 30)
+    assert ds.used_intraday is False
+    assert ds.timeframe == "1Day"
+
+
+def test_a_short_window_with_no_intraday_at_all_refuses_loudly(monkeypatch):
+    """The one outcome worse than an error is a silent empty replay presented as
+    a verdict on the strategy."""
+    from fastapi import HTTPException
+
+    _seed_short(monkeypatch, with_intraday=False)
+    with pytest.raises(HTTPException) as caught:
+        load_scanner_replay_dataset("crypto", 1, 10, window_hours=4.0)
+    assert caught.value.status_code == 422
+    assert "intraday" in caught.value.detail

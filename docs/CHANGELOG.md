@@ -3,6 +3,27 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Fidelity, part two: the scanner replay had its own way of choosing bars (2026-08-02)
+
+The previous fix taught the fidelity comparison to pick intraday bars for a
+short window — and the report kept saying "the replay passed on XRP/USD"
+anyway. A strategy whose universe includes the scanner takes a different route:
+its bars come from the cache, and that route decides daily-or-intraday from how
+much of the mover list the intraday cache covers, ignoring the requested bar
+size completely. One uncovered symbol sent the whole thing back to daily bars.
+
+Which cannot work at all on a short window, and not merely poorly. A daily bar
+is stamped at the START of its day, so a window running 23:18 to 03:09 contains
+no daily bar even though the day itself has one. The replay had nothing to
+examine, took no trades, and every real buy was scored as one it missed.
+
+For a window under two days the cache now uses whatever intraday bars it has and
+names the symbols it had to leave out — the same way it reports any other gap.
+Longer windows keep demanding full coverage, because there the fallback is a
+worse answer rather than no answer. And if a short window has no intraday bars
+at all, it now says so and points at the sweep instead of returning an empty
+replay dressed up as a verdict.
+
 ## The fidelity report was blaming your strategy for its own blind spot (2026-08-02)
 
 A 3.5-hour crypto stretch came back reading "you bought ADA/USD, the replay did

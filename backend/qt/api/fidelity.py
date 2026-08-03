@@ -31,6 +31,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from qt.api.backtest import (
+    MIN_HOURS_FOR_DAILY_REPLAY,
     BacktestBody,
     _mixed_resolution,
     _strategy_symbols,
@@ -678,12 +679,6 @@ def _journal_rows(
 def _iso(ts: datetime | None) -> str | None:
     aware = _aware(ts)
     return aware.isoformat() if aware else None
-
-
-# Below this, a daily replay has too few bars to judge anything (a one-day
-# window holds a single daily bar, and that bar needs a prior one to measure a
-# day-gain against).
-MIN_HOURS_FOR_DAILY_REPLAY = 48
 
 
 def _timeframe_for(params: dict, window_hours: float | None = None) -> str:

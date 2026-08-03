@@ -289,6 +289,7 @@ def _days_between(first: str, last: str) -> list[str]:
 def load_scanner_replay_dataset(
     asset_class: str, days: int, replay_top_n: int, scanner_cfg: dict | None = None,
     *, end: datetime | None = None, always_eligible: list[str] | None = None,
+    window_hours: float | None = None,
 ) -> ScannerReplayDataset:
     """Read the cached historical top-N risers + their bars for `days` back.
     Prefers cached INTRADAY bars (so intraday exits behave); falls back to daily
@@ -368,7 +369,28 @@ def load_scanner_replay_dataset(
             cache, union, start_day, model=intraday_model, end_day=end_day
         )
         intraday_covered = sorted(s for s in union if intraday_bars.get(s))
-        used_intraday = len(intraday_covered) == len(union) and bool(union)
+        # Full coverage is the rule (see above). The exception is a window too
+        # short for daily bars to represent AT ALL: a daily bar is stamped at the
+        # start of its day, so a 4-hour window contains none of them and the
+        # "safe" fallback yields an empty replay — which is exactly how a
+        # fidelity report came to say "the replay passed on ADA/XRP/SOL" when the
+        # replay had no bars to pass on. There, partial intraday beats nothing:
+        # the uncovered names are named as dropped, like any other gap.
+        short_window = (
+            window_hours is not None and window_hours < MIN_HOURS_FOR_DAILY_REPLAY
+        )
+        used_intraday = bool(union) and (
+            len(intraday_covered) == len(union) or (short_window and bool(intraday_covered))
+        )
+        if short_window and not used_intraday:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"This window is only {window_hours:.1f}h long, which needs intraday bars, "
+                    f"and none of its {len(union)} symbol(s) have any cached. Run an intraday "
+                    "sweep (Settings → Historical bar cache) and try again."
+                ),
+            )
         # The daily series is loaded either way, and always reaches back over the
         # warm-up: it is the replay timeline when there is no intraday coverage,
         # and the indicator source when there is. Costs almost nothing — daily
@@ -382,7 +404,14 @@ def load_scanner_replay_dataset(
             cache, union, warm_start, model=daily_model, stamp=daily_stamp, end_day=end_day
         )
         if used_intraday:
-            bars, filled = _fill_intraday_gaps(intraday_bars, daily, start_day)
+            if short_window:
+                # No daily gap-filling on a short window: a filled daily bar sits
+                # at the day's start, i.e. outside the window, so it adds a row
+                # that can never trade and makes coverage look better than it is.
+                bars = {s: series for s, series in intraday_bars.items() if series}
+                filled = 0
+            else:
+                bars, filled = _fill_intraday_gaps(intraday_bars, daily, start_day)
             timeframe = "15Min"
         else:
             bars = {
@@ -708,6 +737,13 @@ def _mixed_resolution(params: dict) -> bool:
 # equivalent of the live engine's 120-day MACD lookback. ~150 days ≈ 100 trading
 # bars, comfortably above MACD's slow+signal warm-up.
 WARMUP_DAYS = 150
+
+# Below this, a daily replay cannot represent the window at all: a daily bar is
+# stamped at the START of its day, so a window of a few hours contains no daily
+# bar even when the day itself has one. A replay that falls back to daily here
+# does not produce a rough answer, it produces an empty one — and the fidelity
+# report then reads as "the backtest missed all your trades".
+MIN_HOURS_FOR_DAILY_REPLAY = 48
 
 # Calendar days of history a replay needs BEFORE its window even when no daily
 # indicator is involved — purely so the first bar has a day-gain baseline to
@@ -1211,6 +1247,11 @@ async def _scanner_replay(
     # last N days up to today. `span`/`window_end` collapse to `days`/None for an
     # ordinary request, which is why every reload below passes the same pair.
     span, window_end = body.span_days(), body.window_end
+    # Hours, not days: `span_days()` rounds a 3.5-hour segment to 1, which cannot
+    # distinguish "one day" from "one afternoon" — and only the second is fatal
+    # to a daily replay.
+    _ws, _we = body.window()
+    window_hours = (_we - _ws).total_seconds() / 3600
     # A "scanner + watchlist" strategy may buy a watchlist name on ANY day, not
     # only the days it rose, so those symbols stay eligible throughout instead of
     # waiting for the movers list to supply them. Before this, "both" fell all
@@ -1227,7 +1268,7 @@ async def _scanner_replay(
         ]
     ds = await asyncio.to_thread(
         load_scanner_replay_dataset, strategy_dict["asset_class"], span, body.replay_top_n, cfg,
-        end=window_end, always_eligible=pinned,
+        end=window_end, always_eligible=pinned, window_hours=window_hours,
     )
     # Missing 15-minute bars are fetched here rather than sent back as an
     # instruction to go and run a sweep. Runs once per window; afterwards the
@@ -1280,6 +1321,7 @@ async def _scanner_replay(
             ds = await asyncio.to_thread(
                 load_scanner_replay_dataset,
                 strategy_dict["asset_class"], span, body.replay_top_n, cfg, end=window_end,
+                window_hours=window_hours,
                 always_eligible=pinned,
             )
             _report("Replaying history…", 0)
