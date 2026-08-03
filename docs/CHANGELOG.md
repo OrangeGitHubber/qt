@@ -3,6 +3,32 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## The replay now starts where the engine actually stood (2026-08-03)
+
+When you compare a strategy's real trades against a replay of the same period,
+the replay used to begin with a blank memory. Anything the account had recently
+lost money on — and was therefore still refusing to buy for 24 hours — was
+invisible to it. So the replay bought those things, and the report announced
+that the backtester had invented a trade.
+
+It was the opposite. The backtester was the only one telling the truth about
+what it could see; the comparison simply hadn't told it what the live engine
+knew. A real example from this morning: the replay bought ADA/USD and was
+accused of imagining it was tradable, when in fact a different strategy had
+taken a loss on ADA twelve hours earlier and the account-wide cooldown was still
+running.
+
+The comparison now hands the replay the same recent losses the live engine was
+holding when the window opened — including losses taken by your *other*
+strategies, because that rail is account-wide — and for stocks the longer
+31-day wash-sale history as well. A loss inside the window still takes over from
+the seeded one.
+
+Ordinary backtests are deliberately untouched: a run over the last six months
+has no real "before" to be honest about, and inventing one would be arbitrary.
+The report also names which symbols it seeded, so the comparison cannot quietly
+flatter itself into looking more accurate than it is.
+
 ## A position both sides still hold is not a sale (2026-08-03)
 
 Three rows in one report read *"You sold AAVE/USD on None (); the replay held

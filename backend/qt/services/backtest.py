@@ -451,6 +451,22 @@ class SimState:
     last_loss_at: dict[str, datetime] = field(default_factory=dict)
 
 
+def _seed_losses(prior: dict[str, datetime] | None) -> dict[str, datetime]:
+    """The caller's prior-loss seed, copied and made UTC-aware.
+
+    Copied because the simulation WRITES to this dict as it runs, and a caller
+    that replays several segments off one seed would otherwise find its own
+    input mutated by the first of them. Made aware because every bar timestamp
+    in the sim is aware, and `ts - last_loss` on a naive one raises — a seed
+    that arrived over JSON, or straight out of SQLite, is routinely naive.
+    Everything QT stores is UTC, so saying so is a restatement."""
+    return {
+        symbol.upper(): (when if when.tzinfo else when.replace(tzinfo=timezone.utc))
+        for symbol, when in (prior or {}).items()
+        if when is not None
+    }
+
+
 def _prepare(bars: list[dict], day_of=_et_day, rolling_24h: bool = False) -> list[dict]:
     """Annotate each bar with day-gain and a running intraday VWAP. `day_of`
     buckets bars into trading days (ET for stocks, UTC for crypto).
@@ -599,6 +615,7 @@ def run_backtest(
     sim_end: datetime | None = None,
     daily_bars_by_symbol: dict[str, list[dict]] | None = None,
     progress: Callable[[int, int], None] | None = None,
+    prior_loss_at: dict[str, datetime] | None = None,
 ) -> dict:
     """Pure simulation: strategy dict (same shape as the DB row), raw bars per
     symbol, global risk config. Returns metrics + equity curve + trades.
@@ -651,7 +668,24 @@ def run_backtest(
     `progress` is called as (bars_done, bars_total) every so often so a caller
     running this in the background can say how far along it is. Purely an
     observer — the simulation never reads it, and None (the default) keeps this
-    function exactly as pure as it was."""
+    function exactly as pure as it was.
+
+    `prior_loss_at` ({symbol: when it last closed at a loss}) is the rail state
+    the account already carried INTO the window. The after-loss cooldown — and,
+    for stocks, the wash-sale guard — are both driven by the most recent losing
+    exit per symbol, and the simulation only ever learns about losses it made
+    itself. So a replay starting mid-history begins with a clean slate the live
+    engine did not have, refuses nothing, buys a symbol live was still cooling
+    off on, and the fidelity report blames the backtester for it.
+
+    None (the default) is a clean slate, so an ORDINARY backtest is byte-
+    identical to before — and deliberately so. A 180-day backtest has no "before
+    the window" to speak of, and inventing one would be arbitrary. Only the
+    fidelity comparison, which is replaying a window the account really lived
+    through, has a truthful answer to seed with.
+
+    A loss INSIDE the window overwrites the seed for that symbol: this is the
+    starting point, not a floor."""
     params = strategy["params"]
     swing = strategy["swing_mode"]
     sizing = strategy["sizing_usd"]
@@ -690,7 +724,7 @@ def run_backtest(
     if not events:
         return {"error": "No historical bars for those symbols/timeframe."}
 
-    state = SimState(cash=starting_cash)
+    state = SimState(cash=starting_cash, last_loss_at=_seed_losses(prior_loss_at))
     equity_curve: list[tuple[str, float]] = []
     last_price: dict[str, float] = {}
     max_deployed = 0.0
@@ -1133,6 +1167,7 @@ def run_portfolio_backtest(
     sim_start: datetime | None = None,
     daily_bars_by_strategy: dict[int, dict[str, list[dict]]] | None = None,
     sim_end: datetime | None = None,
+    prior_loss_at: dict[str, datetime] | None = None,
 ) -> dict:
     """Portfolio simulation: replay N strategies over ONE merged timeline sharing
     a SINGLE cash account and the GLOBAL risk rails — exactly like the live engine,
@@ -1153,6 +1188,12 @@ def run_portfolio_backtest(
 
     `sim_end` closes the window (inclusive), mirroring run_backtest's: the replay
     stops at the last bar on or before it and bars after it never mark a position.
+
+    `prior_loss_at` seeds the after-loss cooldown (and the wash-sale guard) with
+    the losses the account already carried into the window, exactly as in
+    run_backtest — the rail is account-wide there and here, so one dict keyed by
+    symbol covers the whole book. None (the default) starts clean, leaving every
+    existing portfolio backtest untouched.
     """
     day_of = _day_fn(market)
     slip = spread_pct / 100
@@ -1207,7 +1248,7 @@ def run_portfolio_backtest(
     closed: list[PortfolioTrade] = []
     entries_by_day: dict[str, int] = {}          # cross-strategy trade-rate limiter
     realized_by_day: dict[str, float] = {}       # daily-loss kill switch
-    last_loss_at: dict[str, datetime] = {}
+    last_loss_at: dict[str, datetime] = _seed_losses(prior_loss_at)
     last_price: dict[str, float] = {}
     equity_curve: list[tuple[str, float]] = []
     max_deployed = 0.0

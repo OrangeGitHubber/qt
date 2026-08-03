@@ -28,6 +28,7 @@ from qt import security
 from qt.broker.alpaca import SECRET_KEY_ID, SECRET_KEY_SECRET, AlpacaClient
 from qt.db import session_scope
 from qt.models import Strategy, StrategyConfigVersion, Trade
+from qt.services.engine import RISK_DEFAULTS
 
 NOW = datetime.now(timezone.utc)
 
@@ -294,6 +295,7 @@ def test_a_stretch_that_ends_before_its_replay_starts_is_skipped_not_fatal(clien
         s.flush()
         asyncio.run(_replay_segments(
             [seg], strat, spread_pct=0.1, session=s, client=object(),
+            mode="paper", risk=RISK_DEFAULTS,
         ))
         s.query(Strategy).filter(Strategy.id == strat.id).delete()
 

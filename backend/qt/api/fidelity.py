@@ -47,6 +47,7 @@ from qt.api import baskets as baskets_api
 from qt.models import AuditLog, BasketItem, Strategy, StrategyConfigVersion, Trade
 from qt.services import fidelity
 from qt.services.backtest import _day_fn
+from qt.services.engine import get_risk
 from qt.timeutil import utc_aware
 
 log = logging.getLogger("qt.api.fidelity")
@@ -240,6 +241,11 @@ class _Segment:
     # backtest invented a trade", which is the exact false verdict this window
     # exists to prevent.
     replay_start: datetime | None = None
+    # The after-loss cooldowns in force when THIS stretch opened (see
+    # _prior_losses). Per segment rather than per comparison: a loss taken in
+    # stretch one is inside the window but strictly before stretch two, and
+    # stretch two's replay starts flat and would otherwise buy through it.
+    rails_seed: dict[str, datetime] = field(default_factory=dict)
     live: list[dict] = field(default_factory=list)
     result: dict | None = None
     error: str | None = None
@@ -713,6 +719,66 @@ def _seed_by_day(live_rows: list[dict]) -> dict[str, list[str]]:
     return {day: sorted(symbols) for day, symbols in sorted(out.items())}
 
 
+# The wash-sale window, restated from qt.services.engine._build_rail_context.
+# It is the IRS's number, not a setting, which is why both places can hold it.
+WASH_SALE_DAYS = 31
+
+
+def _prior_losses(
+    session: Session, strategy: Strategy, before: datetime, mode: str, risk: dict
+) -> dict[str, datetime]:
+    """{symbol: when it last closed at a loss} for the losses the account had
+    ALREADY taken when this window opened — the rail state the live engine
+    started the window holding.
+
+    The replay simulates the after-loss cooldown correctly, but only ever learns
+    about losses it made itself, so it opens every window with a clean slate the
+    engine did not have. Measured: a comparison reported that the replay "invented"
+    an ADA/USD buy, when the truth was the reverse — another strategy had lost on
+    ADA twelve hours earlier and the account-wide 24h cooldown was still in force.
+    The replay had no way to know, and the report blamed the backtester for it.
+
+    THE DEFINITION IS COPIED FROM THE ENGINE, not re-invented: the most recent
+    losing CLOSED exit for that symbol, account-wide (any strategy), within this
+    mode. Seed it with anything else and the discrepancy has merely been moved.
+
+    Only losses that can still BLOCK something are returned:
+      * within `cooldown_hours_after_loss` — the cooldown rail;
+      * and for a STOCK strategy whose wash-sale guard is on, within 31 days,
+        because that guard reads the same history over a longer window.
+    Anything older cannot refuse a single entry, and sending it would inflate
+    what the report claims to have seeded.
+
+    Strictly BEFORE the window: a loss inside it is the simulation's own business
+    and it will record that itself (and overwrite this seed for that symbol).
+    """
+    horizon = timedelta(hours=float(risk.get("cooldown_hours_after_loss", 24) or 0))
+    if strategy.asset_class == "stock" and risk.get("wash_sale_guard", "block") != "off":
+        horizon = max(horizon, timedelta(days=WASH_SALE_DAYS))
+    if horizon <= timedelta(0):
+        return {}
+    rows = (
+        session.query(Trade.symbol, func.max(Trade.exit_at))
+        .filter(
+            Trade.mode == mode,
+            Trade.status == "closed",
+            Trade.pnl < 0,
+            # No "exit_at is not null" clause: `< before` already excludes it,
+            # since NULL compares to nothing.
+            Trade.exit_at < before,
+            Trade.exit_at >= before - horizon,
+        )
+        .group_by(Trade.symbol)
+        .all()
+    )
+    out: dict[str, datetime] = {}
+    for symbol, when in rows:
+        stamp = _aware(when)
+        if symbol and stamp is not None:
+            out[symbol.upper()] = stamp
+    return out
+
+
 def _timeframe_for(params: dict, window_hours: float | None = None) -> str:
     """The bar size the STRATEGY demands, not a hardcoded one. Asking for daily
     bars on a strategy that needs intraday ones gets every entry rejected, and the
@@ -752,6 +818,8 @@ async def _replay_segments(
     spread_pct: float,
     session: Session,
     client: AlpacaClient,
+    mode: str,
+    risk: dict,
 ) -> None:
     """Replay each segment over its OWN window with its OWN configuration.
 
@@ -769,6 +837,15 @@ async def _replay_segments(
             # failure so the rest of the comparison still runs.
             segment.error = "This stretch ends before the replay could start, so it was skipped."
             continue
+        # The rail state the account carried into THIS stretch. Both replay paths
+        # need it and only one of them is this one, which is the exact shape of
+        # bug that has bitten this file before.
+        #
+        # No "unless these are imported trades" guard, unlike the unsegmented
+        # path: imported trades are never segmented (this machine's config
+        # history is not the history that produced them), so a stretch is by
+        # construction always this instance's own.
+        segment.rails_seed = _prior_losses(session, strategy, start, mode, risk)
         try:
             segment.result = await replay(
                 BacktestBody(
@@ -781,6 +858,7 @@ async def _replay_segments(
                     # segment must not be handed names that only traded under a
                     # configuration it is not replaying.
                     seed_by_day=_seed_by_day(segment.live) if segment.scanner_replay else {},
+                    prior_loss_at=segment.rails_seed,
                     timeframe=_timeframe_for(
                         config["params"], (segment.end - start).total_seconds() / 3600
                     ),
@@ -1023,10 +1101,23 @@ async def compare(
         else None
     )
 
+    # THE RAILS THE ACCOUNT ALREADY CARRIED IN. Seeded for a comparison and for a
+    # comparison only: this is a window the account really lived through, so
+    # "what was still cooling off at the start" has a truthful answer. An
+    # ordinary backtest has no such answer and is left exactly as it was.
+    #
+    # Never for IMPORTED trades. Those came from another instance, so THIS
+    # machine's journal is not the history that produced them and seeding from it
+    # would manufacture cooldowns the exporting account never had.
+    risk = get_risk(session)
+    seed_rails = body.imported_trades is None
+    rails_seed: dict[str, datetime] = {}
+
     if segmented:
         crossed, unplaced = _place_trades(segments, live_rows)
         await _replay_segments(
-            segments, strategy, spread_pct=spread_pct, session=session, client=client
+            segments, strategy, spread_pct=spread_pct, session=session, client=client,
+            mode=body.mode, risk=risk,
         )
         if all(s.error for s in segments):
             # Nothing replayed at all — that is a real failure, not a caveat.
@@ -1057,8 +1148,19 @@ async def compare(
             (s.result.get("fee_pct_per_side") for s in segments if s.result), 0.0
         )
         results = [s.result for s in segments if s.result]
+        # Newest per symbol across the stretches: each was seeded at its own
+        # start, so the same symbol can appear more than once with an older
+        # timestamp, and the report should quote the one nearest the trades.
+        for segment in segments:
+            for symbol, when in segment.rails_seed.items():
+                rails_seed[symbol] = max(when, rails_seed.get(symbol, when))
     else:
         crossed = 0
+        rails_seed = (
+            _prior_losses(session, strategy, replay_from, body.mode, risk)
+            if seed_rails
+            else {}
+        )
         result = await run(
             BacktestBody(
                 strategy_id=strategy.id,
@@ -1076,6 +1178,7 @@ async def compare(
                 # know that. Scanner replays only — a custom or basket universe
                 # is already exactly the list that produced these trades.
                 seed_by_day=_seed_by_day(live_rows) if scanner_replay else {},
+                prior_loss_at=rails_seed,
                 timeframe=_timeframe_for(
                     json.loads(strategy.params), (until - replay_from).total_seconds() / 3600
                 ),
@@ -1138,6 +1241,39 @@ async def compare(
         "scanner_config_is_current": any(r.get("scanner_config_is_current") for r in results),
         "seeded": seeded_symbols,
         "dropped": sorted({s for r in results for s in (r.get("universe_dropped") or [])}),
+    }
+
+    # THE RAIL STATE THE REPLAY WAS HANDED, said out loud for the same reason
+    # `universe.seeded` is: the replay did not work this out, we told it, and a
+    # report that quietly flatters itself is worth less than no report. Read back
+    # off the RESULTS (`rails_seeded`, echoed by the replay) rather than off what
+    # this function meant to send, so unwiring the seed empties this list instead
+    # of leaving it making a claim nothing supports.
+    confirmed = {s for r in results for s in (r.get("rails_seeded") or [])}
+    cooldown_h = float(risk.get("cooldown_hours_after_loss", 24) or 0)
+    report["rails"] = {
+        # Symbols the account had already lost on when the window opened, so the
+        # replay began holding them off exactly as the engine was. `cooldown_until`
+        # is when the after-loss rail lapses; a stock entry that is already past
+        # it can still be refused by the wash-sale guard, which reads the same
+        # loss over 31 days.
+        "seeded_losses": [
+            {
+                "symbol": symbol,
+                "last_loss_at": _iso(rails_seed[symbol]),
+                "cooldown_until": _iso(rails_seed[symbol] + timedelta(hours=cooldown_h)),
+            }
+            for symbol in sorted(confirmed & set(rails_seed))
+        ],
+        "cooldown_hours_after_loss": cooldown_h,
+        # WHAT IS STILL NOT SEEDED. Each is a way the replay can still look freer
+        # than the engine was, and naming them is cheaper than being asked later
+        # why a mismatch survived.
+        "not_seeded": [
+            "positions the engine already held when the window opened — the replay starts flat, "
+            "so the 'already open for this symbol' rail cannot block it",
+            "the non-fill cooldown, which the replay does not simulate at all",
+        ],
     }
 
     # CONFIG DRIFT. Every trade records the config version that produced it. An

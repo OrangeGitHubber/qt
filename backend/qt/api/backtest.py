@@ -579,6 +579,14 @@ class BacktestBody(BaseModel):
     # `seed_by_day` on load_scanner_replay_dataset, and `universe_seeded` on the
     # response, which names every symbol that got in this way.
     seed_by_day: dict[str, list[str]] = Field(default_factory=dict)
+    # {symbol: when it last closed at a loss BEFORE this window} — the after-loss
+    # cooldown (and, for stocks, the wash-sale guard) the account already carried
+    # in. The simulation only ever learns about losses it made itself, so without
+    # this a replay of a mid-history window starts with a clean slate the live
+    # engine did not have. Empty for every ordinary backtest, which has no
+    # "before the window" worth inventing; the fidelity comparison fills it from
+    # the journal. See run_backtest's `prior_loss_at`.
+    prior_loss_at: dict[str, datetime] = Field(default_factory=dict)
     timeframe: str = Field(default="1Hour", pattern="^(15Min|1Hour|1Day)$")
     starting_cash: float = Field(default=5000, ge=100, le=10_000_000)
     spread_pct: float = Field(default=0.1, ge=0, le=2)
@@ -1513,6 +1521,8 @@ async def replay(
         sim_end=sim_end,
         daily_bars_by_symbol=daily_bars,
         progress=_replay_progress,
+        # Empty for every ordinary backtest — see BacktestBody.prior_loss_at.
+        prior_loss_at=body.prior_loss_at or None,
     )
     if "error" in result:
         raise HTTPException(status_code=422, detail=result["error"])
@@ -1540,6 +1550,11 @@ async def replay(
 
     result["strategy_name"] = strategy_name
     result["symbols"] = symbols
+    # Symbols whose after-loss cooldown the replay STARTED with, echoed back off
+    # the request rather than assumed by the caller. A report that says it seeded
+    # the rails must be quoting something the run itself confirms, or the claim
+    # survives the wiring being removed. Empty for every ordinary backtest.
+    result["rails_seeded"] = sorted(body.prior_loss_at)
     # `timeframe` is what was REPLAYED (what the stops were checked on); on a
     # mixed run the signals came from a coarser series, named separately.
     result["timeframe"] = replay_timeframe
@@ -1632,30 +1647,43 @@ async def _scanner_replay(
     ).replace(tzinfo=timezone.utc)
 
     _report("Replaying history…", 0)
-    # MACD/RSI/ATR come from the DAILY series, never from the replay stream. On an
-    # intraday replay that is the difference between a real indicator and one
-    # measured over 15-minute bars; on a daily replay it adds the warm-up so the
-    # signal isn't dead for the window's first weeks. Omitted entirely for a
-    # strategy with no daily signal, so its replay is untouched.
+
+    async def _replay_dataset(ds: ScannerReplayDataset) -> dict:
+        """One replay of one dataset. Written once because it is run TWICE — the
+        second pass below replays the same window on better bars — and the two
+        drifting apart is a bug with no symptom: the second result is the one
+        returned, so anything the first pass alone was given (a seed, a flag)
+        would evaporate exactly when the cache was topped up.
+
+        MACD/RSI/ATR come from the DAILY series, never from the replay stream. On
+        an intraday replay that is the difference between a real indicator and one
+        measured over 15-minute bars; on a daily replay it adds the warm-up so the
+        signal isn't dead for the window's first weeks. Omitted entirely for a
+        strategy with no daily signal, so its replay is untouched."""
+        return await asyncio.to_thread(
+            backtest.run_backtest,
+            strategy_dict, ds.bars, get_risk(session),
+            starting_cash=body.starting_cash, spread_pct=body.spread_pct,
+            fee_pct=(
+                body.fee_pct if body.fee_pct is not None
+                else DEFAULT_FEE_PCT.get(strategy_dict["asset_class"], 0.0)
+            ),
+            eligible_by_day=ds.eligible_by_day, market=ds.market,
+            daily_bars_by_symbol=ds.daily if _needs_warmup(strategy_dict["params"]) else None,
+            # The cache is keyed by DAY, so a window that opens or closes mid-session
+            # would otherwise pick up the whole of its first and last day — and the
+            # dataset's baseline prefix reaches further back still. `trade_from` is
+            # midnight of `start_day` for an ordinary run, i.e. where the bars used to
+            # start, so such a run replays byte-identically to before.
+            sim_start=trade_from,
+            sim_end=window_end,
+            progress=_replay_progress,
+            # Empty for every ordinary backtest — see BacktestBody.prior_loss_at.
+            prior_loss_at=body.prior_loss_at or None,
+        )
+
     replay_daily = ds.daily if _needs_warmup(strategy_dict["params"]) else None
-    result = await asyncio.to_thread(
-        backtest.run_backtest,
-        strategy_dict, ds.bars, get_risk(session),
-        starting_cash=body.starting_cash, spread_pct=body.spread_pct,
-        fee_pct=(
-            body.fee_pct if body.fee_pct is not None else DEFAULT_FEE_PCT.get(strategy_dict["asset_class"], 0.0)
-        ),
-        eligible_by_day=ds.eligible_by_day, market=ds.market,
-        daily_bars_by_symbol=replay_daily,
-        # The cache is keyed by DAY, so a window that opens or closes mid-session
-        # would otherwise pick up the whole of its first and last day — and the
-        # dataset's baseline prefix reaches further back still. `trade_from` is
-        # midnight of `start_day` for an ordinary run, i.e. where the bars used to
-        # start, so such a run replays byte-identically to before.
-        sim_start=trade_from,
-        sim_end=window_end,
-        progress=_replay_progress,
-    )
+    result = await _replay_dataset(ds)
 
     # SECOND PASS. The first replay tells us which symbols were actually held and
     # for how long — something no amount of pre-fetching could know, because it
@@ -1678,20 +1706,7 @@ async def _scanner_replay(
             )
             _report("Replaying history…", 0)
             replay_daily = ds.daily if _needs_warmup(strategy_dict["params"]) else None
-            result = await asyncio.to_thread(
-                backtest.run_backtest,
-                strategy_dict, ds.bars, get_risk(session),
-                starting_cash=body.starting_cash, spread_pct=body.spread_pct,
-                fee_pct=(
-                    body.fee_pct if body.fee_pct is not None
-                    else DEFAULT_FEE_PCT.get(strategy_dict["asset_class"], 0.0)
-                ),
-                eligible_by_day=ds.eligible_by_day, market=ds.market,
-                daily_bars_by_symbol=replay_daily,
-                sim_start=trade_from,
-                sim_end=window_end,
-                progress=_replay_progress,
-            )
+            result = await _replay_dataset(ds)
             topped_up = True
 
     if "error" in result:
@@ -1712,6 +1727,9 @@ async def _scanner_replay(
         pass
 
     result["strategy_name"] = strategy_name
+    # See run()'s copy: the seed is echoed off the request so the fidelity report
+    # can only claim it seeded rails the replay actually received.
+    result["rails_seeded"] = sorted(body.prior_loss_at)
     result["scanner_replay"] = True
     result["replay_intraday"] = ds.used_intraday
     result["intraday_topped_up"] = topped_up  # bars were downloaded for this run
