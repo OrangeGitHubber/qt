@@ -1031,16 +1031,43 @@ async def _consider_entries(
                     continue
 
                 bought_reason = f"{entry_reason}{rank_note}; {rails_reason}"
-                row["decision"], row["reason"] = "bought", bought_reason
                 trace["candidates"].append(row)
 
                 from qt.services import execution
 
-                await execution.open_trade(
+                # The trace used to say "bought" HERE, before the order existed.
+                # open_trade declines in five ways — under Alpaca's $1 minimum,
+                # zero whole shares, a broker rejection, an order that never
+                # filled, a fill poll that timed out — and each returns None
+                # after journalling why. The trace never heard about any of them,
+                # so a name whose order kept failing showed "bought · all rails
+                # passed" on every single run: it never became a position, so it
+                # was never blocked by the already-held rail, so it was retried
+                # and mis-reported a minute later, forever.
+                trade = await execution.open_trade(
                     session, client, strategy, version_id, mode, cand,
                     bought_reason,
                     sizing_usd=entry_sizing,
                 )
+                if trade is None:
+                    # open_trade wrote the real reason onto a rejected Trade it
+                    # added to this session; prefer that over a generic line, so
+                    # the panel names the actual obstacle.
+                    why = next(
+                        (
+                            o.entry_reason
+                            for o in session.new
+                            if isinstance(o, Trade)
+                            and o.symbol == cand.symbol
+                            and o.status == "rejected"
+                            and o.entry_reason
+                        ),
+                        None,
+                    )
+                    row["decision"] = "not filled"
+                    row["reason"] = why or f"{bought_reason}; but the order did not complete"
+                else:
+                    row["decision"], row["reason"] = "bought", bought_reason
 
             if candidates and not trace["outcome"]:
                 bought = sum(1 for c in trace["candidates"] if c["decision"] == "bought")
