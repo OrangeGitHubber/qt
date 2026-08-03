@@ -745,6 +745,13 @@ WARMUP_DAYS = 150
 # report then reads as "the backtest missed all your trades".
 MIN_HOURS_FOR_DAILY_REPLAY = 48
 
+# How many replayed symbols are worth listing in a result. Above this the list
+# is dropped and only `universe_size` is reported — a 180-day stock sweep can
+# touch thousands of names, and nobody reads that. Below it, naming them lets
+# the fidelity comparison tell "outside the universe" apart from "watched and
+# passed", which is the difference between a coverage gap and a real bug.
+UNIVERSE_LIST_CAP = 1000
+
 # Calendar days of history a replay needs BEFORE its window even when no daily
 # indicator is involved — purely so the first bar has a day-gain baseline to
 # measure against. Crypto measures against the close ~24h back (one prior day,
@@ -1376,7 +1383,14 @@ async def _scanner_replay(
     result["daily_filled_days"] = ds.daily_filled_days
     result["days_replayed"] = ds.days_replayed
     timeframe = ds.timeframe
-    result["symbols"] = []  # too many to list; summarized by universe_size
+    # The names actually replayed. This used to be [] with "too many to list" —
+    # true for a long stock sweep, but the fidelity comparison reads this list as
+    # "the universe the replay covered", and an empty one means UNKNOWN. Every
+    # missed trade on a scanner strategy was then reported as "the replay was
+    # watching this symbol and passed", which is a claim the report had no basis
+    # for. Listed when the set is small enough to be worth carrying; a genuinely
+    # huge sweep still says nothing rather than shipping thousands of strings.
+    result["symbols"] = ds.replayed if len(ds.replayed) <= UNIVERSE_LIST_CAP else []
     result["timeframe"] = timeframe
     result["days"] = span
     _stamp_window(result, body, *body.window())

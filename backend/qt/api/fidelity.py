@@ -983,17 +983,23 @@ async def compare(
         # The first segment that can explain a silent replay. On a split
         # comparison there is no single diagnosis, so this is a hint rather than
         # the whole story — the segment table below carries the rest.
+        # Prefer the segment that actually has trades to explain. Taking the
+        # first one reported a VWAP rejection from a stretch with zero live
+        # trades, under a config that had since been edited away — a true
+        # sentence about the wrong stretch, which is worse than none, because it
+        # names a rule the reader then goes and changes.
+        ranked = sorted(
+            (s for s in segments if s.result), key=lambda s: len(s.live), reverse=True
+        )
         no_trade_reason = next(
             (
                 (s.result.get("diagnosis") or {}).get("summary")
-                for s in segments
-                if s.result and (s.result.get("diagnosis") or {}).get("summary")
+                for s in ranked
+                if (s.result.get("diagnosis") or {}).get("summary")
             ),
             None,
         )
-        timeframe = next(
-            (s.result.get("timeframe") for s in segments if s.result), None
-        )
+        timeframe = next((s.result.get("timeframe") for s in ranked), None)
         fee_assumed = next(
             (s.result.get("fee_pct_per_side") for s in segments if s.result), 0.0
         )

@@ -3,6 +3,31 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Fidelity, part three: "the replay was watching and passed" was a guess (2026-08-02)
+
+The sentence that started all of this — *"The replay was watching this symbol
+and passed… This is the kind that points at a real bug"* — was being printed
+without anything to back it up.
+
+The report tracks whether each missed trade was inside the universe the replay
+covered, and that has three possible answers: inside, outside, and **unknown**.
+Only two were ever written down. "Unknown" fell through to the wording for
+"inside", so a report that had no idea whether the replay was even looking at
+XRP said it was watching and passed.
+
+It was always unknown for a scanner strategy, because the scanner replay
+deliberately returned an empty symbol list — reasonable on its own terms (a long
+stock sweep touches thousands of names) but read by the comparison as "covered
+nothing". The replay now reports the names it actually used whenever the set is
+a sensible size, so the distinction can be made at all; when it genuinely can't
+be, the report says so instead of guessing.
+
+Also fixed: on a split comparison the "why no trades" note was taken from the
+first stretch rather than the one with the trades. It was quoting a VWAP
+rejection from a stretch that had no live trades at all, under a rule that had
+since been switched off — a true sentence about the wrong period, which is worse
+than silence, because it names a setting you then go and change.
+
 ## Fidelity, part two: the scanner replay had its own way of choosing bars (2026-08-02)
 
 The previous fix taught the fidelity comparison to pick intraday bars for a

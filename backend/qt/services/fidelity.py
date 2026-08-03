@@ -313,12 +313,25 @@ def _trade_log(matched: list[dict], live_only: list[dict], backtest_only: list[d
                   f"and the replay on {m['sim_exit_reason']}.")
 
     for r in live_only:
-        why = (
-            " It wasn't in the universe the replay covered, so it was never looking for it."
-            if r.get("in_replayed_universe") is False
-            else " The replay was watching this symbol and passed — no bars for that day, or a"
-            " different view of it. This is the kind that points at a real bug."
-        )
+        # THREE states, not two. `None` means the replay never reported which
+        # symbols it covered, so whether it was even looking at this one is
+        # unknown — and saying "it was watching and passed" there asserts
+        # something nobody checked. That wording sent a real investigation after
+        # a signal difference that did not exist.
+        covered = r.get("in_replayed_universe")
+        if covered is False:
+            why = " It wasn't in the universe the replay covered, so it was never looking for it."
+        elif covered is None:
+            why = (
+                " Whether the replay was even looking at this symbol is unknown — it didn't"
+                " report its universe for this stretch, so this may be a coverage gap rather"
+                " than a disagreement."
+            )
+        else:
+            why = (
+                " The replay was watching this symbol and passed — no bars for that day, or a"
+                " different view of it. This is the kind that points at a real bug."
+            )
         event(r.get("entry_at") or r["day"], r["day"], r["symbol"], "bought",
               "replay missed it", f"You bought {r['symbol']}. The replay did not." + why)
         # The sale really happened, so it belongs in the log even though there is
