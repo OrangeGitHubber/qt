@@ -868,3 +868,32 @@ def test_a_still_open_live_position_is_not_reported_as_a_sale():
     assert "still holding it" in row["detail"]
     assert "None" not in row["detail"], "a sale that never happened"
     assert row["day"] == "2026-08-03", "the row must carry the replay's exit day"
+
+
+def test_two_open_positions_produce_no_exit_row_at_all():
+    """Both sides still holding. `exit_day_matches` demands two real days, so
+    None-vs-None reads as a mismatch and the row fell through to the timing
+    branch: "You sold AAVE/USD on None (); the replay held until None (None)" —
+    a sale that happened on neither side, about a position both still hold.
+
+    Three of those appeared in one real report. There is nothing to compare
+    until somebody sells, so the correct output is silence."""
+    from qt.services.fidelity import compare
+
+    live = [{
+        "symbol": "AAVE/USD", "entry_day": "2026-08-03", "status": "open",
+        "entry_price": 92.23, "entry_at": "2026-08-03T13:14:19Z",
+        "exit_day": None, "exit_at": None, "exit_reason": "",
+    }]
+    result = {
+        "trade_list": [],
+        "open_positions": [{
+            "symbol": "AAVE/USD", "entry_day": "2026-08-03", "entry_price": 92.10,
+            "exit_day": None, "exit_reason": None,
+        }],
+    }
+    report = compare(live, result, replayed_symbols=["AAVE/USD"])
+    assert [r for r in report["log"] if r["action"] == "bought"], "the entry still matches"
+    assert [r for r in report["log"] if r["action"] == "sold"] == [], (
+        "neither side sold, so no exit row belongs in the log"
+    )

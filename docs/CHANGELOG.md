@@ -3,6 +3,17 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## A position both sides still hold is not a sale (2026-08-03)
+
+Three rows in one report read *"You sold AAVE/USD on None (); the replay held
+until None (None)"*. Nobody had sold anything — both the live trade and the
+replay were still holding. The check for "did they exit on the same day"
+requires two real dates, so nothing-versus-nothing counted as a disagreement and
+the row fell through to the wording for a timing difference.
+
+There is nothing to compare until somebody sells, so the log now says nothing at
+all until one of them does.
+
 ## Quiet crypto pairs are noted, not refused (2026-08-03)
 
 The guard added yesterday refused to buy a crypto pair whose last trade was too

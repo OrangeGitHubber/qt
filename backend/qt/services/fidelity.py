@@ -313,6 +313,14 @@ def _trade_log(matched: list[dict], live_only: list[dict], backtest_only: list[d
             event(m.get("live_exit_at") or m["live_exit_day"], m["live_exit_day"], m["symbol"],
                   "sold", "match",
                   f"Both sold {m['symbol']}, {m['sim_exit_reason'] or 'same reason'}{when}.")
+        elif not m["live_exit_day"] and not m["sim_exit_day"]:
+            # NEITHER side has exited — both are still holding. There is no exit
+            # to compare, so there is no row. `exit_day_matches` is false when
+            # both are None (it demands two real days), so this fell through to
+            # the timing branch and printed "You sold AAVE/USD on None (); the
+            # replay held until None (None)" — a sale that didn't happen, on
+            # neither side, about a position both still hold.
+            pass
         elif not m["live_exit_day"] and m["sim_exit_day"]:
             # The replay is out and you are still in. Without this the row fell
             # through to "timing differs" and read "You sold ETH/USD on None ()"
