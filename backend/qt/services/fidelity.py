@@ -313,6 +313,16 @@ def _trade_log(matched: list[dict], live_only: list[dict], backtest_only: list[d
             event(m.get("live_exit_at") or m["live_exit_day"], m["live_exit_day"], m["symbol"],
                   "sold", "match",
                   f"Both sold {m['symbol']}, {m['sim_exit_reason'] or 'same reason'}{when}.")
+        elif not m["live_exit_day"] and m["sim_exit_day"]:
+            # The replay is out and you are still in. Without this the row fell
+            # through to "timing differs" and read "You sold ETH/USD on None ()"
+            # — a sale that never happened, with no date, about a position still
+            # open. Stamped with the REPLAY's exit, because that is the only
+            # moment this row is about.
+            event(m.get("sim_exit_at") or m["sim_exit_day"], m["sim_exit_day"], m["symbol"],
+                  "sold", "replay sold, you held",
+                  f"The replay sold {m['symbol']} on {m['sim_exit_day']} "
+                  f"({m['sim_exit_reason']}). You are still holding it.")
         elif not m["exit_day_matches"]:
             event(m.get("live_exit_at") or m["live_exit_day"], m["live_exit_day"], m["symbol"],
                   "sold", "timing differs",

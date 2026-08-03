@@ -613,12 +613,28 @@ def test_a_seeded_symbol_becomes_eligible_and_gets_its_bars(cache):
     assert seeded.seeded == ["SOL/USD"]
 
 
-def test_seeding_never_narrows_a_day_the_movers_cache_says_nothing_about(cache):
-    """A day absent from eligible_by_day is UNRESTRICTED in run_backtest. Adding
-    a key for it would cut that day's universe down to the seeds — the exact
-    opposite of what seeding is for."""
+def test_seeding_opens_a_day_the_movers_cache_says_nothing_about(cache):
+    """This test previously asserted the OPPOSITE — that a day with no movers row
+    must stay absent, because absent means UNRESTRICTED in run_backtest and
+    naming it would cut that day down to the seeds. Reversed deliberately, on
+    evidence from the live instance.
+
+    The movers cache only gains a row for a day once that day's DAILY bar exists,
+    and the sweep refuses today's still-forming bar. So "today" never has a row —
+    and a comparison of a strategy switched on this morning is entirely about
+    today. The old rule therefore dropped every seed on the only day that had
+    trades (`universe.seeded` came back empty on a report with six of them), and
+    left that day ungated, so the replay bought two names off its own bat and the
+    report announced them as inventions. Both halves were artefacts of the gap.
+
+    A day with no reconstruction cannot honestly be judged in either direction.
+    Gating it to the seeds at least makes the trades under comparison judgeable,
+    and `seeded` says plainly that the universe was handed over rather than
+    rebuilt. The cost is real and accepted: on such a day the replay can no
+    longer surface a name the live engine missed."""
     ds = _dataset(seed_by_day={"2026-08-03": ["SOL/USD"]})
-    assert "2026-08-03" not in ds.eligible_by_day
+    assert ds.eligible_by_day["2026-08-03"] == {"SOL/USD"}
+    assert "SOL/USD" in ds.seeded
 
 
 def test_a_symbol_the_movers_already_had_is_not_reported_as_seeded(cache):
@@ -819,3 +835,36 @@ def test_a_scanner_comparison_seeds_the_names_the_engine_traded(client, configur
     assert body["universe"]["from_daily_movers"] is True
     assert body["universe"]["scanner_config_is_current"] is True
 
+
+
+def test_a_still_open_live_position_is_not_reported_as_a_sale():
+    """The replay exited and the live trade is still open. That fell through to
+    the timing-differs branch and rendered "You sold ETH/USD on None ()" — a sale
+    that never happened, with no date, about a position the user still holds.
+
+    The row is stamped with the REPLAY's exit, because that is the only moment it
+    is about; without it the row also had no time and sorted to the top."""
+    from qt.services.fidelity import compare
+
+    live = [{
+        "symbol": "ETH/USD", "entry_day": "2026-08-03", "status": "open",
+        "entry_price": 1872.0, "entry_at": "2026-08-03T01:03:00Z",
+        "exit_day": None, "exit_at": None, "exit_reason": "",
+    }]
+    result = {
+        "trade_list": [{
+            "symbol": "ETH/USD", "entry_day": "2026-08-03", "entry_price": 1870.0,
+            "exit_day": "2026-08-03", "exit_price": 1847.0,
+            "exit_reason": "stop-loss: -1.24% <= -1%",
+            "sim_exit_at": "2026-08-03T04:15:00Z",
+        }],
+        "open_positions": [],
+    }
+    report = compare(live, result, replayed_symbols=["ETH/USD"])
+    sold = [r for r in report["log"] if r["action"] == "sold"]
+    assert len(sold) == 1
+    row = sold[0]
+    assert row["verdict"] == "replay sold, you held"
+    assert "still holding it" in row["detail"]
+    assert "None" not in row["detail"], "a sale that never happened"
+    assert row["day"] == "2026-08-03", "the row must carry the replay's exit day"

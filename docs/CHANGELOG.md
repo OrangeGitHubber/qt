@@ -3,6 +3,31 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Two artefacts that were reading as findings (2026-08-03)
+
+**"The replay invented BTC/USD"** — it didn't. The movers cache only gains a row
+for a day once that day's *completed* daily bar exists, and today never has one.
+A day with no row was treated as having no universe restriction at all, so on
+today the replay was free to buy anything it had bars for, and the report
+announced those purchases as inventions.
+
+The same gap silently disabled the seeding added yesterday: seeds could join a
+day that already had a row, but not open one — so on the only day that had any
+trades, nothing was seeded. That is why two names you really bought still read
+as "wasn't in the universe".
+
+Both halves are now closed: a day the cache says nothing about is opened by the
+seeds themselves. The trade-off is real and worth knowing — on such a day the
+replay can no longer surface a name your engine missed, and the report says
+plainly that the universe was handed over rather than rebuilt.
+
+**"You sold ETH/USD on None ()"** — a sale that never happened, with no date,
+about a position you are still holding. When the replay exits and the live trade
+is still open, that is now its own verdict: *"The replay sold ETH/USD … You are
+still holding it."* The row is stamped with the replay's exit, which is the only
+moment it is about — previously it had no time at all and sorted to the top of
+the log.
+
 ## Crypto fees are paid in the coin, and QT now knows it (2026-08-03)
 
 A stream of Slack alerts said things like *"QT's open trades total 2.1322

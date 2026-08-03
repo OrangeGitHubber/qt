@@ -431,12 +431,25 @@ def load_scanner_replay_dataset(
             day: {s.strip().upper() for s in syms if s and s.strip()}
             for day, syms in (seed_by_day or {}).items()
         }
+        # Seeds must be able to OPEN a day, not merely join one. The movers cache
+        # only gains a row for a day once that day's DAILY bar exists, and the
+        # sweep deliberately refuses today's still-forming bar — so "today" never
+        # has a row, and a comparison of a strategy switched on this morning is
+        # entirely about today. Iterating movers alone therefore dropped every
+        # seed on the one day that mattered, leaving `seeded` empty.
+        #
+        # It also mattered in the other direction: run_backtest treats a day
+        # ABSENT from eligible_by_day as UNRESTRICTED, so that day let the replay
+        # buy anything it had bars for — which is where "the replay invented
+        # BTC/USD and DOGE/USD" came from. Naming the day, even with only the
+        # seeds, gates it.
+        all_days = set(movers) | set(seeds_by_day)
         eligible_by_day = {
-            day: set(syms) | pinned | seeds_by_day.get(day, set())
-            for day, syms in movers.items()
+            day: set(movers.get(day, ())) | pinned | seeds_by_day.get(day, set())
+            for day in all_days
         }
         seeded = sorted(
-            {s for day in movers for s in seeds_by_day.get(day, set())} - pinned
+            {s for day in all_days for s in seeds_by_day.get(day, set())} - pinned
             - {s for syms in movers.values() for s in syms}
         )
         union = sorted(
