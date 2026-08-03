@@ -1,3 +1,16 @@
+def test_a_quiet_pair_that_fails_the_gain_rule_is_rejected_on_the_gain():
+    """The note must never masquerade as a reason. A quiet pair that also fails
+    min-gain is rejected for the gain, and the print age is not mentioned at all
+    — rejections carry the rule that stopped them, nothing else."""
+    quiet_and_weak = Candidate(
+        symbol="QUIET/USD", asset_class="crypto", price=1.0, change_pct=0.01, vwap=0.5,
+        last_trade_at=NOON_ET - timedelta(minutes=CRYPTO_QUIET_TRADE_MINUTES * 3),
+    )
+    ok, reason = evaluate_entry(params(), quiet_and_weak, NOON_ET)
+    assert not ok
+    assert "day gain" in reason and "last print" not in reason
+
+
 """Exhaustive tests for the pure decision functions — the risk rails are
 the product's safety case, so every rail gets both a pass and a fail test."""
 
@@ -5,7 +18,7 @@ from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from qt.services.engine import (
-    CRYPTO_STALE_TRADE_MINUTES,
+    CRYPTO_QUIET_TRADE_MINUTES,
     NONFILL_COOLDOWN_MAX_HOURS,
     RISK_DEFAULTS,
     Candidate,
@@ -662,26 +675,22 @@ def _crypto(minutes_old: float | None, **kw) -> Candidate:
     return Candidate(**base)
 
 
-def test_a_crypto_pair_with_no_recent_prints_is_skipped():
-    """RENDER/USD: last print frozen for over an hour while its bar-derived
-    change kept moving, so every gate that reads the change waved it through.
-
-    Expressed relative to the threshold, not as a literal — the first version
-    hard-coded 90 minutes and silently stopped testing anything the moment the
-    threshold was raised past it."""
-    stale = CRYPTO_STALE_TRADE_MINUTES * 2
-    ok, reason = evaluate_entry(params(entry={"require_above_vwap": False}), _crypto(stale), NOON_ET)
-    assert not ok
-    assert f"no trades on this pair for {stale:.0f}m" in reason
-
-
-def test_a_normally_quiet_major_pair_is_not_blocked():
-    """THE regression. At 15 minutes this guard skipped five of eight major
-    pairs on a Monday midday — DOT 31m, ADA 21m, LINK 32m, AVAX 32m, DOGE 166m.
-    Alpaca's crypto venue prints sparsely even on its most liquid names, so a
-    tight threshold blocks real trades. Half an hour of quiet must pass."""
-    ok, reason = evaluate_entry(params(entry={"require_above_vwap": False}), _crypto(35), NOON_ET)
+def test_a_quiet_crypto_pair_is_reported_but_not_blocked():
+    """This USED to reject the entry. It was wrong twice over: five of eight
+    major pairs breach any tight threshold on an ordinary day (DOGE went 180
+    minutes), and Alpaca fills crypto against market-maker QUOTES rather than
+    recent trades, so print age never measured what decides a fill. A quiet tape
+    is now said out loud and nothing more."""
+    quiet = CRYPTO_QUIET_TRADE_MINUTES * 3
+    ok, reason = evaluate_entry(params(entry={"require_above_vwap": False}), _crypto(quiet), NOON_ET)
     assert ok, reason
+    assert f"last print {quiet:.0f}m ago" in reason
+
+
+def test_a_recently_trading_pair_says_nothing_about_prints():
+    """The note has to be exceptional or it is noise on every crypto row."""
+    ok, reason = evaluate_entry(params(entry={"require_above_vwap": False}), _crypto(2), NOON_ET)
+    assert ok and "last print" not in reason
 
 
 def test_a_freshly_trading_pair_passes():
@@ -735,17 +744,3 @@ def test_a_naive_print_time_is_declared_utc():
     assert got is not None
     assert got.tzinfo is not None and got.utcoffset() == timedelta(0)
     assert (got.year, got.hour, got.minute) == (2026, 21, 42)  # instant unchanged
-
-
-def test_a_stale_pair_is_rejected_before_the_gain_and_vwap_rules():
-    """Ordering is the point of the guard: a dead pair that ALSO fails min-gain
-    must be reported as dead. Blaming the gain sends you to tune a rule that was
-    never the problem — which is exactly how RENDER cost a day."""
-    stale_and_weak = Candidate(
-        symbol="DEAD/USD", asset_class="crypto", price=1.0, change_pct=0.01, vwap=99.0,
-        last_trade_at=NOON_ET - timedelta(minutes=CRYPTO_STALE_TRADE_MINUTES * 2),
-    )
-    ok, reason = evaluate_entry(params(), stale_and_weak, NOON_ET)
-    assert not ok
-    assert "no trades on this pair" in reason
-    assert "day gain" not in reason and "VWAP" not in reason

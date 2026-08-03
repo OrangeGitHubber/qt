@@ -12,11 +12,11 @@ from unittest.mock import AsyncMock, patch
 
 from qt.broker.alpaca import AlpacaClient
 from qt.services import engine
-from qt.services.engine import CRYPTO_STALE_TRADE_MINUTES, evaluate_entry
+from qt.services.engine import CRYPTO_QUIET_TRADE_MINUTES, evaluate_entry
 
 SYMBOL = "STALE/USD"
 NOW = datetime.now(timezone.utc)
-STALE_AT = NOW - timedelta(minutes=CRYPTO_STALE_TRADE_MINUTES * 2)
+STALE_AT = NOW - timedelta(minutes=CRYPTO_QUIET_TRADE_MINUTES * 3)
 
 
 def _snap(traded_at: datetime) -> dict:
@@ -70,9 +70,10 @@ async def test_pool_metrics_returns_the_print_time_map():
     assert abs((trade_at[SYMBOL] - STALE_AT).total_seconds()) < 2
 
 
-async def test_a_stale_pair_built_this_way_is_actually_rejected():
-    """End to end: snapshot -> builder -> entry rules. This is the claim the
-    feature makes, and the only test that fails if ANY link in the chain breaks."""
+async def test_the_print_age_reaches_the_entry_reason_end_to_end():
+    """snapshot -> builder -> entry rules. The only test that fails if ANY link
+    in the chain breaks. It no longer asserts a rejection: print age is reported,
+    not enforced."""
     with (
         patch.object(AlpacaClient, "crypto_snapshots", new=AsyncMock(return_value={SYMBOL: _snap(STALE_AT)})),
         patch.object(engine.scanner, "crypto_rolling_stats", new=AsyncMock(return_value={SYMBOL: (1.3749, 5.0, 9_000.0)})),
@@ -80,5 +81,5 @@ async def test_a_stale_pair_built_this_way_is_actually_rejected():
         cands = await engine._symbol_candidates(_client(), "crypto", [SYMBOL])
     params = {"entry": {"min_day_gain_pct": 0, "require_above_vwap": False}, "exit": {}}
     ok, reason = evaluate_entry(params, cands[0], datetime.now(timezone.utc))
-    assert not ok
-    assert "no trades on this pair" in reason
+    assert ok, reason
+    assert "last print" in reason

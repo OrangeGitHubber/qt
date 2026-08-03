@@ -90,8 +90,8 @@ class Candidate:
     rank_of: int | None = None
     # When this symbol last actually TRADED, per the snapshot's latestTrade.
     # None = the snapshot didn't carry one. Crypto only acts on this (see
-    # CRYPTO_STALE_TRADE_MINUTES): a pair with no recent prints has nothing to
-    # fill a market order against, whatever its 24h volume says.
+    # CRYPTO_QUIET_TRADE_MINUTES): reported in the entry reason so a later
+    # non-fill has its explanation beside it. It decides nothing.
     last_trade_at: datetime | None = None
 
 
@@ -129,23 +129,26 @@ class RailContext:
 # attempt goes through — if that fills, the streak is over; if it misses, the
 # window doubles. No new state to persist: the streak is read back off the
 # journal, so it survives a restart, which an in-memory counter would not.
-# A crypto pair with no recent prints has nothing to fill a market order
-# against. RENDER/USD's last trade sat at exactly $1.3749 for over 90 minutes
-# while its bar-derived 24h change kept moving, so every gate that reads the
-# change waved it through and every order then sat unfilled.
+# How long a crypto pair can go without a print before the trace says so. This
+# is INFORMATION, not a veto — it used to block the entry, and that was wrong.
 #
-# The threshold was 15 minutes, chosen from that one incident during a Sunday
-# night trough and shipped with the caveat that it was a guess. It was: measured
-# on a Monday midday, FIVE of eight major pairs exceeded it — DOT 31m, ADA 21m,
-# LINK 32m, AVAX 32m, DOGE 166m. Alpaca's own crypto venue simply prints
-# sparsely, even on its most liquid names, so 15 minutes blocked real trades.
+# The reasoning behind the block was that a pair with no recent trades has
+# nothing to fill against, generalised from RENDER/USD sitting frozen at exactly
+# $1.3749 for over 90 minutes while every order against it went unfilled. Two
+# things were wrong with it. Measured on a Monday midday, five of eight MAJOR
+# pairs exceeded a 15-minute threshold and DOGE/USD — one of the most heavily
+# traded coins there is — exceeded 120 minutes; Alpaca's crypto venue simply
+# prints sparsely. And more fundamentally, Alpaca fills crypto against
+# market-maker QUOTES, not against recent trades, so print age was never
+# measuring the thing that decides whether an order fills. RENDER was a pair
+# where both happened to be dead, and one incident is not a rule.
 #
-# 120 minutes now: a backstop for the egregious rather than a predictor. The
-# real defence against a pair that cannot fill is the non-fill cooldown, which
-# is EVIDENCE — three actual failures — instead of a guess about what a quiet
-# tape implies. And with IOC a failed attempt is cheap: the venue cancels it
-# instantly rather than leaving an order working.
-CRYPTO_STALE_TRADE_MINUTES = 120
+# What replaced it is evidence rather than prophecy: the non-fill cooldown backs
+# a symbol off after three OBSERVED failures, and with IOC each of those costs
+# nothing but the attempt. It also removes a divergence the replay could never
+# model — bars carry no print age — which was quietly making every fidelity
+# comparison of a crypto strategy unfaithful by construction.
+CRYPTO_QUIET_TRADE_MINUTES = 60
 
 NONFILL_STRIKES_BEFORE_COOLDOWN = 3
 NONFILL_COOLDOWN_BASE_HOURS = 1.0
@@ -170,15 +173,6 @@ def _money(v: float) -> str:
 
 def evaluate_entry(params: dict, candidate: Candidate, now_et: datetime) -> tuple[bool, str]:
     entry = params.get("entry", {})
-    # Before any rule that reads a price: is this price attached to a market that
-    # is still trading? Unknown (None) is not stale — see the helper.
-    if candidate.asset_class == "crypto" and candidate.last_trade_at is not None:
-        age_min = (now_et - candidate.last_trade_at).total_seconds() / 60
-        if age_min > CRYPTO_STALE_TRADE_MINUTES:
-            return False, (
-                f"no trades on this pair for {age_min:.0f}m "
-                f"(max {CRYPTO_STALE_TRADE_MINUTES:g}m) — nothing to fill against"
-            )
     min_gain = entry.get("min_day_gain_pct", 0)
     if candidate.change_pct < min_gain:
         return False, f"day gain {candidate.change_pct:.2f}% < required {min_gain:g}%"
@@ -222,6 +216,13 @@ def evaluate_entry(params: dict, candidate: Candidate, now_et: datetime) -> tupl
     # scraped in reads differently from one that sailed past — the rejection
     # reasons have always done this; the acceptance reason didn't.
     parts = [f"up {candidate.change_pct:.2f}% today" + (f" (min {min_gain:g}%)" if min_gain else "")]
+    # A quiet tape is worth SAYING when the entry is taken, so a later non-fill
+    # has its explanation sitting right next to it in the journal — but it must
+    # not decide anything. See CRYPTO_QUIET_TRADE_MINUTES.
+    if candidate.asset_class == "crypto" and candidate.last_trade_at is not None:
+        quiet_min = (now_et - candidate.last_trade_at).total_seconds() / 60
+        if quiet_min > CRYPTO_QUIET_TRADE_MINUTES:
+            parts.append(f"last print {quiet_min:.0f}m ago")
     if entry.get("require_above_vwap") and candidate.vwap is not None:
         parts.append(f"above VWAP {_money(candidate.vwap)}")
     elif entry.get("require_above_vwap"):

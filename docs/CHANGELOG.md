@@ -3,6 +3,31 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Quiet crypto pairs are noted, not refused (2026-08-03)
+
+The guard added yesterday refused to buy a crypto pair whose last trade was too
+old, reasoning that a pair with no prints has nothing to fill an order against.
+It is now an observation in the trade's reason and nothing more.
+
+It was wrong twice over. On an ordinary Monday five of eight major pairs were
+being turned away, DOGE/USD among them at three hours without a print — Alpaca's
+crypto venue simply prints sparsely, even on the most heavily traded coins in
+the world. And more fundamentally, Alpaca fills crypto against market-maker
+**quotes**, not against recent trades, so the age of the last print was never
+measuring the thing that decides whether an order fills. RENDER/USD happened to
+have both dead at once, and one incident is not a rule.
+
+What protects against a pair that genuinely cannot fill is the non-fill
+cooldown, which acts on three real failures rather than on a guess — and now
+that crypto buys are immediate-or-cancel, each of those failures costs nothing
+but the attempt.
+
+There is a quieter benefit too. Bar data carries no record of when a pair last
+printed, so the replay could never reproduce this rule; every fidelity
+comparison of a crypto strategy was unfaithful by construction for as long as it
+stood. When a pair has been quiet for over an hour the entry now says so, so a
+non-fill still has its explanation sitting next to it in the journal.
+
 ## The "no recent trades" guard was blocking real crypto trades (2026-08-03)
 
 Yesterday's guard skipped a crypto pair whose last trade was more than fifteen
