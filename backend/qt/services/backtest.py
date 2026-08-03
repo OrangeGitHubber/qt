@@ -23,6 +23,7 @@ from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
+from math import floor, log10
 from zoneinfo import ZoneInfo
 
 from qt.broker.alpaca import AlpacaClient
@@ -119,6 +120,38 @@ def _bar_seconds(timeline: list[datetime]) -> float | None:
     return deltas[len(deltas) // 2]
 
 
+def _median_bar_move_pct(prepared: dict[str, list[dict]]) -> float | None:
+    """The typical size of one bar's move, as a % — the median of |close-to-close|
+    across every symbol in the run.
+
+    This is the SCALE OF THE PHASE ERROR, and it exists so a fidelity report can
+    say where its own floor is. The replay samples at bar closes (:00). The live
+    engine ticks on a 60-second interval that started whenever the process did, so
+    it samples at :17, :18, :44 — an arbitrary, unknowable, unrecoverable offset.
+    Even with a perfect exit model and perfect data, the two are looking at
+    instants up to one bar apart, and one bar apart is worth about this much.
+
+    It is not a bound on any single trade: a threshold race decided differently by
+    the two sampling grids (live takes the stop, the replay takes the take-profit
+    a moment later) separates by the distance between two RULES, not by one bar's
+    move. It is the right order of magnitude for the residual, and its purpose is
+    to stop the chase — no finer bars fix this, because Alpaca's finest bar IS one
+    minute and the missing information is the phase of a clock nobody recorded.
+    Only tick data would, and QT does not have it.
+
+    None when there is nothing to measure."""
+    moves = [
+        abs(b["close"] / a["close"] - 1) * 100
+        for series in prepared.values()
+        for a, b in zip(series, series[1:])
+        if a["close"]
+    ]
+    if not moves:
+        return None
+    moves.sort()
+    return round(moves[len(moves) // 2], 4)
+
+
 def _apply_poller_view(prepared: dict[str, list[dict]], bar_seconds: float | None) -> bool:
     """Collapse each bar to what a 60-second POLLER could have seen, when the bars
     are no coarser than the poll itself. Returns whether it did.
@@ -152,6 +185,33 @@ def _apply_poller_view(prepared: dict[str, list[dict]], bar_seconds: float | Non
         for bar in series:
             bar["high"] = bar["low"] = bar["close"]
     return True
+
+
+def _price(v: float | None) -> float | None:
+    """A price rounded for OUTPUT, with the precision it actually has.
+
+    Four decimals everywhere was fine for a stock and destroyed a coin. SHIB/USD
+    trades near $0.00001, and `round(0.0000123, 4)` is `0.0` — so a serialized
+    trade carried a zero entry price, and qt.services.fidelity._pct_delta then
+    computed (0 - live)/live = -100% and fed that into `median_entry_delta_pct`,
+    `measured_cost_per_side_pct` and `suggested_spread_pct`. Those are the numbers
+    the fidelity report exists to produce, and the last of them is copied straight
+    into the backtest's spread setting: a measuring instrument was corrupting its
+    own measurement, and only the median's robustness kept it from being obvious.
+
+    Rounding is NOT the enemy and is deliberately kept — it is what stops the UI
+    printing fourteen digits of float noise (see fidelity.compare). So: four
+    decimals from a dollar up, exactly as before, and SIX SIGNIFICANT FIGURES
+    below a dollar, which is the same discipline engine._money applies with its
+    2/4/6 ladder, carried far enough down to survive a sub-cent asset.
+
+    Only ever applied on the way OUT. Every P&L, fill, fee and equity figure in
+    this module is computed from the unrounded value and is unaffected."""
+    if v is None:
+        return None
+    if v == 0 or abs(v) >= 1:
+        return round(v, 4)
+    return round(v, 5 - floor(log10(abs(v))))
 
 
 def _fill_price(trigger: dict, bar: dict) -> float:
@@ -545,23 +605,50 @@ def _seed_losses(prior: dict[str, datetime] | None) -> dict[str, datetime]:
     }
 
 
+def _rolling_ref_at(ts: datetime) -> datetime:
+    """The instant the LIVE engine's "24h change" is actually measured from.
+
+    Not `ts - 24h`, and the difference is the whole point. Live reads the figure
+    off HOURLY bars: scanner.crypto_rolling_stats asks for ~25h of them and
+    scanner.rolling_24h keeps the newest 24, then takes the OPEN of the oldest one
+    in that window. Bars start on the hour, so that open is the price at
+    `floor_to_hour(now) - 23h` — anywhere from 1 to 60 minutes NEWER than 24h ago,
+    depending only on how far into the hour the engine happened to tick.
+
+    The replay was measuring from `ts - 24h` exactly. On daily bars the two pick
+    the same bar and nothing changes, which is why this went unnoticed for so
+    long; on 1-minute bars they are up to an hour apart, and an hour of crypto is
+    easily a few tenths of a percent. Against a 0% minimum-gain gate a few tenths
+    of a percent is the entire decision, so the replay bought names the engine had
+    never seen a positive number for — and the fidelity report filed those as
+    trades the backtest INVENTED, i.e. as a fault in the strategy logic, when the
+    two sides were simply reading the tape from different instants.
+
+    Modelling live's quantisation rather than "fixing" it is the same choice
+    _apply_poller_view makes about the 60-second tick: the replay's job is to
+    reproduce what the engine could see, not to be more right than it. Changing
+    the live definition instead would move real trading behaviour to make a
+    measuring instrument agree with itself, which is backwards."""
+    return ts.replace(minute=0, second=0, microsecond=0) - timedelta(hours=23)
+
+
 def _prepare(bars: list[dict], day_of=_et_day, rolling_24h: bool = False) -> list[dict]:
     """Annotate each bar with day-gain and a running intraday VWAP. `day_of`
     buckets bars into trading days (ET for stocks, UTC for crypto).
 
     Day-gain baseline: stocks measure vs the previous SESSION day's close;
-    crypto (`rolling_24h=True`) measures vs the close ~24h back — the same
-    rolling definition the scanner/engine/watchlist use live (crypto has no
-    session day). On DAILY crypto bars the two are identical (closes sit
-    exactly 24h apart), so daily backtests are unchanged; on intraday bars the
-    rolling baseline is what makes the backtest faithful to live."""
+    crypto (`rolling_24h=True`) measures vs the price at the same instant the
+    live engine's rolling 24h figure measures from — see _rolling_ref_at, which
+    is where the "~24h" is pinned down exactly. On DAILY crypto bars that lands on
+    the previous daily bar either way, so daily backtests are unchanged; on
+    intraday bars it is what makes the replay's day-gain the engine's day-gain."""
     out = []
     prev_day_close: float | None = None
     cur_day: str | None = None
     last_close: float | None = None
     cum_pv = cum_v = 0.0
     parsed = [_parse_ts(b["t"]) for b in bars]
-    ref_idx = -1  # rolling mode: newest bar at least 24h older than the current one
+    ref_idx = -1  # rolling mode: newest bar strictly before live's reference instant
     for i, bar in enumerate(bars):
         ts = parsed[i]
         day = day_of(ts)
@@ -574,10 +661,15 @@ def _prepare(bars: list[dict], day_of=_et_day, rolling_24h: bool = False) -> lis
         cum_pv += float(bar.get("vw") or bar["c"]) * volume
         cum_v += volume
         if rolling_24h:
-            cutoff = ts - timedelta(hours=24)
-            while ref_idx + 1 < i and parsed[ref_idx + 1] <= cutoff:
+            # STRICTLY before the reference instant, so the bar taken is the one
+            # that ENDS on it: the close of the 13:59 minute bar is the price at
+            # 14:00, which is exactly the open of the 14:00 hourly bar live reads.
+            # `<=` would take the bar that starts there instead and land a minute
+            # late. Monotonic in ts, so the incremental walk is still valid.
+            cutoff = _rolling_ref_at(ts)
+            while ref_idx + 1 < i and parsed[ref_idx + 1] < cutoff:
                 ref_idx += 1
-            ref = float(bars[ref_idx]["c"]) if ref_idx >= 0 and parsed[ref_idx] <= cutoff else None
+            ref = float(bars[ref_idx]["c"]) if ref_idx >= 0 and parsed[ref_idx] < cutoff else None
             change_pct = ((bar["c"] / ref - 1) * 100) if ref else None
         else:
             change_pct = ((bar["c"] / prev_day_close - 1) * 100) if prev_day_close else None
@@ -802,6 +894,9 @@ def run_backtest(
     # Coarser bars are untouched, so every 15-minute/hourly/daily backtest keeps
     # the intra-bar model.
     bar_seconds = _bar_seconds(sorted({b["ts"] for s in prepared.values() for b in s}))
+    # Measured BEFORE nothing in particular — the poller view rewrites high/low,
+    # never close — but read here so it sits next to the model it qualifies.
+    bar_move_pct = _median_bar_move_pct(prepared)
     poller_view = _apply_poller_view(prepared, bar_seconds)
     # chronological event stream across all symbols
     events: dict[datetime, dict[str, dict]] = {}
@@ -1073,7 +1168,7 @@ def run_backtest(
             contrib.append({
                 "symbol": s,
                 "qty": t.qty if t else 0,
-                "price": round(last_price[s], 4) if s in last_price else None,
+                "price": _price(last_price[s]) if s in last_price else None,
                 "day_pnl": round(pnl, 2),
             })
         contrib.sort(key=lambda c: -abs(c["day_pnl"]))
@@ -1091,9 +1186,9 @@ def run_backtest(
         open_value += mark_price * trade.qty
         open_positions.append({
             "symbol": symbol, "qty": trade.qty,
-            "entry_price": round(trade.entry_price, 4), "entry_at": trade.entry_at.isoformat(),
+            "entry_price": _price(trade.entry_price), "entry_at": trade.entry_at.isoformat(),
             "entry_day": day_of(trade.entry_at), "entry_reason": trade.entry_reason,
-            "mark_price": round(mark_price, 4),
+            "mark_price": _price(mark_price),
             "unrealized_pnl": round((mark_price - trade.entry_price) * trade.qty, 2),
         })
 
@@ -1187,6 +1282,9 @@ def run_backtest(
         # at the trigger level, because a 60-second poller would have sampled it.
         "exit_model": "poller" if poller_view else "intrabar",
         "bar_seconds": bar_seconds,
+        # How far apart two sampling grids one bar out of phase can land — the
+        # floor under any exit comparison. See _median_bar_move_pct.
+        "median_bar_move_pct": bar_move_pct,
         # What the commissions actually took, in dollars. A rate in the header is
         # abstract; "$412 of fees on 63 round trips" is the number that decides
         # whether a strategy this busy can carry its own costs.
@@ -1225,13 +1323,13 @@ def run_backtest(
         "trade_list": [
             {
                 "symbol": t.symbol, "qty": t.qty,
-                "entry_price": round(t.entry_price, 4), "entry_at": t.entry_at.isoformat(),
+                "entry_price": _price(t.entry_price), "entry_at": t.entry_at.isoformat(),
                 # Day strings so the chart can place markers without the frontend
                 # re-deriving timezones and drifting off by a day (ET for stocks,
                 # UTC for crypto — matching the equity-curve day index).
                 "entry_day": day_of(t.entry_at),
                 "entry_reason": t.entry_reason,
-                "exit_price": round(t.exit_price or 0, 4),
+                "exit_price": _price(t.exit_price or 0),
                 "exit_at": t.exit_at.isoformat() if t.exit_at else None,
                 "exit_day": day_of(t.exit_at) if t.exit_at else None,
                 "exit_reason": t.exit_reason, "pnl": t.pnl,
@@ -1340,6 +1438,13 @@ def run_portfolio_backtest(
             for series in by_symbol.values()
             for b in series
         })
+    )
+    bar_move_pct = _median_bar_move_pct(
+        {
+            f"{sid}:{symbol}": series
+            for sid, by_symbol in prepared_by_strategy.items()
+            for symbol, series in by_symbol.items()
+        }
     )
     poller_view = False
     for by_symbol in prepared_by_strategy.values():
@@ -1513,9 +1618,9 @@ def run_portfolio_backtest(
         unrealized_by_strat[trade.strategy_id] = unrealized_by_strat.get(trade.strategy_id, 0.0) + u
         open_positions.append({
             "symbol": symbol, "qty": trade.qty,
-            "entry_price": round(trade.entry_price, 4), "entry_at": trade.entry_at.isoformat(),
+            "entry_price": _price(trade.entry_price), "entry_at": trade.entry_at.isoformat(),
             "entry_day": day_of(trade.entry_at), "entry_reason": trade.entry_reason,
-            "mark_price": round(mark_price, 4), "unrealized_pnl": u,
+            "mark_price": _price(mark_price), "unrealized_pnl": u,
             "strategy_id": trade.strategy_id, "strategy_name": trade.strategy_name,
         })
 
@@ -1573,6 +1678,7 @@ def run_portfolio_backtest(
         "spread_cost_pct_per_side": spread_pct,
         "exit_model": "poller" if poller_view else "intrabar",  # see run_backtest
         "bar_seconds": bar_seconds,
+        "median_bar_move_pct": bar_move_pct,  # see _median_bar_move_pct
         "max_deployed_usd": round(max_deployed, 2),
         "pct_capital_deployed": pct_deployed,
         "return_on_deployed_pct": return_on_deployed,
@@ -1594,10 +1700,10 @@ def run_portfolio_backtest(
             {
                 "symbol": t.symbol, "qty": t.qty,
                 "strategy_id": t.strategy_id, "strategy_name": t.strategy_name,
-                "entry_price": round(t.entry_price, 4), "entry_at": t.entry_at.isoformat(),
+                "entry_price": _price(t.entry_price), "entry_at": t.entry_at.isoformat(),
                 "entry_day": day_of(t.entry_at),
                 "entry_reason": t.entry_reason,
-                "exit_price": round(t.exit_price or 0, 4),
+                "exit_price": _price(t.exit_price or 0),
                 "exit_at": t.exit_at.isoformat() if t.exit_at else None,
                 "exit_day": day_of(t.exit_at) if t.exit_at else None,
                 "exit_reason": t.exit_reason, "pnl": t.pnl,

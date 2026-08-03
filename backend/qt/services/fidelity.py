@@ -38,7 +38,14 @@ def _pct_delta(live: float | None, sim: float | None) -> float | None:
     """How far the simulated price sat from the live one, as a % of the live
     price. Positive = the backtest got a BETTER price than reality (it flatters
     itself); negative = it was more pessimistic than real life."""
-    if live in (None, 0) or sim is None:
+    # A ZERO on either side is a missing price, never a real one — nothing fills
+    # at $0. The `sim == 0` half is not hypothetical: serialization used to round
+    # every price to four decimals, so a SHIB/USD fill near $0.00001 arrived here
+    # as 0.0 and this returned a clean, plausible -100%, which then went into the
+    # slippage median that the backtest's spread setting is copied from. The
+    # rounding is fixed at source (backtest._price); this is the second lock,
+    # because a fabricated -100% is far worse than a gap in the sample.
+    if live in (None, 0) or sim in (None, 0):
         return None
     return round((sim - live) / live * 100, 4)
 

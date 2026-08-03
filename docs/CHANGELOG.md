@@ -3,6 +3,47 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## The fidelity comparison stops corrupting its own measurements (2026-08-03)
+
+Four faults in the instrument itself, found while trying to establish that the
+backtester can be trusted.
+
+**A coin worth a hundredth of a cent was priced at nothing.** Every price was
+rounded to four decimals on its way out of the backtest, so SHIB/USD near
+$0.00001 became exactly zero. The comparison then read that zero as a fill 100%
+below the real one and folded it into the slippage figure it suggests you type
+into the backtest's spread setting. Prices now keep four decimals from a dollar
+up — unchanged for every stock — and six significant figures below it. The
+backtest's own profit and loss was never affected; it always computed from the
+unrounded fill.
+
+**The report now says which exit model produced its numbers.** The backtest has
+said so since that model was introduced, but the fidelity report had not — which
+was the wrong way round, since the fidelity report is the thing whose exit
+numbers moved. A comparison split at strategy edits can honestly be a mixture of
+both models, and now says so rather than picking one.
+
+**The replay and the engine were reading a coin's "24-hour change" from two
+different moments.** Live reads it off hourly bars, so its reference is the price
+at the top of an hour between 23 and 24 hours back; the replay measured from
+exactly 24 hours back, to the minute. On daily bars both pick the same price,
+which is why it went unnoticed for so long. On the one-minute bars a fidelity
+comparison uses they can be an hour apart — easily enough to push a coin either
+side of a zero-percent entry gate. The replay was buying names the engine had
+never seen a gain on, and the report was filing them as trades the backtest had
+invented. The replay now measures from the same instant live does. **Live
+trading is unchanged** — the replay was made to match the engine, not the other
+way round.
+
+**And some difference cannot be removed, so the report now says how much.** The
+replay looks at the price when each minute closes; the live engine looks every
+sixty seconds counted from whenever it last started, so it looks at :17 or :44
+past the minute, and nothing records which. The two sample the market up to a
+minute apart. That floor is now measured from the run's own bars and printed
+beside the exit difference. Finer bars will not close it — one minute is the
+finest available, and what is missing is the phase of a clock, not the
+resolution of the tape.
+
 ## Exits are judged the way the engine actually sees them (2026-08-03)
 
 The backtester judged every exit against the bar's intra-bar high and low, and

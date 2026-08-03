@@ -154,6 +154,27 @@ export default function FidelityPanel() {
             </p>
           )}
 
+          {/* THE FLOOR UNDER THE EXIT NUMBERS. The line above used to end at "a
+              real disagreement rather than a gap between two bars", which is
+              true about the bar SIZE and not about the bar PHASE: the replay
+              samples on the minute and the live engine samples 60 seconds from
+              whenever it last started, and nothing records that offset. Without
+              this, a residual that cannot go away reads as a bug still to be
+              found. The server measures the number; the panel only says it. */}
+          {report.exit_model?.note && (
+            <p className="hint">
+              Exits judged as{" "}
+              <strong>
+                {report.exit_model.model === "poller"
+                  ? "a 60-second poll"
+                  : report.exit_model.model === "mixed"
+                    ? "a mix of models"
+                    : "an intra-bar breach"}
+              </strong>
+              . {report.exit_model.note}
+            </p>
+          )}
+
           {(report.bar_gaps?.length ?? 0) > 0 && (
             <p className="hint warn">
               <IconWarn className="icon-inline" /> <strong>The replay had days with no price data.</strong> Read the

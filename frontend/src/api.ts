@@ -1252,6 +1252,21 @@ export interface FidelityReport {
   days: number;
   imported: boolean;
   timeframe?: string;
+  // HOW EXITS WERE JUDGED, and the floor under the exit numbers below. The
+  // backtest response has carried this since the poller model landed; without it
+  // here, the report whose exit numbers moved could not say what moved them.
+  // "mixed" = a segmented comparison whose stretches used different bar sizes.
+  exit_model?: {
+    model: "poller" | "intrabar" | "mixed" | null;
+    bar_seconds: number | null;
+    poll_seconds: number;
+    // The measured size of one bar's move. The live engine's 60-second tick is
+    // out of phase with the bar clock by an unrecorded amount, so the two sides
+    // sample instants up to one bar apart — this is roughly what that is worth,
+    // and it is a floor, not a bug.
+    poll_phase_floor_pct: number | null;
+    note: string;
+  };
   bar_gaps?: { after: string; before: string; days: number }[];
   // False for paper: the broker simulates those fills, so the cost half would be
   // measuring a simulation rather than a market.

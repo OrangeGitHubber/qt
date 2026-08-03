@@ -46,7 +46,7 @@ from qt.broker.alpaca import AlpacaClient
 from qt.db import get_session
 from qt.api import baskets as baskets_api
 from qt.models import AuditLog, BasketItem, Strategy, StrategyConfigVersion, Trade
-from qt.services import fidelity
+from qt.services import backtest, fidelity
 from qt.services.backtest import _day_fn
 from qt.services.engine import get_risk
 from qt.timeutil import utc_aware
@@ -972,6 +972,67 @@ def _merge_segment_results(segments: list[_Segment]) -> tuple[dict, list[str], l
     return combined, symbols, gaps
 
 
+def _exit_model(results: list[dict]) -> dict:
+    """How the replay judged EXITS, carried into the fidelity report.
+
+    /api/backtest has reported `exit_model` and `bar_seconds` since the poller
+    model landed, and this endpoint did not — which put them in the one place
+    they are least needed and left them out of the one place they are most. The
+    fidelity report IS the thing whose exit numbers moved when the model changed;
+    a reader looking at `median_exit_delta_pct` had no way to tell which model
+    produced it, so a number that halved looked like luck.
+
+    "mixed" is a real answer, not a fudge: a segmented comparison picks a bar size
+    per stretch (see _timeframe_for), so one half of a report can be poller-modelled
+    and the other half not. `bar_seconds` then reports the COARSEST stretch,
+    matching _apply_poller_view's rule that an unknown or coarse resolution must
+    never be the answer that flatters a stop.
+
+    `poll_phase_floor_pct` is the residual nobody can remove. See the note.
+    """
+    models = {r.get("exit_model") for r in results if r.get("exit_model")}
+    seconds = [r.get("bar_seconds") for r in results if r.get("bar_seconds") is not None]
+    moves = [
+        r.get("median_bar_move_pct") for r in results
+        if r.get("median_bar_move_pct") is not None
+    ]
+    model = models.pop() if len(models) == 1 else ("mixed" if models else None)
+    # The LARGEST across stretches, for the same reason bar_seconds is: a floor
+    # under a residual must never be quoted lower than the evidence supports, or
+    # it turns into an invitation to chase what it was written to stop.
+    floor_pct = max(moves) if moves else None
+    return {
+        "model": model,
+        "bar_seconds": max(seconds) if seconds else None,
+        "poll_seconds": backtest.LIVE_POLL_SECONDS,
+        # The measured size of one bar's move — the scale of the gap that the
+        # replay's clock being out of phase with the engine's opens up. See
+        # qt.services.backtest._median_bar_move_pct.
+        "poll_phase_floor_pct": floor_pct,
+        "note": (
+            "The replay looks at the price when each bar CLOSES, on the minute. The live"
+            " engine looks every 60 seconds counted from whenever it last started, so its"
+            " looks land at some arbitrary second past the minute — :17, :18 and :44 have"
+            " all been seen. Nothing records that offset, so the two are sampling instants"
+            " up to one bar apart, and the exits they pick can differ by about the size of"
+            " one bar's move"
+            + (f" (measured here: {floor_pct:g}%)" if floor_pct is not None else "")
+            + ". That is the FLOOR under the exit difference below, not a bug to chase:"
+            " finer bars cannot fix it, because one minute is the finest bar there is and"
+            " the missing information is the phase of a clock, not the resolution of the"
+            " tape. Only tick data would close it."
+        )
+        if model == "poller"
+        else (
+            "Exits were judged against each bar's high and low, because the bars are"
+            " coarser than the live engine's 60-second look — over a bar that long the"
+            " engine would have sampled a breach many times. A comparison of individual"
+            " FILLS wants a short enough window to be replayed on 1-minute bars; this one"
+            " is measuring behaviour in general."
+        ),
+    }
+
+
 def _segment_rows(segments: list[_Segment]) -> list[dict]:
     """What the UI needs to say a comparison was split, and how honest each piece
     of it is."""
@@ -1454,6 +1515,10 @@ async def compare(
     report["days"] = body.days
     report["imported"] = body.imported_trades is not None
     report["timeframe"] = timeframe
+    # WHICH EXIT MODEL produced the exit numbers in this report, and where their
+    # floor is. Both are properties of the replay that the reader cannot infer
+    # from anything else on screen. See _exit_model.
+    report["exit_model"] = _exit_model(results)
     # Gaps in the replay's data invalidate a mismatch before it means anything:
     # a "trade the backtest missed" on a day with no bars is a cache problem, not
     # a replay bug. Carried through so the UI can say which it is.
