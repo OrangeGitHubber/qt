@@ -81,6 +81,12 @@ pressing it once. Nothing told you that, and until you did, the backtest simply
 refused. That was never a decision worth asking a user to make — the app already
 knows whether it needs the data.
 
+**Corrected the same day:** the build asked "are there daily bars?" when what a
+scanner replay needs is the day-by-day *movers*. An ordinary backtest caches the
+bars of whatever symbols it tested, so on any instance that had ever run one, the
+cache looked built and the automatic build never ran — leaving the very error it
+was meant to remove. It now asks about movers.
+
 **It builds itself.** When an enabled strategy uses the scanner as its universe
 (alone, or alongside your watchlist) and there is no cache for that asset class,
 QT downloads a year of history and keeps it current from then on. It also runs

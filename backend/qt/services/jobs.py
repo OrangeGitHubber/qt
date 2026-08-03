@@ -130,9 +130,15 @@ async def daily_movers_sweep() -> None:
             # ahead of the trading-day gate: a year of history is just as
             # downloadable on a Sunday, and making the first build wait for
             # Monday is the same "come back later" the button was.
+            #
+            # "None" means no MOVERS, not no bars. An ordinary backtest caches
+            # the daily bars of the symbols it tested — barfetch writes this very
+            # table — so a bars check answers "already built" for a cache holding
+            # three symbols and no day-by-day risers at all, which is precisely
+            # the state a scanner replay cannot run on.
             sess = barcache.session()
             try:
-                empty = sess.query(barcache.DailyBar).first() is None
+                empty = sess.query(barcache.DailyMover).first() is None
             finally:
                 sess.close()
             if empty:
@@ -187,9 +193,10 @@ async def crypto_movers_sweep() -> None:
             except Exception:
                 log.exception("crypto movers sweep: could not open the bar cache")
                 return
+            # Movers, not bars — see the note in daily_movers_sweep.
             sess = barcache.session()
             try:
-                empty = sess.query(barcache.CryptoDailyBar).first() is None
+                empty = sess.query(barcache.CryptoDailyMover).first() is None
             finally:
                 sess.close()
             if empty:

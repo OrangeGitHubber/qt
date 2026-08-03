@@ -112,6 +112,56 @@ def test_a_scanner_plus_watchlist_strategy_counts_too(monkeypatch):
     assert built == [("stock", 365)]
 
 
+def test_bars_left_behind_by_an_ordinary_backtest_do_not_count_as_a_cache(monkeypatch):
+    """The state a real user is actually in, and the one that broke.
+
+    An ordinary backtest caches the daily bars of the few symbols it tested
+    (barfetch writes the same table the sweep does), so "are there daily bars?"
+    answers yes long before a scanner replay can work — that needs the day-by-day
+    MOVERS, which only a reconstruction produces. Gating the build on bars meant
+    the cache was declared already-built, the maintenance pass ran instead, and
+    the replay kept refusing with "no cached movers yet". Gate on the thing the
+    replay actually reads."""
+    Sess = _mem_cache(monkeypatch)
+    _wire(monkeypatch)
+    with Sess() as s:
+        # Two symbols, as a backtest of them would leave behind. No movers.
+        for sym in ("AAA", "BBB"):
+            barcache.save_daily_bars(s, sym, [
+                {"t": "2026-06-01T14:00:00Z", "o": 10, "h": 10, "l": 10, "c": 10, "v": 1e6, "vw": 10},
+            ])
+        s.commit()
+
+    built = _spy_bootstrap(monkeypatch)
+    sid = _scanner_strategy()
+    try:
+        asyncio.run(jobs.daily_movers_sweep())
+    finally:
+        _drop(sid)
+    assert built == [("stock", 365)]
+
+
+def test_the_crypto_job_builds_its_own_cache_too(monkeypatch):
+    """The stock job's tests could all pass while crypto never built anything —
+    they are separate functions over separate tables, and crypto is the side
+    Werner is using."""
+    Sess = _mem_cache(monkeypatch)
+    _wire(monkeypatch)
+    with Sess() as s:
+        barcache.save_daily_bars(s, "BTC/USD", [
+            {"t": "2026-06-01T00:00:00Z", "o": 10, "h": 10, "l": 10, "c": 10, "v": 1e6, "vw": 10},
+        ], model=barcache.CryptoDailyBar)
+        s.commit()
+
+    built = _spy_bootstrap(monkeypatch)
+    sid = _scanner_strategy(asset_class="crypto", universe="both")
+    try:
+        asyncio.run(jobs.crypto_movers_sweep())
+    finally:
+        _drop(sid)
+    assert built == [("crypto", 365)]
+
+
 def test_a_disabled_or_unrelated_strategy_does_not_build_it(monkeypatch):
     """Three ways to look like a reason to build without being one: paused, the
     wrong asset class, and a universe that never replays the scanner."""
@@ -148,10 +198,13 @@ def test_the_build_is_not_blocked_by_a_closed_market(monkeypatch):
 def test_daily_sweep_updates_a_populated_cache(monkeypatch):
     Sess = _mem_cache(monkeypatch)
     _wire(monkeypatch)
-    with Sess() as s:  # seed one bar so the cache counts as "already built"
+    # A cache counts as built when it has MOVERS — a bar on its own is what an
+    # ordinary backtest leaves behind, not evidence of a reconstruction.
+    with Sess() as s:
         barcache.save_daily_bars(s, "AAA", [
             {"t": "2026-06-01T14:00:00Z", "o": 10, "h": 10, "l": 10, "c": 10, "v": 1e6, "vw": 10},
         ])
+        barcache.store_movers(s, "2026-06-01", [("AAA", 5.0, 10.0, 1e7)])
         s.commit()
 
     called = {}
@@ -213,10 +266,12 @@ def test_crypto_sweep_maintains_a_populated_crypto_cache_every_calendar_day(monk
     24/7, so it's not gated to trading days)."""
     Sess = _mem_cache(monkeypatch)
     _wire(monkeypatch, trading=False)  # US market closed today — crypto must still run
-    with Sess() as s:  # only a crypto bar — the stock side is irrelevant here
+    with Sess() as s:  # only the crypto side — the stock tables are irrelevant here
         barcache.save_daily_bars(s, "BTC/USD", [
             {"t": "2026-06-01T00:00:00Z", "o": 100, "h": 100, "l": 100, "c": 100, "v": 1e6, "vw": 100},
         ], model=barcache.CryptoDailyBar)
+        barcache.store_movers(s, "2026-06-01", [("BTC/USD", 5.0, 100.0, 1e7)],
+                              model=barcache.CryptoDailyMover)
         s.commit()
 
     called = {}
