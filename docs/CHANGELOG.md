@@ -24,6 +24,15 @@ parameter searches on this". The one rule that overrides it: **an enabled
 strategy is always a top-level row**, never tucked behind a disclosure, because
 something that is trading must not be a click away.
 
+**The page is live now, and says how live.** Nothing on it used to refresh: the
+open-position counts and both expandable panels were read once and then aged
+silently, and the two panels didn't even age the same way — one re-read on every
+expand, the other cached its first answer forever, with nothing on screen to tell
+them apart. The list and any open panel now re-read every 30 seconds (never on a
+hidden tab), and each panel carries an **"as of 14:32:07"** stamp. Staleness you
+can see beats staleness you have to guess at, which matters most when you are
+watching a strategy trade.
+
 That meant the Enabled / Disabled split had to go — a family is usually one
 enabled parent and a pile of disabled drafts, and the split tore it in half.
 State is a filter now, with enabled-first as the default order, alongside search

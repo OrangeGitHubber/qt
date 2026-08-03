@@ -2921,3 +2921,12 @@ details.fold > summary > .cache-head {
   color: var(--accent);
   font-weight: 600;
 }
+
+/* "as of 14:32:07" beside a panel's summary. Deliberately quiet — it is there to
+   be checked when a number looks wrong, not to compete with the number. */
+.as-of {
+  margin-left: .4rem;
+  font-size: .75rem;
+  font-variant-numeric: tabular-nums;
+  opacity: .75;
+}

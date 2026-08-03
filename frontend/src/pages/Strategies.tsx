@@ -146,37 +146,91 @@ function Segmented<T extends string>({
   );
 }
 
+// How often the open panels and the list re-read the server. 30s is a
+// compromise: the engine ticks about once a minute, so anything faster mostly
+// re-fetches an unchanged answer, and anything slower means watching a strategy
+// trade with a page that lags behind the trade.
+const POLL_MS = 30_000;
+
+/** Lazily-loaded panel data that stays live for as long as its disclosure is
+ * open, and reports when it was last read.
+ *
+ * Shared by both panels on purpose. They were written separately and drifted:
+ * one refetched on every expand, the other cached its first answer forever, and
+ * nothing on screen distinguished them — so the honest-looking one and the stale
+ * one sat next to each other looking identical. One implementation cannot drift.
+ */
+function useLivePanel<T>(fetcher: () => Promise<T>) {
+  const [data, setData] = useState<T | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [at, setAt] = useState<Date | null>(null);
+  const [open, setOpen] = useState(false);
+  // A ref, not the loading flag: `load` must keep a stable identity for the
+  // interval below, and reading state inside it would capture a stale value.
+  const busy = useRef(false);
+
+  const load = useCallback(() => {
+    if (busy.current) return;
+    busy.current = true;
+    setLoading(true);
+    setErr(null);
+    fetcher()
+      .then((d) => {
+        setData(d);
+        setAt(new Date());
+      })
+      .catch((e: Error) => setErr(e.message))
+      .finally(() => {
+        busy.current = false;
+        setLoading(false);
+      });
+  }, [fetcher]);
+
+  useEffect(() => {
+    if (!open) return;
+    const id = setInterval(() => {
+      // Nothing to see on a hidden tab, and a background tab quietly polling
+      // the broker for hours is a cost with no reader.
+      if (!document.hidden) load();
+    }, POLL_MS);
+    return () => clearInterval(id);
+  }, [open, load]);
+
+  function onToggle(e: React.SyntheticEvent<HTMLDetailsElement>) {
+    const isOpen = (e.target as HTMLDetailsElement).open;
+    setOpen(isOpen);
+    if (isOpen) load();
+  }
+
+  return { data, loading, err, at, onToggle, load };
+}
+
+/** When the panel beside it last read the server. Staleness you can see beats
+ * staleness you have to guess at — especially while a strategy is trading. */
+function AsOf({ at, loading }: { at: Date | null; loading: boolean }) {
+  if (loading) return <span className="hint as-of">refreshing…</span>;
+  if (!at) return null;
+  return (
+    <span className="hint as-of">
+      as of {at.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
+    </span>
+  );
+}
+
 // Expandable per-strategy holdings: the open positions this strategy owns right
 // now, with best-effort live unrealized P&L. Lazy-loads on first expand.
 function HoldingsView({ strategyId, count }: { strategyId: number; count: number }) {
-  const [data, setData] = useState<StrategyHoldings | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
-
-  function load() {
-    // Refetched on every expand, deliberately — NOT cached after the first.
-    // Positions move while you sit on this page, and the neighbouring last-run
-    // panel already refetches, so caching here meant two adjacent disclosures
-    // disagreed about how old their answer was with nothing on screen saying so.
-    if (loading) return;
-    setLoading(true);
-    setErr(null);
-    getStrategyHoldings(strategyId)
-      .then(setData)
-      .catch((e: Error) => setErr(e.message))
-      .finally(() => setLoading(false));
-  }
+  const fetcher = useCallback(() => getStrategyHoldings(strategyId), [strategyId]);
+  const { data, loading, err, at, onToggle } = useLivePanel<StrategyHoldings>(fetcher);
 
   const money = (n: number) => `${n < 0 ? "−" : ""}$${Math.abs(n).toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
 
   return (
-    <details
-      className="holdings"
-      onToggle={(e) => {
-        if ((e.target as HTMLDetailsElement).open) load();
-      }}
-    >
-      <summary>Holdings ({count})</summary>
+    <details className="holdings" onToggle={onToggle}>
+      <summary>
+        Holdings ({count}) <AsOf at={at} loading={loading} />
+      </summary>
       {loading && <p className="hint">Loading positions…</p>}
       {err && <div className="error">{err}</div>}
       {data && data.holdings.length === 0 && <p className="hint">No open positions right now.</p>}
@@ -225,31 +279,17 @@ function HoldingsView({ strategyId, count }: { strategyId: number; count: number
 // — what it looked at each cycle and why it did (or didn't) buy. Reloads on each
 // expand to show the latest.
 function LastRunView({ strategyId }: { strategyId: number }) {
-  const [data, setData] = useState<StrategyLastRun | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
-
-  function load() {
-    if (loading) return;
-    setLoading(true);
-    setErr(null);
-    getStrategyLastRun(strategyId)
-      .then(setData)
-      .catch((e: Error) => setErr(e.message))
-      .finally(() => setLoading(false));
-  }
+  const fetcher = useCallback(() => getStrategyLastRun(strategyId), [strategyId]);
+  const { data, loading, err, at, onToggle } = useLivePanel<StrategyLastRun>(fetcher);
 
   const badge = (d: string) =>
     d === "bought" ? "up" : d === "blocked" ? "down" : "";
 
   return (
-    <details
-      className="lastrun"
-      onToggle={(e) => {
-        if ((e.target as HTMLDetailsElement).open) load();
-      }}
-    >
-      <summary>Last run — why it did / didn't buy</summary>
+    <details className="lastrun" onToggle={onToggle}>
+      <summary>
+        Last run — why it did / didn't buy <AsOf at={at} loading={loading} />
+      </summary>
       {loading && <p className="hint">Loading…</p>}
       {err && <div className="error">{err}</div>}
       {data && !data.ran && (
@@ -1388,6 +1428,22 @@ export default function Strategies() {
         })
         .catch(() => {});
     }
+  }, [refresh]);
+
+  // The list carries each strategy's open-position count and its enabled pill,
+  // and both move without you touching anything — a strategy opens a position
+  // while you are reading the page. Until now the list was only re-read on mount
+  // and after your own edits, so those numbers silently aged.
+  //
+  // Re-sorting under the cursor is the risk this trades against, and it is
+  // small: only the "Open positions" order can reshuffle, and only when a
+  // position actually opens or closes, which is the event you came to see.
+  // Expanded rows keep their state — React reuses the DOM node for a given id.
+  useEffect(() => {
+    const id = setInterval(() => {
+      if (!document.hidden) refresh();
+    }, POLL_MS);
+    return () => clearInterval(id);
   }, [refresh]);
 
   const basketName = (id: number | null) => baskets.find((b) => b.id === id)?.name ?? `#${id}`;
