@@ -5,12 +5,14 @@ from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from qt.services.engine import (
+    NONFILL_COOLDOWN_MAX_HOURS,
     RISK_DEFAULTS,
     Candidate,
     RailContext,
     check_rails,
     evaluate_entry,
     evaluate_exit,
+    nonfill_cooldown_hours,
 )
 
 ET = ZoneInfo("America/New_York")
@@ -596,3 +598,54 @@ def test_crypto_hard_stops_unchanged():
         p, True, 100.0, entry, 100.0, 95.0, None, NOW, False, is_crypto=True
     )
     assert should and "stop-loss" in reason
+
+
+# ---- non-fill circuit breaker ----
+
+def test_two_non_fills_do_not_cool_off_yet():
+    """The threshold has to be a real threshold. One bad tick on a symbol that
+    normally fills must not sideline it."""
+    ok, reason = check_rails(
+        STRAT, 100.0,
+        ctx(nonfill_strikes=2, last_nonfill_at=datetime.now(timezone.utc) - timedelta(seconds=30)),
+    )
+    assert ok, reason
+
+
+def test_three_non_fills_cool_the_symbol_off():
+    ok, reason = check_rails(
+        STRAT, 100.0, ctx(nonfill_strikes=3, last_nonfill_at=datetime.now(timezone.utc))
+    )
+    assert not ok
+    assert "cooling off after 3 non-fills" in reason
+
+
+def test_the_cooldown_lapses_so_the_symbol_gets_retried():
+    """Without this the breaker would never reopen: a symbol that stopped filling
+    once could never prove it fills again."""
+    ok, reason = check_rails(
+        STRAT, 100.0,
+        # 3 strikes = a 1h wait; this miss was 90 minutes ago.
+        ctx(nonfill_strikes=3, last_nonfill_at=datetime.now(timezone.utc) - timedelta(minutes=90)),
+    )
+    assert ok, reason
+
+
+def test_the_wait_doubles_with_each_further_miss_and_is_capped():
+    assert nonfill_cooldown_hours(2) == 0.0  # below the threshold: no wait at all
+    assert nonfill_cooldown_hours(3) == 1.0
+    assert nonfill_cooldown_hours(4) == 2.0
+    assert nonfill_cooldown_hours(5) == 4.0
+    assert nonfill_cooldown_hours(99) == NONFILL_COOLDOWN_MAX_HOURS  # never unbounded
+
+
+def test_a_cooling_symbol_still_reports_the_position_rail_first():
+    """Ordering matters for the trace: already holding the name is the more
+    useful thing to say, and it's true regardless of fills."""
+    ok, reason = check_rails(
+        STRAT, 100.0,
+        ctx(already_open_symbol=True, nonfill_strikes=9,
+            last_nonfill_at=datetime.now(timezone.utc)),
+    )
+    assert not ok
+    assert "already open" in reason

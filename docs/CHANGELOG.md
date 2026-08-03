@@ -3,6 +3,26 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## A symbol that won't fill now stops being retried every minute (2026-08-02)
+
+RENDER/USD submitted and cancelled an order every sixty seconds for over an
+hour — forty orders, forty identical journal rows, and not one of them could
+ever have worked. Alpaca accepted each one and nothing on that pair traded, so
+there was nothing to fill against.
+
+Three consecutive non-fills on a symbol now buy it an hour off, and each further
+miss doubles that up to half a day. A genuine blip — a fast tape, a momentary
+gap — costs the symbol one hour; a pair that structurally cannot fill puts
+itself away without help. The wait is measured from the last miss, so the moment
+it lapses exactly one attempt goes through: if it fills the streak is over, and
+if it misses the window doubles. The trace names it, like every other rail:
+*"cooling off after 3 non-fills (0.4h of 1h)"*.
+
+A fill clears the streak. Rail rejections neither count toward it nor clear it,
+because never having placed an order is not the same as having placed one that
+missed. The count is read back off the journal instead of being held in memory,
+so restarting the container doesn't hand a dead symbol a clean slate.
+
 ## An order that didn't fill now says what the broker said (2026-08-02)
 
 "The order did not fill" was covering four different problems at once: the order

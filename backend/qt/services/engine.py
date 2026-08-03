@@ -106,6 +106,35 @@ class RailContext:
     risk: dict = field(default_factory=dict)
     leverage_unlocked: bool = False
     daily_loss_usd: float = 0.0
+    # Consecutive "did not fill" attempts on this symbol (any strategy), and when
+    # the most recent one was. A fill resets the count; rail rejections don't
+    # touch it, because never having tried is not the same as having tried and
+    # missed. See NONFILL_* below.
+    nonfill_strikes: int = 0
+    last_nonfill_at: datetime | None = None
+
+
+# Non-fill circuit breaker. RENDER/USD submitted and cancelled a market order
+# every 60 seconds for over an hour: 40 orders, 40 identical journal rows, no
+# possibility of success — Alpaca accepted each one ("new") and nothing on the
+# pair ever traded. Three strikes buys an hour off, and each further miss
+# doubles it up to half a day, so a genuine blip (a fast tape, a momentary gap)
+# costs a symbol one hour while a pair that structurally cannot fill puts itself
+# away. The wait is measured from the LAST miss, so when it lapses exactly one
+# attempt goes through — if that fills, the streak is over; if it misses, the
+# window doubles. No new state to persist: the streak is read back off the
+# journal, so it survives a restart, which an in-memory counter would not.
+NONFILL_STRIKES_BEFORE_COOLDOWN = 3
+NONFILL_COOLDOWN_BASE_HOURS = 1.0
+NONFILL_COOLDOWN_MAX_HOURS = 12.0
+
+
+def nonfill_cooldown_hours(strikes: int) -> float:
+    """0 = no cooling off yet. Doubles per strike past the threshold, capped."""
+    if strikes < NONFILL_STRIKES_BEFORE_COOLDOWN:
+        return 0.0
+    over = strikes - NONFILL_STRIKES_BEFORE_COOLDOWN
+    return min(NONFILL_COOLDOWN_MAX_HOURS, NONFILL_COOLDOWN_BASE_HOURS * (2**over))
 
 
 def _money(v: float) -> str:
@@ -181,6 +210,14 @@ def check_rails(strategy_cfg: dict, sizing_usd: float, ctx: RailContext) -> tupl
             if strategy_cfg.get("allow_concurrent_symbol")
             else "rail: position already open for this symbol (any strategy)"
         )
+    cooldown_h = nonfill_cooldown_hours(ctx.nonfill_strikes)
+    if cooldown_h and ctx.last_nonfill_at is not None:
+        since = datetime.now(timezone.utc) - ctx.last_nonfill_at
+        if since < timedelta(hours=cooldown_h):
+            return False, (
+                f"rail: cooling off after {ctx.nonfill_strikes} non-fills "
+                f"({since.total_seconds()/3600:.1f}h of {cooldown_h:g}h)"
+            )
     if ctx.entries_today >= risk["max_trades_per_day"]:
         return False, f"rail: trade-rate limit reached ({risk['max_trades_per_day']}/day)"
     if ctx.open_positions_total >= risk["max_total_positions"]:
@@ -1597,6 +1634,29 @@ def _build_rail_context(
             .scalar()
             > 0
         )
+    # The non-fill streak, newest first: count "did not fill" rejections until a
+    # real trade breaks the run. Other rejections (rails) are skipped rather than
+    # counted or treated as a reset — they mean we never placed an order at all.
+    strikes, last_nonfill = 0, None
+    recent = (
+        session.query(Trade)
+        .filter(
+            Trade.mode == mode, Trade.symbol == symbol,
+            Trade.created_at >= datetime.now(timezone.utc) - timedelta(days=7),
+        )
+        .order_by(Trade.created_at.desc())
+        .limit(50)
+        .all()
+    )
+    for t in recent:
+        if t.status in ("open", "closed"):
+            break  # it filled — whatever came before is history
+        if t.status == "rejected" and "did not fill" in (t.entry_reason or ""):
+            strikes += 1
+            if last_nonfill is None:
+                last_nonfill = t.created_at
+    if last_nonfill is not None and last_nonfill.tzinfo is None:
+        last_nonfill = last_nonfill.replace(tzinfo=timezone.utc)
     return RailContext(
         equity=equity,
         open_positions_total=open_total,
@@ -1610,6 +1670,8 @@ def _build_rail_context(
         risk=risk,
         leverage_unlocked=leverage_unlocked,
         daily_loss_usd=daily_loss,
+        nonfill_strikes=strikes,
+        last_nonfill_at=last_nonfill,
     )
 
 
