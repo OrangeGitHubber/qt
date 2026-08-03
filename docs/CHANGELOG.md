@@ -3,6 +3,28 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Backtest fidelity gets its own tab (2026-08-03)
+
+It used to be a collapsed fold at the very foot of the Backtest page, on the
+reasoning that "can I trust this?" only means something once there is a result
+to ask it of. In practice it is run on its own rather than after a backtest, and
+its report is longer than anything above it — so being last and collapsed made a
+validation instrument read like a footnote. It is now the fourth tab, beside
+Portfolio.
+
+The Period box is gone, because it was never a choice. Every comparison runs
+from the moment the strategy was switched on up to now, worked out from the
+journal — replaying further back than the strategy existed scores every trade
+the backtest takes there as one it invented, which says nothing about the
+backtester. The page says that plainly instead of offering a control that only
+had one sensible setting.
+
+What is kept is the suggestion that appears *after* a report when a strategy was
+edited repeatedly during the window: that one narrows the comparison to the
+longest stretch you left alone. It is a response to a finding rather than a
+setting, and it is the difference between measuring the backtester and measuring
+your own edits.
+
 ## The replay now starts where the engine actually stood (2026-08-03)
 
 When you compare a strategy's real trades against a replay of the same period,

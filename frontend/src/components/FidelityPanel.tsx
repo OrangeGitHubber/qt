@@ -6,10 +6,11 @@ import { fmtHm, fmtIsoDate, zoneAbbr } from "../lib/datetime";
 
 /** Does the backtester actually reproduce what really happened?
  *
- *  Sits at the foot of the Backtest page, because that is what it is about: it
- *  exists to say whether the numbers above it can be believed, and it is not a
- *  setting. Collapsed, and last, because the question "can I trust this?" only
- *  means anything once there is a result to ask it of.
+ *  Its own tab under Backtest. It used to be a collapsed fold at the foot of the
+ *  page, on the reasoning that "can I trust this?" only means something once
+ *  there is a result to ask it of — but the report is long, it is run on its own
+ *  rather than after a backtest, and being last-and-collapsed made a validation
+ *  instrument read like a footnote.
  *
  *  The two halves age differently. The DECISION half is a validation instrument:
  *  once the replay is trusted it agrees every time and this goes quiet. The
@@ -64,13 +65,11 @@ export default function FidelityPanel() {
   const pct = (v: number | null | undefined) => (v == null ? "—" : `${v}%`);
 
   return (
-    <details className="card fold">
-      <summary>
-        <div className="cache-head">
-          <h3>Backtest fidelity — is the replay telling the truth?</h3>
-          <span className="hint">Compare real trades against a backtest of the same period</span>
-        </div>
-      </summary>
+    <div className="card">
+      <div className="cache-head">
+        <h3>Backtest fidelity — is the replay telling the truth?</h3>
+        <span className="hint">Compare real trades against a backtest of the same period</span>
+      </div>
 
       <p className="hint">
         Point the backtester at a stretch you have <strong>already traded</strong> and see whether it agrees. The entry,
@@ -79,7 +78,14 @@ export default function FidelityPanel() {
         <strong>data</strong> the replay saw or the <strong>price</strong> it assumed, and those need opposite fixes.
       </p>
 
-      <div className="grid-3">
+      <p className="hint">
+        The period is not a choice: every comparison runs from the moment the strategy was{" "}
+        <strong>switched on</strong> up to now, worked out from the journal. Replaying further back than the
+        strategy existed counts every trade the backtest takes there as one it invented, which says nothing
+        about the backtester.
+      </p>
+
+      <div className="grid-2">
         <label>
           <span className="field-cap">Strategy</span>
           <select
@@ -104,14 +110,6 @@ export default function FidelityPanel() {
             Paper is the place to start: whether the replay picks the same trades is just as testable there, and it has
             the volume. What a fill <em>costs</em> is not — the broker simulates paper fills, so that half only becomes
             real with live trading.
-          </span>
-        </label>
-        <label>
-          <span className="field-cap">Period</span>
-          <div className="field-static">Since this strategy started trading</div>
-          <span className="field-help">
-            Worked out from the journal rather than asked for: replaying further back than the strategy has existed
-            counts every trade the backtest takes there as one it invented, which says nothing about the backtester.
           </span>
         </label>
       </div>
@@ -484,6 +482,6 @@ export default function FidelityPanel() {
           )}
         </>
       )}
-    </details>
+    </div>
   );
 }

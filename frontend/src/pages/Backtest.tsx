@@ -154,7 +154,7 @@ const SERIES_A_COLOR = "var(--accent)";
 const SERIES_B_COLOR = "#a78bfa";
 
 export default function Backtest() {
-  const [mode, setMode] = useState<"single" | "compare" | "portfolio">("single");
+  const [mode, setMode] = useState<"single" | "compare" | "portfolio" | "fidelity">("single");
   const [strategies, setStrategies] = useState<StrategyRow[]>([]);
   const [strategyId, setStrategyId] = useState<number | null>(null);
   const [baskets, setBaskets] = useState<Basket[]>([]);
@@ -585,6 +585,12 @@ export default function Backtest() {
           <button type="button" className={mode === "portfolio" ? "active" : ""} onClick={() => setMode("portfolio")}>
             Portfolio
           </button>
+          {/* Its own tab rather than a fold at the foot of the page: it is run on
+              its own, not after a backtest, and its report is longer than any of
+              the three above it. */}
+          <button type="button" className={mode === "fidelity" ? "active" : ""} onClick={() => setMode("fidelity")}>
+            Fidelity
+          </button>
         </div>
       </div>
 
@@ -879,7 +885,10 @@ export default function Backtest() {
         </>
       )}
 
-      {mode !== "portfolio" && (
+      {/* Named tabs, not "everything except portfolio" — the negative form meant
+          adding a fourth tab silently rendered the single-strategy form beneath
+          it. */}
+      {(mode === "single" || mode === "compare") && (
       <>
       <div className="card">
         <p className="hint">
@@ -1609,9 +1618,7 @@ export default function Backtest() {
       </>
       )}
 
-      {/* Last, and collapsed: this answers "can I trust what I just read?",
-          which only means anything after the result it is talking about. */}
-      <FidelityPanel />
+      {mode === "fidelity" && <FidelityPanel />}
     </>
   );
 }
