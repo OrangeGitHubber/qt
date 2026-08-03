@@ -1439,6 +1439,13 @@ select option {
 .toolbar select {
   width: auto;
   margin: 0;
+  /* A <select> sizes to its widest OPTION, and strategy names run long — one
+     "crypto - intraday scalper good tester v2 with ATR (search draft)" stretched
+     the journal's filter bar across the whole window and pushed the account
+     picker to the far edge. Cap it and let the long names truncate; the open
+     dropdown still shows each in full. */
+  max-width: 14rem;
+  text-overflow: ellipsis;
 }
 
 label.check input {
@@ -3036,4 +3043,20 @@ tbody tr:hover > td {
     color-mix(in srgb, var(--text) 7%, transparent),
     color-mix(in srgb, var(--text) 7%, transparent)
   );
+}
+
+
+/* A footnote sitting under a wide table — the journal's broker-fee note.
+ *
+ * The 36rem prose measure above is right for a teaching paragraph you read
+ * top-to-bottom, and wrong here. This note annotates a table that is as wide as
+ * the window, and at 36rem it wrapped to three short lines in the bottom-left
+ * corner of a very wide card, reading as something left behind rather than
+ * something written. Wider is the lesser evil for a footnote: it is read once,
+ * in reference to the thing above it, not settled into.
+ *
+ * Still bounded — a fee note running the full 1600px would be worse than either.
+ */
+.card p.hint.table-footnote {
+  max-width: 64rem;
 }

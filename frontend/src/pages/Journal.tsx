@@ -328,7 +328,7 @@ function FeesNote({ summary }: { summary: FeeSummary | null }) {
   if (!summary) return null;
   const { total_usd, is_estimate, unvalued, synced_through } = summary;
   return (
-    <p className="hint" style={{ marginTop: "0.75rem" }}>
+    <p className="hint table-footnote" style={{ marginTop: "0.75rem" }}>
       <strong>Broker fees (this account):</strong>{" "}
       {total_usd == null ? (
         <>

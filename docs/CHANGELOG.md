@@ -3,6 +3,20 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Journal layout: a filter bar that fits, a footnote that doesn't hide (2026-08-03)
+
+The strategy filter added earlier today stretched the journal's toolbar across
+the whole window. A dropdown sizes itself to its widest option, and strategy
+names run long — one of them is "crypto - intraday scalper good tester v2 with
+ATR (search draft)". It is capped now, and long names truncate in the closed
+control while the open list still shows each in full.
+
+And the broker-fee note under the table was wrapping to three short lines in the
+bottom-left of a very wide card, reading as something left behind rather than
+something written. That note is a footnote about the table above it, not a
+paragraph to settle into, so it now runs wider. Teaching prose elsewhere keeps
+its narrower measure.
+
 ## The backtester now makes the same top-N cut the engine does (2026-08-03)
 
 A ranked strategy — any basket, or a watchlist with ranking switched on — has
