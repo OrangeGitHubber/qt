@@ -226,7 +226,10 @@ def test_an_edit_before_the_first_trade_does_not_crash_the_comparison(client, co
     sid = client.post("/api/strategies", json=body).json()["id"]
     client.put(f"/api/strategies/{sid}", json={**body, "sizing_usd": 900})
 
-    midday = NOW.replace(hour=14, minute=5, second=0, microsecond=0)
+    # YESTERDAY mid-session: anchoring to today would put the trade in the future
+    # on a run before 14:05 UTC, and a trade after the window's end is simply not
+    # in the comparison — the test would then assert against an empty report.
+    midday = (NOW - timedelta(days=1)).replace(hour=14, minute=5, second=0, microsecond=0)
     with session_scope() as s:
         rows = (
             s.query(StrategyConfigVersion)
@@ -772,7 +775,12 @@ def test_a_sale_is_its_own_event_at_its_own_time(client, configured):
     from qt.broker.alpaca import AlpacaClient
 
     sid = client.post("/api/strategies", json=_strategy_body(3, ["SELL"], "sale event")).json()["id"]
-    now = datetime.now(timezone.utc)
+    # Anchored to mid-session, not to whatever time the suite happens to run. A
+    # stock's day bucket is ET, so an unanchored "now" a minute after UTC
+    # midnight belongs to the PREVIOUS ET day and the dates below disagree with
+    # the report's by one — green all day, red on a run just after midnight UTC,
+    # which is exactly when CI runs.
+    now = datetime.now(timezone.utc).replace(hour=14, minute=5, second=0, microsecond=0)
     with session_scope() as s:
         s.add(Trade(
             strategy_id=sid, mode="paper", symbol="SELL", asset_class="stock",
