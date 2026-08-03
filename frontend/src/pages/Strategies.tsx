@@ -154,7 +154,11 @@ function HoldingsView({ strategyId, count }: { strategyId: number; count: number
   const [err, setErr] = useState<string | null>(null);
 
   function load() {
-    if (data || loading) return;
+    // Refetched on every expand, deliberately — NOT cached after the first.
+    // Positions move while you sit on this page, and the neighbouring last-run
+    // panel already refetches, so caching here meant two adjacent disclosures
+    // disagreed about how old their answer was with nothing on screen saying so.
+    if (loading) return;
     setLoading(true);
     setErr(null);
     getStrategyHoldings(strategyId)
