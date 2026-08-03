@@ -707,3 +707,30 @@ def test_the_print_time_parser_handles_alpacas_real_formats():
     assert parse({}) is None                                   # no snapshot data
     assert parse({"latestTrade": {}}) is None                  # no timestamp
     assert parse({"latestTrade": {"t": "not-a-date"}}) is None  # unparseable, not a crash
+
+
+def test_a_naive_print_time_is_declared_utc():
+    """Alpaca has always sent an offset, so this fallback looks like belt-and-
+    braces — but if it ever stopped, a naive datetime reaching evaluate_entry
+    raises TypeError ("can't subtract offset-naive and offset-aware"), and EVERY
+    crypto entry evaluation would throw rather than degrade."""
+    from qt.services.engine import last_trade_at_from_snapshot as parse
+
+    got = parse({"latestTrade": {"t": "2026-08-02T21:42:18"}})
+    assert got is not None
+    assert got.tzinfo is not None and got.utcoffset() == timedelta(0)
+    assert (got.year, got.hour, got.minute) == (2026, 21, 42)  # instant unchanged
+
+
+def test_a_stale_pair_is_rejected_before_the_gain_and_vwap_rules():
+    """Ordering is the point of the guard: a dead pair that ALSO fails min-gain
+    must be reported as dead. Blaming the gain sends you to tune a rule that was
+    never the problem — which is exactly how RENDER cost a day."""
+    stale_and_weak = Candidate(
+        symbol="DEAD/USD", asset_class="crypto", price=1.0, change_pct=0.01, vwap=99.0,
+        last_trade_at=NOON_ET - timedelta(minutes=90),
+    )
+    ok, reason = evaluate_entry(params(), stale_and_weak, NOON_ET)
+    assert not ok
+    assert "no trades on this pair" in reason
+    assert "day gain" not in reason and "VWAP" not in reason

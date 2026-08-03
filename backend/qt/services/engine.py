@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from qt.broker.alpaca import AlpacaClient, AlpacaError
@@ -1341,12 +1341,32 @@ async def _candidates_for(
                     if strategy.asset_class == "stock"
                     else await client.crypto_snapshots(symbols)
                 )
+                # Crypto day-gain is the ROLLING 24h change, not the 00:00-UTC
+                # calendar-day one. This branch was the last consumer still using
+                # the calendar day, and it is reached by every "watchlist" and
+                # every "both" strategy (the API forces rank_enabled off for
+                # "both"), so those strategies were gating entries on a number
+                # that no other part of QT agrees with: just after 00:00 UTC every
+                # crypto candidate read ~0% and nothing could qualify, and by
+                # 23:00 UTC the same coin read at its daily maximum. The scanner,
+                # the watchlist page, the backtest and the optimizer all use
+                # rolling_24h — and the fidelity report was attributing the
+                # resulting live-vs-replay gap to the signal.
+                crypto_stats = (
+                    {}
+                    if strategy.asset_class == "stock"
+                    else await scanner.crypto_rolling_stats(client, symbols)
+                )
                 for sym in symbols:
                     snap = snaps.get(sym) or {}
                     price, vwap = _price_from_snapshot(snap)
-                    daily = (snap.get("dailyBar") or {}).get("c")
-                    prev = (snap.get("prevDailyBar") or {}).get("c")
-                    change = ((daily / prev - 1) * 100) if daily and prev else 0.0
+                    if strategy.asset_class == "stock":
+                        daily = (snap.get("dailyBar") or {}).get("c")
+                        prev = (snap.get("prevDailyBar") or {}).get("c")
+                        change = ((daily / prev - 1) * 100) if daily and prev else 0.0
+                    else:
+                        stats = crypto_stats.get(sym)
+                        change = stats[1] if stats else 0.0
                     if price:
                         candidates.append(
                             Candidate(
@@ -1688,11 +1708,22 @@ def _build_rail_context(
     # real trade breaks the run. Other rejections (rails) are skipped rather than
     # counted or treated as a reset — they mean we never placed an order at all.
     strikes, last_nonfill = 0, None
+    # Rail rejections are excluded IN THE QUERY, not skipped in the loop. The
+    # cooling-off rail writes a rejected row every single cycle it blocks, so at
+    # a 60s tick its own rows filled the 50-row window in under an hour and
+    # evicted the "did not fill" rows that justified the cooldown — the breaker
+    # quietly released itself after ~50 minutes and the 12h cap was unreachable.
+    # A symbol re-evaluated round the clock (i.e. any crypto pair, i.e. exactly
+    # the RENDER/USD case this was built for) defeated it fastest.
     recent = (
         session.query(Trade)
         .filter(
             Trade.mode == mode, Trade.symbol == symbol,
             Trade.created_at >= datetime.now(timezone.utc) - timedelta(days=7),
+            or_(
+                Trade.status.in_(("open", "closed")),
+                Trade.entry_reason.like("%did not fill%"),
+            ),
         )
         .order_by(Trade.created_at.desc())
         .limit(50)

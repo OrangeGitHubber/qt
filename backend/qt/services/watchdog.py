@@ -35,15 +35,23 @@ def should_alert(
     now: datetime,
     threshold: timedelta,
     already_alerted: bool,
+    crypto_active: bool = False,
 ) -> bool:
     """Pure watchdog decision.
 
-    Alert only when the engine is supposed to be running (mode != off), the
-    market is open (so a healthy engine would be ticking), the heartbeat is
-    stale, and we haven't already alerted for this stall."""
+    Alert only when the engine is supposed to be running (mode != off), a
+    healthy engine would be ticking, the heartbeat is stale, and we haven't
+    already alerted for this stall.
+
+    "Would be ticking" is not the same as "the US stock market is open".
+    Crypto trades 24/7, so a book with an enabled crypto strategy expects a
+    heartbeat at 3am on a Sunday — and gating purely on `market_open` left the
+    watchdog blind for roughly three quarters of the time crypto actually
+    trades. A crypto engine could die on Friday evening and go unreported until
+    Monday morning."""
     if mode == "off":
         return False
-    if not market_open:
+    if not market_open and not crypto_active:
         return False
     if already_alerted:
         return False
@@ -99,9 +107,19 @@ async def check(threshold_minutes: int = DEFAULT_STALE_MINUTES) -> None:
             now = datetime.now(timezone.utc)
             last = last_tick_at(session)
             already = bool(get_setting(session, _ALERTED_KEY))
+            # Does this book expect a heartbeat outside US market hours? One
+            # enabled crypto strategy is enough — crypto never closes.
+            from qt.models import Strategy
+
+            crypto_active = bool(
+                session.query(Strategy)
+                .filter(Strategy.enabled.is_(True), Strategy.asset_class == "crypto")
+                .first()
+            )
             if should_alert(
                 mode=mode,
                 market_open=bool(clock.get("is_open")),
+                crypto_active=crypto_active,
                 last_tick_at=last,
                 now=now,
                 threshold=timedelta(minutes=threshold_minutes),

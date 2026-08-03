@@ -386,3 +386,35 @@ async def test_paper_sell_records_fill_and_pnl(strategy_row):
         assert trade.status == "closed"
         assert trade.exit_price == 20.05
         assert trade.pnl == round((20.05 - 21.2) * 9, 2)
+
+
+async def test_a_crypto_market_EXIT_is_never_immediate_or_cancel(strategy_row):
+    """close_trade carries a seven-line comment saying this must never happen:
+    a half-filled IOC exit leaves the position part-sold while the journal still
+    claims all of it, and the next cycle tries to sell coins the broker no longer
+    holds. Nothing asserted the exit's time-in-force, so a one-line "tidy-up"
+    could have made entries and exits share _entry_tif in silence."""
+    submitted = {}
+
+    async def fake_market(self, symbol, side, client_order_id, *, qty=None, notional=None, time_in_force="day"):
+        submitted.update(side=side, tif=time_in_force)
+        return {"id": "x-1", "status": "accepted"}
+
+    filled = {"id": "x-1", "status": "filled", "filled_avg_price": "1.50", "filled_qty": "10"}
+    with (
+        patch.object(AlpacaClient, "submit_market_order", fake_market),
+        patch.object(AlpacaClient, "get_order", new=AsyncMock(return_value=filled)),
+        patch("qt.services.execution.FILL_POLL_SECONDS", (0,)),
+    ):
+        with session_scope() as s:
+            trade = Trade(
+                strategy_id=strategy_row, mode="paper", symbol="ADA/USD", asset_class="crypto",
+                qty=10, notional=15, status="open", entry_price=1.5, high_water=1.5,
+            )
+            s.add(trade)
+            s.flush()
+            await execution.close_trade(s, _client(), trade, 1.5, "test exit", market=True)
+
+    assert submitted["side"] == "sell"
+    assert submitted["tif"] == "gtc"
+    assert submitted["tif"] != "ioc", "an IOC exit can half-fill and orphan the remainder"

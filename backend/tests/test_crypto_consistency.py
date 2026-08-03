@@ -86,3 +86,64 @@ def test_a_crypto_daily_bar_is_filed_on_its_own_utc_day(stamp, expected):
     rows = _prepare([{"t": stamp, "o": 1, "h": 1, "l": 1, "c": 1, "v": 1, "vw": 1}],
                     _day_fn("crypto"), rolling_24h=True)
     assert rows[0]["day"] == expected
+
+
+# ---- the LIVE watchlist branch must use the same rolling definition ----
+
+async def test_a_crypto_watchlist_candidate_uses_the_rolling_24h_change():
+    """The last consumer still on the calendar day.
+
+    `_candidates_for`'s watchlist branch computed change from dailyBar vs
+    prevDailyBar with no asset-class check — the 00:00-UTC calendar change, not
+    the rolling 24h every other part of QT uses. It is reached by every
+    "watchlist" strategy and ALWAYS by "both" (the API forces rank_enabled off
+    there), so those strategies gated entries on a number the scanner, the
+    watchlist page, the backtest and the optimizer all disagreed with: just
+    after 00:00 UTC everything read ~0% and nothing could qualify.
+
+    The two sources are made to disagree loudly here — rolling says +5%, the
+    calendar day says +50% — so the assertion cannot pass by coincidence.
+    """
+    from unittest.mock import AsyncMock, patch
+
+    from qt.broker.alpaca import AlpacaClient
+    from qt.db import session_scope
+    from qt.models import Strategy, WatchlistItem
+    from qt.services import engine
+
+    snap = {
+        "latestTrade": {"p": 150.0, "t": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")},
+        "dailyBar": {"c": 150.0, "vw": 149.0},
+        "prevDailyBar": {"c": 100.0},  # calendar-day reading: +50%
+    }
+    with session_scope() as s:
+        strat = Strategy(
+            name="rolling watchlist", enabled=True, asset_class="crypto", universe="watchlist",
+            preset="custom", params='{"entry":{},"exit":{"stop_loss_pct":4}}',
+            sizing_usd=100, sleeve_usd=1000, max_positions=3, swing_mode=False, ignore_regime=False,
+        )
+        s.add(strat)
+        s.add(WatchlistItem(symbol="ROLL/USD", asset_class="crypto"))
+        s.flush()
+        sid = strat.id
+
+    try:
+        with (
+            patch.object(AlpacaClient, "crypto_snapshots", new=AsyncMock(return_value={"ROLL/USD": snap})),
+            patch.object(engine.scanner, "crypto_rolling_stats",
+                         new=AsyncMock(return_value={"ROLL/USD": (150.0, 5.0, 9_000.0)})),
+        ):
+            with session_scope() as s:
+                strategy = s.get(Strategy, sid)
+                cands, _ = await engine._candidates_for(
+                    s, AlpacaClient(key_id="k", key_secret="s"), strategy, None
+                )
+        got = next(c for c in cands if c.symbol == "ROLL/USD")
+        assert got.change_pct == 5.0, (
+            "the watchlist branch used the 00:00-UTC calendar change instead of the "
+            "rolling 24h figure every other consumer in QT uses"
+        )
+    finally:
+        with session_scope() as s:
+            s.query(WatchlistItem).filter(WatchlistItem.symbol == "ROLL/USD").delete()
+            s.query(Strategy).filter(Strategy.id == sid).delete()

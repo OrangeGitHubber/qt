@@ -85,3 +85,51 @@ def test_rail_rejections_neither_count_nor_reset(strategy_row):
 
     strikes, _ = _strikes(strategy_row)
     assert strikes == 2  # the rail row in the middle is skipped, not counted
+
+
+def test_the_streak_is_per_symbol(strategy_row):
+    """Three misses on one pair must not sideline every other symbol. Without
+    the symbol filter, RENDER/USD's streak would cool off the whole strategy."""
+    with session_scope() as s:
+        for m in (3, 2, 1):
+            s.add(_row(strategy_row, status="rejected", reason="but market order did not fill in 6s", minutes_ago=m))
+
+    with session_scope() as s:
+        strategy = s.get(Strategy, strategy_row)
+        ctx = _build_rail_context(
+            s, "paper", strategy, "OTHER/USD", 10_000.0, dict(RISK_DEFAULTS), False, 0.0,
+            NOW - timedelta(days=1),
+        )
+    assert (ctx.nonfill_strikes, ctx.last_nonfill_at) == (0, None)
+
+
+def test_the_streak_is_per_mode(strategy_row):
+    """Shadow mode places no orders, so it cannot produce a real non-fill —
+    and must never cool off paper trading."""
+    with session_scope() as s:
+        for m in (3, 2, 1):
+            row = _row(strategy_row, status="rejected", reason="but market order did not fill in 6s", minutes_ago=m)
+            row.mode = "shadow"
+            s.add(row)
+
+    assert _strikes(strategy_row) == (0, None)
+
+
+def test_the_rails_own_rejections_cannot_evict_the_evidence(strategy_row):
+    """THE regression that made the breaker useless. The cooling-off rail writes
+    a rejected row every cycle it blocks; at a 60s tick those filled the lookback
+    window in under an hour and pushed out the non-fills that justified it, so
+    the cooldown released itself after ~50 minutes and the 12h cap was
+    unreachable."""
+    with session_scope() as s:
+        for m in (200, 199, 198):
+            s.add(_row(strategy_row, status="rejected", reason="but market order did not fill in 6s", minutes_ago=m))
+        # An hour of the rail talking to itself, newer than the real evidence.
+        for m in range(60, 0, -1):
+            s.add(_row(strategy_row, status="rejected",
+                       reason="but rail: cooling off after 3 non-fills (0.5h of 1h)", minutes_ago=m))
+
+    strikes, last = _strikes(strategy_row)
+    assert strikes == 3, "the rail's own rows evicted the non-fills that justified the cooldown"
+    # And the clock still runs from the last real miss, not from the noise.
+    assert abs((last - (NOW - timedelta(minutes=198))).total_seconds()) < 2

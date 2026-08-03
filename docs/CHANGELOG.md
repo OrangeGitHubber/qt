@@ -3,6 +3,38 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Three defects an audit found in yesterday's own work (2026-08-03)
+
+An adversarial re-audit of the previous day's changes — including re-breaking
+the code to check the new tests could actually fail — turned up nine places
+where something could be broken with the whole suite staying green. Three were
+real defects rather than missing tests.
+
+**Crypto watchlist strategies were measuring the wrong day.** A crypto "day
+gain" is the rolling last-24-hours change everywhere in QT — the scanner, the
+watchlist page, the backtest, the optimizer. One path was still using the
+midnight-UTC calendar day: the branch that every "watchlist" strategy and every
+"scanner + watchlist" strategy goes through. Those strategies were deciding
+entries on a number nothing else in the app agreed with — just after midnight
+UTC everything read about 0% and nothing could qualify, and by late evening the
+same coin read at its daily peak. The fidelity report was blaming the resulting
+disagreements on the strategy.
+
+**The non-fill cooldown was releasing itself after about fifty minutes.** When
+the cooldown blocks a symbol it writes a note in the journal each cycle — and
+those notes were pushing the original failures out of the window it reads to
+decide the cooldown is still warranted. So the evidence expired, the symbol was
+retried, and the twelve-hour ceiling could never be reached. A pair evaluated
+every minute round the clock defeated it fastest, which is precisely the case it
+was built for.
+
+**The engine watchdog was blind while the US stock market was shut.** It only
+alerted when the market was open, so a crypto book — which trades continuously —
+had no stall detection for roughly three quarters of the time it was actually
+trading. The engine could die on a Friday evening and nobody would be told until
+Monday. It now alerts whenever an enabled crypto strategy exists, and stays
+quiet out of hours for a stocks-only account.
+
 ## Explanatory text stops sitting in a narrow column inside a wide card (2026-08-02)
 
 The width rule for prose was measured in `ch` — the width of a "0" — which
