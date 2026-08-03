@@ -330,9 +330,18 @@ def evaluate_exit(
     existing callers are unaffected."""
     exit_rules = params.get("exit", {})
     # LIVE passes a tick price only, so low/high default to it and everything
-    # below behaves exactly as before. A BACKTEST passes the bar's extremes: a
-    # stop breached at 10:07 and recovered by 10:15 really did take you out, and
-    # judging it on the close alone quietly turns a loss into a winner.
+    # below behaves exactly as before — one 60-second look, sell at market. A
+    # BACKTEST passes the bar's extremes: a stop breached at 10:07 and recovered
+    # by 10:15 really did take you out, and judging it on the close alone quietly
+    # turns a loss into a winner.
+    #
+    # That is only true when the bar is coarser than live's look, though. On
+    # 1-minute bars the poller gets one sample per bar, so an extreme that came
+    # and went inside the bar was never on offer to it, and the caller must pass
+    # the close as both extremes or the replay books fills nobody could have got.
+    # The backtester does exactly that — see backtest._apply_poller_view; this
+    # function stays a pure rule evaluator and takes the caller's word for what
+    # the price did.
     low = bar_low if bar_low is not None else price
     high = bar_high if bar_high is not None else price
     change_from_entry = (price / entry_price - 1) * 100

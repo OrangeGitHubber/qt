@@ -3,6 +3,38 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Exits are judged the way the engine actually sees them (2026-08-03)
+
+The backtester judged every exit against the bar's intra-bar high and low, and
+filled at the exact trigger level. That is the right model for a resting stop or
+limit order — but QT places none. The live engine looks once every 60 seconds
+and sells at market, so a price touched mid-bar and gone was never on offer to
+it.
+
+A comparison of a real strategy over two hours measured the cost: the replay's
+exits came out **0.73% better than reality**, three of the four mismatches being
+a take-profit just above the 1.2% threshold that live never got.
+
+The replay now collapses each bar to what a 60-second look could have seen —
+judging and filling on the close, exactly as the engine does — but only when the
+bars are that size or finer. Coarser bars are deliberately untouched: a poller
+took fifteen looks inside a 15-minute bar and hundreds inside a daily one, so a
+backtest that ignored a stop breached for a quarter of an hour would be a worse
+lie than the one being fixed. The crossover is the number of polls that fit in a
+bar, not a tuning knob, and the bar size is measured from the data rather than
+taken from the label.
+
+Worth being precise about the direction: this was never simply flattering. The
+same model also stopped the replay out on wicks the engine never sampled, and
+because the stop is checked before the target, which way a strategy's wicks fall
+decided the sign. This one flattered because its take-profit sat much closer
+than its stop.
+
+**Your optimizer results are unaffected.** The optimizer cannot request 1-minute
+bars — it runs at 15 minutes or coarser, where nothing has changed. Only the
+1-minute fidelity comparison and a hand-run 1-minute backtest behave
+differently, so nothing needs re-running.
+
 ## Short fidelity windows are graded on 1-minute bars (2026-08-03)
 
 The live engine decides every 60 seconds. The replay's finest bar was 15

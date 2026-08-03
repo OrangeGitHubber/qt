@@ -8,6 +8,12 @@ Honest limitations, surfaced in the UI:
   (Alpaca has no historical movers endpoint). It validates your entry/exit
   rules and risk rails, not the scanner.
 - Fills are modeled as bar close ± a configurable spread cost per side.
+- Exits are judged against what the LIVE engine could have seen. It polls every
+  60 seconds and sells at market — it places no resting stop or limit orders — so
+  on bars that size or finer the replay judges and fills on the CLOSE (one look
+  per bar, same as live). On coarser bars, where a 60-second poller would have
+  sampled a breach many times over, stops stay judged on the bar's high/low and
+  fill at the trigger level. See _apply_poller_view.
 - Free IEX data; past performance predicts nothing.
 """
 
@@ -74,6 +80,78 @@ def _btlog(day: str, symbol: str, bar: dict, params: dict, decision: str) -> Non
         f"macd={macd_txt}{rsi_txt} -> {decision}",
         flush=True,
     )
+
+
+# How often the LIVE engine looks at a price. The scheduler runs the engine tick
+# every 60 seconds (qt/main.py: IntervalTrigger(seconds=60)), and each tick reads
+# one snapshot per open symbol and sells AT MARKET if a rule fires — QT places no
+# resting stop or limit orders. So the live engine's view of the tape is a
+# sequence of 60-second samples, not the continuous tape.
+LIVE_POLL_SECONDS = 60
+
+
+def _bar_seconds(timeline: list[datetime]) -> float | None:
+    """The replay's bar size, read off the bars themselves rather than a label.
+
+    The MEDIAN gap between consecutive timestamps, not the minimum or the mean:
+    the minimum would be dragged down by one stray duplicate-ish timestamp (which
+    would wrongly declare a coarse series fine, the one error that neuters a stop),
+    and the mean is pulled up by overnight and weekend gaps. On any real series the
+    in-session gaps outnumber the day boundaries by an order of magnitude, so the
+    median is the bar size exactly: 60 for 1-minute bars, 86400 for daily ones.
+
+    Measured rather than taken from the request's timeframe label on purpose, and
+    it is not just defensiveness: the question being asked is "how many polls fit
+    inside one bar", and a sparse series answers it honestly. A thin name whose
+    1-minute bars actually arrive every two or three minutes really did span two
+    or three polls, so it keeps the intra-bar model — which the label "1Min" would
+    have talked us out of. The timeline is the union across every symbol in the
+    run, so one thin name cannot drag a busy comparison off its true resolution.
+
+    None when there is nothing to measure (fewer than two distinct timestamps) —
+    callers must then assume the COARSE behaviour, because "I don't know" must
+    never be the answer that makes a stop lenient."""
+    deltas = sorted(
+        (b - a).total_seconds() for a, b in zip(timeline, timeline[1:]) if b > a
+    )
+    if not deltas:
+        return None
+    return deltas[len(deltas) // 2]
+
+
+def _apply_poller_view(prepared: dict[str, list[dict]], bar_seconds: float | None) -> bool:
+    """Collapse each bar to what a 60-second POLLER could have seen, when the bars
+    are no coarser than the poll itself. Returns whether it did.
+
+    WHY. The replay judges stops against a bar's intra-bar high/low and fills at
+    the trigger level — the right model for a resting stop/limit order, and the
+    right model for any bar long enough that a 60-second poller would have sampled
+    the breach. It is the WRONG model at 1-minute resolution, where the poller gets
+    exactly ONE look per bar: a price that was touched at 10:07:20 and gone by
+    10:07:40 was never available to the live engine, so scoring an exit on it books
+    a fill nobody could have got. Measured on a real 2-hour minute-bar comparison
+    this ran the replay's exits 0.73% better than reality, three of the four
+    residual mismatches being a take-profit just above the threshold that live
+    never got.
+
+    HOW. Flatten high and low onto the close. Everything downstream then follows
+    without a single conditional: `high_water` advances close-to-close (exactly
+    what the live engine does with the polled price), `evaluate_exit` sees
+    high == low == price (exactly the arguments live passes), and `_fill_price`
+    clamps the trigger level into a zero-width range, i.e. fills at the close —
+    which is what selling at market on the poll that noticed actually gets you.
+
+    WHERE IT STOPS. Only when bar_seconds <= LIVE_POLL_SECONDS. On 15-minute bars
+    the poller took fifteen looks inside each bar and a stop genuinely breached
+    would have been seen; on daily bars, hundreds. Ignoring those would be a worse
+    lie than the one being fixed, so coarse bars keep the intra-bar model. An
+    unknown bar size (None) is treated as coarse for the same reason."""
+    if bar_seconds is None or bar_seconds > LIVE_POLL_SECONDS:
+        return False
+    for series in prepared.values():
+        for bar in series:
+            bar["high"] = bar["low"] = bar["close"]
+    return True
 
 
 def _fill_price(trigger: dict, bar: dict) -> float:
@@ -517,6 +595,9 @@ def _prepare(bars: list[dict], day_of=_et_day, rolling_24h: bool = False) -> lis
                 # actually DID inside the bar, not just where it closed. Falls
                 # back to the close when a feed (or a synthetic series) omits
                 # them — then behaviour is exactly the old close-only one.
+                # _apply_poller_view flattens these onto the close when the bars
+                # are no coarser than the live engine's 60-second look, because
+                # then the extremes are information live never had.
                 "high": float(bar.get("h") or bar["c"]),
                 "low": float(bar.get("l") or bar["c"]),
                 "change_pct": change_pct,
@@ -716,6 +797,12 @@ def run_backtest(
     _annotate_macd(prepared, params, daily_bars_by_symbol, day_of)
     _annotate_atr(prepared, bars_by_symbol, params, daily_bars_by_symbol, day_of)
     _annotate_rsi(prepared, params, daily_bars_by_symbol, day_of)
+    # At or below the live engine's 60-second poll cadence, a bar's high/low carry
+    # information the live engine could not have had — see _apply_poller_view.
+    # Coarser bars are untouched, so every 15-minute/hourly/daily backtest keeps
+    # the intra-bar model.
+    bar_seconds = _bar_seconds(sorted({b["ts"] for s in prepared.values() for b in s}))
+    poller_view = _apply_poller_view(prepared, bar_seconds)
     # chronological event stream across all symbols
     events: dict[datetime, dict[str, dict]] = {}
     for symbol, series in prepared.items():
@@ -1093,6 +1180,13 @@ def run_backtest(
         "max_drawdown_pct": _max_drawdown(equity_values),
         "spread_cost_pct_per_side": spread_pct,
         "fee_pct_per_side": fee_pct,
+        # Which exit model this run used, so a number that moved can be explained
+        # rather than guessed at. "poller" = bars at or below the live engine's
+        # 60-second look; exits judged and filled on the close, like live.
+        # "intrabar" = coarser bars; stops judged on the bar's high/low and filled
+        # at the trigger level, because a 60-second poller would have sampled it.
+        "exit_model": "poller" if poller_view else "intrabar",
+        "bar_seconds": bar_seconds,
         # What the commissions actually took, in dollars. A rate in the header is
         # abstract; "$412 of fees on 63 round trips" is the number that decides
         # whether a strategy this busy can carry its own costs.
@@ -1235,6 +1329,21 @@ def run_portfolio_backtest(
             prepared, bars_by_strategy.get(sid) or {}, strat_by_id[sid]["params"], daily
         )
         _annotate_rsi(prepared, strat_by_id[sid]["params"], daily)
+    # The poller view is a property of the SHARED timeline, not of one strategy:
+    # every strategy in a portfolio run replays the same stream, so the bar size is
+    # measured once across all of them and applied to all of them. See
+    # _apply_poller_view for why, and for why coarse bars are left alone.
+    bar_seconds = _bar_seconds(
+        sorted({
+            b["ts"]
+            for by_symbol in prepared_by_strategy.values()
+            for series in by_symbol.values()
+            for b in series
+        })
+    )
+    poller_view = False
+    for by_symbol in prepared_by_strategy.values():
+        poller_view = _apply_poller_view(by_symbol, bar_seconds) or poller_view
     events: dict[datetime, list[tuple[int, str, dict]]] = {}
     for sid, series_map in prepared_by_strategy.items():
         for symbol, series in series_map.items():
@@ -1462,6 +1571,8 @@ def run_portfolio_backtest(
         "profit_factor": round(gross_win / gross_loss, 2) if gross_loss > 0 else None,
         "max_drawdown_pct": _max_drawdown(equity_values),
         "spread_cost_pct_per_side": spread_pct,
+        "exit_model": "poller" if poller_view else "intrabar",  # see run_backtest
+        "bar_seconds": bar_seconds,
         "max_deployed_usd": round(max_deployed, 2),
         "pct_capital_deployed": pct_deployed,
         "return_on_deployed_pct": return_on_deployed,
