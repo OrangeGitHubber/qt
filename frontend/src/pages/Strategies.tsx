@@ -69,6 +69,10 @@ const EMPTY: Partial<StrategyRow> = {
       require_above_vwap: true,
       rsi_min: 0,
       rsi_max: 0,
+      // A US-equity-hours default, and it only makes sense because a NEW
+      // strategy starts as a stock. Crypto has no session to be inside of, so
+      // switching the asset class to crypto clears these (see setAssetClass) —
+      // a 09:30–15:30 window on a 24/7 market silently discards ~3/4 of its day.
       entry_window_start: "09:30",
       entry_window_end: "15:30",
       entry_slippage_pct: 0.5,
@@ -592,6 +596,27 @@ function Editor({
     }));
   }
 
+  // Crypto trades 24/7, so the US-equity entry window that a stock strategy
+  // starts with is not a neutral default there — it is a rule that shuts the
+  // strategy out of about three quarters of its trading day, chosen by nobody.
+  // Clear it on the switch. The control below stays available: confining crypto
+  // to US hours on purpose is a legitimate choice, it just must never be the one
+  // already made for you. (Frontend only — the engine still obeys the window if
+  // you set one, because quietly ignoring a deliberate setting is worse.)
+  function setAssetClass(v: "stock" | "crypto") {
+    setS((cur) => {
+      if (v !== "crypto") return { ...cur, asset_class: v };
+      return {
+        ...cur,
+        asset_class: v,
+        params: {
+          ...cur.params!,
+          entry: { ...cur.params!.entry, entry_window_start: null, entry_window_end: null },
+        },
+      };
+    });
+  }
+
   // Swing vs intraday are opposites (hold overnight vs flatten before the close),
   // so they're one choice, not two independent checkboxes. Intraday implies
   // flatten-before-close for stocks; crypto has no close, so flatten stays off.
@@ -689,6 +714,19 @@ function Editor({
   const macd = p.macd ?? { fast: 12, slow: 26, signal: 9 };
   const atr = p.atr ?? { period: 14, stop_mult: 0, risk_usd: 0 };
   const windowOn = !!(p.entry.entry_window_start && p.entry.entry_window_end);
+  // How much of a 24-hour day the window shuts out. Only said out loud for
+  // crypto, where the hours outside it are a market that is genuinely open.
+  const windowClosedPct = (() => {
+    const mins = (t?: string | null) => {
+      const m = /^(\d{1,2}):(\d{2})$/.exec(t ?? "");
+      return m ? Number(m[1]) * 60 + Number(m[2]) : null;
+    };
+    const a = mins(p.entry.entry_window_start);
+    const b = mins(p.entry.entry_window_end);
+    if (a == null || b == null) return null;
+    const open = b === a ? 0 : b > a ? b - a : 1440 - (a - b); // a window may wrap midnight
+    return Math.round(((1440 - open) / 1440) * 100);
+  })();
   // Ranking: a basket is always ranked; watchlist/custom can opt in. Scanner/both
   // are already ranked by the scanner, so the controls don't apply there.
   const rankable = s.universe === "watchlist" || s.universe === "custom";
@@ -723,7 +761,7 @@ function Editor({
             <Segmented
               value={s.asset_class as "stock" | "crypto"}
               ariaLabel="Asset class"
-              onChange={(v) => setS({ ...s, asset_class: v })}
+              onChange={setAssetClass}
               options={[
                 { value: "stock", label: "Stocks" },
                 { value: "crypto", label: "Crypto" },
@@ -949,6 +987,17 @@ function Editor({
                   onChange={(e) => setEntry("entry_window_end", e.target.value || null)} />
               </Param>
             </div>
+          )}
+          {/* Only when it's ON and the market never closes: the window is then a
+              deliberate choice with a cost, so name the cost instead of
+              second-guessing the choice. Off is the crypto default, and silence
+              is the right amount to say about a default. */}
+          {s.asset_class === "crypto" && windowOn && (
+            <p className="hint">
+              Crypto trades 24/7, so this keeps the strategy out of the market for about{" "}
+              <strong>{windowClosedPct}%</strong> of each day (and the window is read in ET, which drifts against your
+              own clock twice a year). Fine if that's the intent — otherwise switch it off.
+            </p>
           )}
         </details>
       </section>
@@ -1345,6 +1394,24 @@ function buildFamilies(rows: StrategyRow[]): { families: Family[]; depth: Map<nu
   return { families, depth };
 }
 
+/** How a family lands on screen: which members keep a top-level row, and which
+ *  get tucked into the fold under them.
+ *
+ *  Anything enabled stays top-level on purpose — a strategy that trades real
+ *  money must never be two clicks away because it happens to be someone's
+ *  descendant. With nothing enabled the root stands in, so a family is never
+ *  headless.
+ *
+ *  Shared by the renderer and the "N folded" counter above the list on purpose:
+ *  a count that recomputes the rule separately is a count that will one day
+ *  disagree with the rows it is describing. */
+function splitFamily(members: StrategyRow[]): { shown: StrategyRow[]; tucked: StrategyRow[] } {
+  if (members.length <= 1) return { shown: members, tucked: [] };
+  const enabled = members.filter((m) => m.enabled);
+  const shown = enabled.length > 0 ? enabled : [members[0]];
+  return { shown, tucked: members.filter((m) => !shown.includes(m)) };
+}
+
 type StatusFilter = "all" | "enabled" | "paused";
 type AssetFilter = "all" | "stock" | "crypto";
 type SortKey = "state" | "name" | "open" | "new";
@@ -1495,6 +1562,12 @@ export default function Strategies() {
       return best(b, (m) => (m.enabled ? 1 : 0)) - best(a, (m) => (m.enabled ? 1 : 0)) || byName;
     });
 
+    // What grouping actually DID to this list, measured the same way the rows
+    // are drawn. "22 groups" counted every family, including the ones that
+    // render perfectly flat (all members enabled → all top-level, no fold), so
+    // the number described a structure the reader could not see anywhere on the
+    // page. Count the folds instead — those are the groups you can point at.
+    const folds = groups.map((f) => splitFamily(f.members)).filter((s) => s.tucked.length > 0);
     return {
       groups,
       depth,
@@ -1502,6 +1575,8 @@ export default function Strategies() {
       shown: groups.reduce((n, f) => n + f.members.length, 0),
       total: all.length,
       liveCount: all.filter((r) => r.enabled).length,
+      foldCount: folds.length,
+      foldedRows: folds.reduce((n, s) => n + s.tucked.length, 0),
     };
   }, [rows, query, status, asset, sort, grouped]);
 
@@ -1518,6 +1593,64 @@ export default function Strategies() {
       if (!next.delete(rootId)) next.add(rootId);
       return next;
     });
+  }
+
+  /** The family a row belongs to = its oldest surviving ancestor. Same upward
+   *  walk (and same cycle guard) as buildFamilies, so a clone lands in the fold
+   *  we then open. */
+  function rootIdOf(row: StrategyRow): number {
+    let cur = row;
+    const seen = new Set<number>([row.id]);
+    while (cur.optimized_from_id != null) {
+      const parent = view.byId.get(cur.optimized_from_id);
+      if (!parent || seen.has(parent.id)) break;
+      seen.add(parent.id);
+      cur = parent;
+    }
+    return cur.id;
+  }
+
+  // Which clone is in flight — a strategy is a dozen coupled settings, and a
+  // double-click that quietly makes two copies of all of them is exactly the
+  // mess this button exists to end.
+  const [cloningId, setCloningId] = useState<number | null>(null);
+
+  /** Copy a strategy so a variant can be TRIED instead of retyped. Verbatim
+   *  params, born disabled (the create endpoint forces `enabled=False`, it is
+   *  not this button's promise to keep), renamed so the journal can never
+   *  confuse it with the original, and pointed at its source as parent so it
+   *  groups with the strategy it came from rather than joining the pile of
+   *  hand-made near-duplicates that made this page hard to read. */
+  async function clone(row: StrategyRow) {
+    if (cloningId != null) return;
+    setCloningId(row.id);
+    try {
+      // Everything the server owns is dropped: a copy is a NEW strategy, on
+      // version 1, holding nothing. The rest goes across untouched — a clone
+      // that quietly "improved" one setting would be worse than no clone.
+      const { id: _id, version: _version, open_trades: _open, enabled: _enabled, ...rest } = row;
+      const suffix = " (copy)";
+      const created = await createStrategy({
+        ...(JSON.parse(JSON.stringify(rest)) as Partial<StrategyRow>),
+        // 80 is the server's cap; trim the base rather than lose the suffix,
+        // because the suffix is the part that keeps the two apart.
+        name: row.name.slice(0, 80 - suffix.length) + suffix,
+        optimized_from_id: row.id,
+        // Deliberately NOT copied: it records the length of the parameter search
+        // that produced a strategy, and no search produced this one. Copying it
+        // would have the row claim a backtest it never had.
+        optimized_days: null,
+      });
+      // A disabled copy of an enabled strategy goes straight into that family's
+      // fold, so without this the button looks like it did nothing.
+      setOpenFamilies((cur) => new Set(cur).add(rootIdOf(row)));
+      setNote(`Copied “${row.name}” → “${created.name}”. It's disabled, and listed under the original.`);
+      refresh();
+    } catch (e) {
+      setNote((e as Error).message);
+    } finally {
+      setCloningId(null);
+    }
   }
 
   function strategyRow(r: StrategyRow, variant = false) {
@@ -1548,11 +1681,22 @@ export default function Strategies() {
             {gen > 1 && (
               <span
                 className="pill muted sr-gen"
-                title={`Generation ${gen} — produced by a parameter search${
-                  parent ? ` from "${parent.name}"` : ""
-                }${r.optimized_days ? ` over ${r.optimized_days} days` : ""}`}
+                title={
+                  parent
+                    ? `Generation ${gen} — made from "${parent.name}"${
+                        r.optimized_days ? ` by a ${r.optimized_days}-day parameter search` : " as a copy"
+                      }`
+                    : `Generation ${gen} — the strategy it was made from has been deleted`
+                }
               >
                 gen {gen}
+                {/* Where the relationship has no shape on screen to carry it.
+                    A tucked row already sits under its parent behind a "↳", but
+                    an ENABLED descendant renders as a plain top-level row (see
+                    splitFamily) — same relationship, no nesting — and the page
+                    used to say nothing at all about it. Hence "why is this one
+                    under that one, and that one isn't?". */}
+                {!variant && parent && <span className="sr-from"> · from {parent.name}</span>}
               </span>
             )}
           </span>
@@ -1630,9 +1774,12 @@ export default function Strategies() {
               <div>
                 <dt>Lineage</dt>
                 <dd>
+                  {/* "searched from" used to be unconditional; a cloned copy is
+                      also a child now, and it was searched from nothing. The
+                      day count is what marks a real parameter search. */}
                   generation {gen}
-                  {parent ? ` · searched from "${parent.name}"` : " · parent deleted"}
-                  {r.optimized_days ? ` over ${r.optimized_days} days` : ""}
+                  {parent ? ` · from "${parent.name}"` : " · parent deleted"}
+                  {r.optimized_days ? ` · parameter search over ${r.optimized_days} days` : parent ? " · copied" : ""}
                 </dd>
               </div>
             )}
@@ -1660,6 +1807,16 @@ export default function Strategies() {
             <button className="small btn-icon btn-ghost" onClick={() => startEdit(r)} title="Edit this strategy's settings">
               <IconEdit />
               Edit
+            </button>
+            {/* Text-only ghost like Backtest, deliberately: Clone belongs to the
+                quiet half of this row, not next to Pause/Delete. */}
+            <button
+              className="small btn-ghost"
+              disabled={cloningId != null}
+              onClick={() => clone(r)}
+              title="Make a disabled copy of this strategy — same settings, listed under this one, ready to tweak"
+            >
+              {cloningId === r.id ? "Copying…" : "Clone"}
             </button>
             {/* Same unsaved-changes guard as Optimize: leaving a half-edited form
                 behind for a page that reloads the strategy from the server would
@@ -1689,15 +1846,11 @@ export default function Strategies() {
     );
   }
 
-  // A family renders as its LIVE members plus a fold holding the rest. Anything
-  // enabled stays a top-level row on purpose: a strategy that trades real money
-  // must never be two clicks away because it happens to be someone's descendant.
-  // With nothing enabled the root stands in, so a family is never headless.
+  // A family renders as its LIVE members plus a fold holding the rest — the rule
+  // lives in splitFamily, shared with the counter above the list.
   function familyBlock(f: Family) {
     if (f.members.length === 1) return strategyRow(f.members[0]);
-    const enabled = f.members.filter((m) => m.enabled);
-    const shown = enabled.length > 0 ? enabled : [f.members[0]];
-    const tucked = f.members.filter((m) => !shown.includes(m));
+    const { shown, tucked } = splitFamily(f.members);
     const open = openFamilies.has(f.root.id);
     return (
       <div className="strat-family" key={`fam-${f.root.id}`}>
@@ -1709,8 +1862,10 @@ export default function Strategies() {
               className="fam-toggle"
               aria-expanded={open}
               onClick={() => toggleFamily(f.root.id)}
+              // Not only searches any more: Clone puts a copy in here too.
+              title={`Disabled copies and parameter-search results made from "${f.root.name}". Enabled ones are never folded away — they keep their own row above.`}
             >
-              {open ? "▾" : "▸"} {tucked.length} more from parameter searches on this
+              {open ? "▾" : "▸"} {tucked.length} more made from this
             </button>
             {open && <div className="fam-kids">{tucked.map((m) => strategyRow(m, true))}</div>}
           </>
@@ -1807,15 +1962,27 @@ export default function Strategies() {
             {/* An escape hatch, not a preference to fiddle with: grouping is a
                 claim about how these rows relate, and you should be able to see
                 the raw list when you doubt it. */}
-            <label className="check" title="Fold each strategy's optimizer descendants under it">
+            <label
+              className="check"
+              title={
+                "Fold each strategy's copies and optimizer descendants under the strategy they came from. " +
+                "Enabled ones are never folded away — anything trading real money stays one glance from the top " +
+                "of the list — so a family whose members are all enabled shows no fold at all, just “from …” on " +
+                "each row."
+              }
+            >
               <input type="checkbox" checked={grouped} onChange={(e) => setGrouped(e.target.checked)} />
               Group search variants
             </label>
           </div>
           <p className="hint strat-summary">
             {filtered ? `${view.shown} of ${view.total}` : `${view.total}`} strategies
-            {grouped && view.groups.length !== view.shown ? ` in ${view.groups.length} groups` : ""} ·{" "}
-            <strong>{view.liveCount} enabled</strong> — armed, they trade once the engine is on.
+            {/* Only folds are counted, and only when there are any: the reader
+                can see a fold and count it back. */}
+            {grouped && view.foldedRows > 0
+              ? ` · ${view.foldedRows} folded into ${view.foldCount} group${view.foldCount === 1 ? "" : "s"}`
+              : ""}{" "}
+            · <strong>{view.liveCount} enabled</strong> — armed, they trade once the engine is on.
           </p>
           {view.groups.length === 0 ? (
             <div className="card">

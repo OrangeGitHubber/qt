@@ -2930,3 +2930,20 @@ details.fold > summary > .cache-head {
   font-variant-numeric: tabular-nums;
   opacity: .75;
 }
+
+/* "· from <parent>" inside the gen pill. The nesting says where a folded row
+   came from; an ENABLED descendant keeps its own top-level row, so for that one
+   this text is the only thing on screen carrying the relationship. Lighter than
+   the "gen N" it trails, and clipped — a parent with a long name must not push
+   the sleeve/open columns off their grid. */
+.sr-from {
+  /* inline-block, or max-width/ellipsis simply don't apply to an inline span. */
+  display: inline-block;
+  vertical-align: bottom;
+  font-weight: 400;
+  opacity: .8;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 14rem;
+}
