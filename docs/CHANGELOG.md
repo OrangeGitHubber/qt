@@ -3,6 +3,25 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## The "no recent trades" guard was blocking real crypto trades (2026-08-03)
+
+Yesterday's guard skipped a crypto pair whose last trade was more than fifteen
+minutes old, on the reasoning that a pair with no prints has nothing to fill an
+order against. The threshold came from a single incident — RENDER/USD frozen for
+over an hour — measured on a Sunday night, and it shipped with that stated as a
+guess.
+
+It was a bad guess. Measured on a Monday midday, five of eight major pairs
+exceeded it: DOT 31 minutes, ADA 21, LINK 32, AVAX 32, DOGE 166. Alpaca's own
+crypto venue prints sparsely even on the most liquid names it lists, so the
+guard was turning away perfectly tradable coins.
+
+It is now two hours, and its job has changed: a backstop against the egregious
+rather than a prediction. The real protection against a pair that cannot fill is
+the non-fill cooldown, which acts on three actual failures rather than on a guess
+about what a quiet tape implies — and now that crypto buys are immediate-or-
+cancel, an attempt that fails costs nothing but the attempt.
+
 ## Two artefacts that were reading as findings (2026-08-03)
 
 **"The replay invented BTC/USD"** — it didn't. The movers cache only gains a row

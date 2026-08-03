@@ -132,12 +132,20 @@ class RailContext:
 # A crypto pair with no recent prints has nothing to fill a market order
 # against. RENDER/USD's last trade sat at exactly $1.3749 for over 90 minutes
 # while its bar-derived 24h change kept moving, so every gate that reads the
-# change waved it through and every order then sat unfilled. Volume floors only
-# correlate with this — they also swing with the day of the week, so a floor set
-# on a quiet Sunday is loose by Wednesday. The print age measures the thing we
-# actually care about. Crypto only: a stock's last trade is legitimately hours
-# old whenever the market is shut.
-CRYPTO_STALE_TRADE_MINUTES = 15
+# change waved it through and every order then sat unfilled.
+#
+# The threshold was 15 minutes, chosen from that one incident during a Sunday
+# night trough and shipped with the caveat that it was a guess. It was: measured
+# on a Monday midday, FIVE of eight major pairs exceeded it — DOT 31m, ADA 21m,
+# LINK 32m, AVAX 32m, DOGE 166m. Alpaca's own crypto venue simply prints
+# sparsely, even on its most liquid names, so 15 minutes blocked real trades.
+#
+# 120 minutes now: a backstop for the egregious rather than a predictor. The
+# real defence against a pair that cannot fill is the non-fill cooldown, which
+# is EVIDENCE — three actual failures — instead of a guess about what a quiet
+# tape implies. And with IOC a failed attempt is cheap: the venue cancels it
+# instantly rather than leaving an order working.
+CRYPTO_STALE_TRADE_MINUTES = 120
 
 NONFILL_STRIKES_BEFORE_COOLDOWN = 3
 NONFILL_COOLDOWN_BASE_HOURS = 1.0

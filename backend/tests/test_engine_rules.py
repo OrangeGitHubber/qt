@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from qt.services.engine import (
+    CRYPTO_STALE_TRADE_MINUTES,
     NONFILL_COOLDOWN_MAX_HOURS,
     RISK_DEFAULTS,
     Candidate,
@@ -662,11 +663,25 @@ def _crypto(minutes_old: float | None, **kw) -> Candidate:
 
 
 def test_a_crypto_pair_with_no_recent_prints_is_skipped():
-    """RENDER/USD: last print frozen for 90 minutes while its bar-derived change
-    kept moving, so every gate that reads the change waved it through."""
-    ok, reason = evaluate_entry(params(entry={"require_above_vwap": False}), _crypto(90), NOON_ET)
+    """RENDER/USD: last print frozen for over an hour while its bar-derived
+    change kept moving, so every gate that reads the change waved it through.
+
+    Expressed relative to the threshold, not as a literal — the first version
+    hard-coded 90 minutes and silently stopped testing anything the moment the
+    threshold was raised past it."""
+    stale = CRYPTO_STALE_TRADE_MINUTES * 2
+    ok, reason = evaluate_entry(params(entry={"require_above_vwap": False}), _crypto(stale), NOON_ET)
     assert not ok
-    assert "no trades on this pair for 90m" in reason
+    assert f"no trades on this pair for {stale:.0f}m" in reason
+
+
+def test_a_normally_quiet_major_pair_is_not_blocked():
+    """THE regression. At 15 minutes this guard skipped five of eight major
+    pairs on a Monday midday — DOT 31m, ADA 21m, LINK 32m, AVAX 32m, DOGE 166m.
+    Alpaca's crypto venue prints sparsely even on its most liquid names, so a
+    tight threshold blocks real trades. Half an hour of quiet must pass."""
+    ok, reason = evaluate_entry(params(entry={"require_above_vwap": False}), _crypto(35), NOON_ET)
+    assert ok, reason
 
 
 def test_a_freshly_trading_pair_passes():
@@ -728,7 +743,7 @@ def test_a_stale_pair_is_rejected_before_the_gain_and_vwap_rules():
     never the problem — which is exactly how RENDER cost a day."""
     stale_and_weak = Candidate(
         symbol="DEAD/USD", asset_class="crypto", price=1.0, change_pct=0.01, vwap=99.0,
-        last_trade_at=NOON_ET - timedelta(minutes=90),
+        last_trade_at=NOON_ET - timedelta(minutes=CRYPTO_STALE_TRADE_MINUTES * 2),
     )
     ok, reason = evaluate_entry(params(), stale_and_weak, NOON_ET)
     assert not ok

@@ -12,11 +12,11 @@ from unittest.mock import AsyncMock, patch
 
 from qt.broker.alpaca import AlpacaClient
 from qt.services import engine
-from qt.services.engine import evaluate_entry
+from qt.services.engine import CRYPTO_STALE_TRADE_MINUTES, evaluate_entry
 
 SYMBOL = "STALE/USD"
 NOW = datetime.now(timezone.utc)
-STALE_AT = NOW - timedelta(minutes=90)
+STALE_AT = NOW - timedelta(minutes=CRYPTO_STALE_TRADE_MINUTES * 2)
 
 
 def _snap(traded_at: datetime) -> dict:
