@@ -8,6 +8,7 @@ from qt.broker.factory import get_client
 from qt.db import get_session
 from qt.services import persistence, watchdog
 from qt.settings_service import get_setting
+from qt.timeutil import iso_utc
 
 router = APIRouter(prefix="/api", tags=["status"])
 
@@ -35,7 +36,10 @@ async def status(
         "data_persistent_reason": boot.get("data_persistent_reason", ""),
         "secrets_without_key": boot.get("secrets_without_key", False),
         "instance_key_created_at": boot.get("instance_key_created_at"),
-        "last_tick_at": (dt.isoformat() if (dt := watchdog.last_tick_at(session)) else None),
+        # Stamped, not assumed: the heartbeat is a string in the settings table,
+        # and one written before it carried an offset would otherwise be served
+        # bare — and read as local by the browser.
+        "last_tick_at": iso_utc(watchdog.last_tick_at(session)),
         "broker": None,
         "market": None,
         "error": None,

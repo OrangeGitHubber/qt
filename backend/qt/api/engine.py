@@ -16,6 +16,7 @@ from qt.services import regime, scoreboard
 from qt.services.calendar import et_day
 from qt.services.engine import ENGINE_MODES, get_mode, get_risk
 from qt.settings_service import get_setting, set_setting
+from qt.timeutil import iso_utc
 
 log = logging.getLogger("qt.api.engine")
 
@@ -237,18 +238,6 @@ def put_slack_prefs(body: SlackPrefsBody, session: Session = Depends(get_session
     return {"prefs": notify.set_notify_prefs(session, body.prefs)}
 
 
-def _iso_utc(dt: datetime | None) -> str | None:
-    """Emit an ISO timestamp that carries a UTC offset. Datetimes stored via
-    SQLite come back NAIVE (SQLite drops tzinfo), and a browser parses an
-    offset-less ISO string as LOCAL time — so without this the journal shows
-    the UTC wall-clock mislabeled as local. Stamp UTC so the client converts."""
-    if dt is None:
-        return None
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-    return dt.isoformat()
-
-
 @router.get("/positions")
 async def open_positions(session: Session = Depends(get_session)) -> dict:
     """Every OPEN position across ALL strategies, with best-effort live prices —
@@ -279,7 +268,7 @@ async def open_positions(session: Session = Depends(get_session)) -> dict:
             "qty": t.qty,
             "entry_price": t.entry_price,
             "notional": t.notional,
-            "entry_at": t.entry_at.isoformat() if t.entry_at else None,
+            "entry_at": iso_utc(t.entry_at),
             "entry_reason": t.entry_reason,
             "current_price": None,
             "market_value": None,
@@ -421,14 +410,14 @@ def journal(
             "symbol": t.symbol,
             "asset_class": t.asset_class,
             "status": t.status,
-            "logged_at": _iso_utc(t.created_at),
+            "logged_at": iso_utc(t.created_at),
             "qty": t.qty,
             "notional": t.notional,
             "entry_price": t.entry_price,
-            "entry_at": _iso_utc(t.entry_at),
+            "entry_at": iso_utc(t.entry_at),
             "entry_reason": t.entry_reason,
             "exit_price": t.exit_price,
-            "exit_at": _iso_utc(t.exit_at),
+            "exit_at": iso_utc(t.exit_at),
             "exit_reason": t.exit_reason,
             "pnl": t.pnl,
             # Null today for every row, and that is the honest answer: Alpaca's

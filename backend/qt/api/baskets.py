@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from qt.db import get_session
 from qt.models import Asset, AuditLog, Basket, BasketItem, Strategy
 from qt.services.starter_baskets import annotate_membership
+from qt.timeutil import iso_utc
 
 router = APIRouter(prefix="/api/baskets", tags=["baskets"])
 
@@ -41,7 +42,7 @@ def _serialize(session: Session, basket: Basket) -> dict:
         "id": basket.id,
         "name": basket.name,
         "builtin": basket.builtin,
-        "created_at": basket.created_at.isoformat() if basket.created_at else None,
+        "created_at": iso_utc(basket.created_at),
         "count": len(members),
         "symbols": members,
     }

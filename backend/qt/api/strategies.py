@@ -13,6 +13,7 @@ from qt.broker.factory import get_client
 from qt.db import get_session
 from qt.models import AuditLog, Strategy, StrategyConfigVersion, Trade
 from qt.services.presets import PRESETS
+from qt.timeutil import iso_utc
 
 router = APIRouter(prefix="/api/strategies", tags=["strategies"])
 
@@ -228,7 +229,7 @@ def _serialize(s: Strategy) -> dict:
         "id": s.id,
         "name": s.name,
         "enabled": s.enabled,
-        "enabled_at": s.enabled_at.isoformat() if s.enabled_at else None,
+        "enabled_at": iso_utc(s.enabled_at),
         "asset_class": s.asset_class,
         "universe": s.universe,
         "basket_id": s.basket_id,
@@ -433,7 +434,7 @@ async def strategy_holdings(strategy_id: int, session: Session = Depends(get_ses
             "qty": t.qty,
             "entry_price": t.entry_price,
             "notional": t.notional,
-            "entry_at": t.entry_at.isoformat() if t.entry_at else None,
+            "entry_at": iso_utc(t.entry_at),
             "current_price": None,
             "market_value": None,
             "unrealized_pnl": None,

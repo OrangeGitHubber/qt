@@ -12,6 +12,7 @@ from qt.db import get_session
 from qt.models import Asset, AuditLog, WatchlistItem
 from qt.services import scanner, stats
 from qt.settings_service import set_setting
+from qt.timeutil import iso_utc
 
 router = APIRouter(prefix="/api", tags=["market"])
 
@@ -158,7 +159,7 @@ async def watchlist(
             "asset_class": item.asset_class,
             "price": price,
             "change_pct": change_pct,
-            "added_at": item.added_at.isoformat(),
+            "added_at": iso_utc(item.added_at),
         }
         row.update(stats.compute(daily.get(item.symbol) or [], current_price=price))
         rows.append(row)

@@ -47,6 +47,7 @@ from qt.api import baskets as baskets_api
 from qt.models import AuditLog, BasketItem, Strategy, StrategyConfigVersion, Trade
 from qt.services import fidelity
 from qt.services.backtest import _day_fn
+from qt.timeutil import utc_aware
 
 log = logging.getLogger("qt.api.fidelity")
 
@@ -80,10 +81,11 @@ class CompareBody(BaseModel):
 def _aware(ts: datetime | None) -> datetime | None:
     """SQLite hands back naive datetimes even for timezone-aware columns, and
     comparing one against an aware `since` raises. Everything QT stores is UTC,
-    so saying so is a restatement rather than an assumption."""
-    if ts is None:
-        return None
-    return ts if ts.tzinfo is not None else ts.replace(tzinfo=timezone.utc)
+    so saying so is a restatement rather than an assumption.
+
+    The rule lives in qt.timeutil now — one definition for the whole API, which
+    is also what stamps the offset on every timestamp the API emits."""
+    return utc_aware(ts)
 
 
 def _day_of(asset_class: str):

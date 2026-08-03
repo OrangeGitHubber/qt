@@ -29,6 +29,7 @@ from qt.db import get_session
 from qt.models import Basket, BasketItem, Strategy, WatchlistItem
 from qt.services import barfetch, optimizer, sweep
 from qt.services.engine import get_risk
+from qt.timeutil import iso_utc
 
 log = logging.getLogger("qt.api.optimizer")
 
@@ -134,7 +135,7 @@ def optimizer_lineage(session: Session, strategy: Strategy, days: int) -> dict:
         chain.append(
             {
                 "days": current.optimized_days,
-                "at": current.optimized_at.isoformat() if current.optimized_at else None,
+                "at": iso_utc(current.optimized_at),
             }
         )
         current = session.get(Strategy, current.optimized_from_id)
