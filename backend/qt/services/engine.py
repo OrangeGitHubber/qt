@@ -88,6 +88,11 @@ class Candidate:
     # are very different trades and the journal read identically for both.
     rank: int | None = None
     rank_of: int | None = None
+    # When this symbol last actually TRADED, per the snapshot's latestTrade.
+    # None = the snapshot didn't carry one. Crypto only acts on this (see
+    # CRYPTO_STALE_TRADE_MINUTES): a pair with no recent prints has nothing to
+    # fill a market order against, whatever its 24h volume says.
+    last_trade_at: datetime | None = None
 
 
 @dataclass
@@ -124,6 +129,16 @@ class RailContext:
 # attempt goes through — if that fills, the streak is over; if it misses, the
 # window doubles. No new state to persist: the streak is read back off the
 # journal, so it survives a restart, which an in-memory counter would not.
+# A crypto pair with no recent prints has nothing to fill a market order
+# against. RENDER/USD's last trade sat at exactly $1.3749 for over 90 minutes
+# while its bar-derived 24h change kept moving, so every gate that reads the
+# change waved it through and every order then sat unfilled. Volume floors only
+# correlate with this — they also swing with the day of the week, so a floor set
+# on a quiet Sunday is loose by Wednesday. The print age measures the thing we
+# actually care about. Crypto only: a stock's last trade is legitimately hours
+# old whenever the market is shut.
+CRYPTO_STALE_TRADE_MINUTES = 15
+
 NONFILL_STRIKES_BEFORE_COOLDOWN = 3
 NONFILL_COOLDOWN_BASE_HOURS = 1.0
 NONFILL_COOLDOWN_MAX_HOURS = 12.0
@@ -147,6 +162,15 @@ def _money(v: float) -> str:
 
 def evaluate_entry(params: dict, candidate: Candidate, now_et: datetime) -> tuple[bool, str]:
     entry = params.get("entry", {})
+    # Before any rule that reads a price: is this price attached to a market that
+    # is still trading? Unknown (None) is not stale — see the helper.
+    if candidate.asset_class == "crypto" and candidate.last_trade_at is not None:
+        age_min = (now_et - candidate.last_trade_at).total_seconds() / 60
+        if age_min > CRYPTO_STALE_TRADE_MINUTES:
+            return False, (
+                f"no trades on this pair for {age_min:.0f}m "
+                f"(max {CRYPTO_STALE_TRADE_MINUTES:g}m) — nothing to fill against"
+            )
     min_gain = entry.get("min_day_gain_pct", 0)
     if candidate.change_pct < min_gain:
         return False, f"day gain {candidate.change_pct:.2f}% < required {min_gain:g}%"
@@ -449,6 +473,20 @@ def _price_from_snapshot(snap: dict) -> tuple[float | None, float | None]:
     price = (snap.get("latestTrade") or {}).get("p") or (snap.get("dailyBar") or {}).get("c")
     vwap = (snap.get("dailyBar") or {}).get("vw")
     return (float(price) if price else None, float(vwap) if vwap else None)
+
+
+def last_trade_at_from_snapshot(snap: dict) -> datetime | None:
+    """When the symbol last traded, from latestTrade.t. None if absent or
+    unparseable — callers must treat that as "unknown", never as "stale", or a
+    change in Alpaca's payload shape would halt trading everywhere at once."""
+    raw = (snap.get("latestTrade") or {}).get("t")
+    if not raw:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
 
 
 # --------------------------------------------------------------------------
@@ -1279,11 +1317,13 @@ async def _candidates_for(
                 else await client.crypto_snapshots(symbols)
             )
             for row in rows:
-                price, vwap = _price_from_snapshot(snaps.get(row["symbol"]) or {})
+                snap = snaps.get(row["symbol"]) or {}
+                price, vwap = _price_from_snapshot(snap)
                 candidates.append(
                     Candidate(
                         symbol=row["symbol"], asset_class=row["asset_class"],
                         price=price or row["price"], change_pct=row["change_pct"], vwap=vwap,
+                        last_trade_at=last_trade_at_from_snapshot(snap),
                     )
                 )
         if strategy.universe in ("watchlist", "both"):
@@ -1312,6 +1352,7 @@ async def _candidates_for(
                             Candidate(
                                 symbol=sym, asset_class=strategy.asset_class,
                                 price=price, change_pct=round(change, 2), vwap=vwap,
+                                last_trade_at=last_trade_at_from_snapshot(snap),
                             )
                         )
     except AlpacaError as exc:
@@ -1349,6 +1390,7 @@ async def _symbol_candidates(
                 Candidate(
                     symbol=sym, asset_class=asset_class,
                     price=price, change_pct=round(change, 2), vwap=vwap,
+                    last_trade_at=last_trade_at_from_snapshot(snap),
                 )
             )
     return out
@@ -1356,18 +1398,20 @@ async def _symbol_candidates(
 
 async def _pool_metrics(
     client: AlpacaClient, asset_class: str, symbols: list[str], rank_by: str
-) -> tuple[dict, dict, dict]:
+) -> tuple[dict, dict, dict, dict]:
     """Snapshot a pool and compute the ranking metric for each symbol. Returns
-    (metrics, price_map, vwap_map). Shared by live candidate selection and the
-    'current ranking' view so both rank identically. Only fetches the daily bars
-    a bar-based metric needs; momentum_today rides on the snapshot alone."""
+    (metrics, price_map, vwap_map, trade_at_map). Shared by live candidate
+    selection and the 'current ranking' view so both rank identically. Only
+    fetches the daily bars a bar-based metric needs; momentum_today rides on the
+    snapshot alone."""
     from qt.services import stats
 
     price_map: dict[str, float] = {}
     vwap_map: dict[str, float | None] = {}
+    trade_at_map: dict[str, datetime | None] = {}
     metrics: dict[str, dict[str, float | None]] = {}
     if not symbols:
-        return metrics, price_map, vwap_map
+        return metrics, price_map, vwap_map, trade_at_map
 
     is_stock = asset_class == "stock"
     snaps = await (client.stock_snapshots(symbols) if is_stock else client.crypto_snapshots(symbols))
@@ -1387,6 +1431,7 @@ async def _pool_metrics(
         if price:
             price_map[sym] = price
         vwap_map[sym] = vwap
+        trade_at_map[sym] = last_trade_at_from_snapshot(snap)
         metrics[sym] = {
             "momentum_today": round(change, 2) if change is not None else None,
             "return_30d": None,
@@ -1422,7 +1467,7 @@ async def _pool_metrics(
                     if member_return is not None:
                         metrics[sym]["rs_vs_spy"] = round(member_return - spy_return, 2)
 
-    return metrics, price_map, vwap_map
+    return metrics, price_map, vwap_map, trade_at_map
 
 
 def _rank_note(strategy: Strategy, cand: Candidate) -> str:
@@ -1453,7 +1498,9 @@ async def _ranked_candidates(
     symbols = sorted(set(symbols))
     if not symbols:
         return []
-    metrics, price_map, vwap_map = await _pool_metrics(client, asset_class, symbols, rank_by)
+    metrics, price_map, vwap_map, trade_at_map = await _pool_metrics(
+        client, asset_class, symbols, rank_by
+    )
     ranked = ranking.rank_symbols(metrics, rank_by, top_n)
     candidates: list[Candidate] = []
     # rank_symbols returns best-first, and the entry loop walks this list in
@@ -1471,6 +1518,7 @@ async def _ranked_candidates(
                 price=price,
                 change_pct=metrics[sym]["momentum_today"] or 0.0,
                 vwap=vwap_map.get(sym),
+                last_trade_at=trade_at_map.get(sym),
                 rank=position,
                 rank_of=len(ranked),
             )
@@ -1547,7 +1595,9 @@ async def rank_pool(session: Session, client: AlpacaClient, strategy: Strategy) 
     pool = sorted(set(_strategy_pool(session, strategy)))
     if not pool:
         return []
-    metrics, price_map, _vwap = await _pool_metrics(client, strategy.asset_class, pool, strategy.rank_by)
+    metrics, price_map, _vwap, _trade_at = await _pool_metrics(
+        client, strategy.asset_class, pool, strategy.rank_by
+    )
 
     # Daily-MACD (bullish/bearish) per symbol for the ranking view — a separate,
     # best-effort daily-bars fetch (the view is on-demand, so the extra call is

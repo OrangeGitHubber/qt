@@ -3,6 +3,28 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Crypto pairs that aren't actually trading are skipped (2026-08-02)
+
+The clue that explained RENDER/USD was hiding in plain sight: its last trade
+price sat at exactly $1.3749 for over ninety minutes while the 24-hour change
+derived from its bars kept moving. Every entry rule reads the change, so every
+rule waved it through — and every order then sat unfilled, because a pair with
+no prints has nothing to fill against.
+
+A crypto candidate whose last trade is more than 15 minutes old is now skipped
+before any price rule looks at it, and the trace says why: *"no trades on this
+pair for 90m (max 15m) — nothing to fill against"*.
+
+This is what the $-volume floor was reaching for and couldn't quite grasp.
+Volume only correlates with tradability, and the numbers swing with the day of
+the week, so a floor set on a quiet Sunday is too loose by Wednesday. The age of
+the last print measures the thing itself.
+
+Stocks are exempt: a share's last trade is legitimately hours old whenever the
+market is shut. And a *missing* timestamp counts as unknown rather than stale —
+if Alpaca ever changed that field, failing the other way would stop every crypto
+entry at once.
+
 ## A symbol that won't fill now stops being retried every minute (2026-08-02)
 
 RENDER/USD submitted and cancelled an order every sixty seconds for over an

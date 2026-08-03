@@ -101,7 +101,7 @@ def _ranked(symbols_to_change: dict[str, float]):
     snapshot layer so only the ranking + stamping is under test."""
     metrics = {s: {"momentum_today": v} for s, v in symbols_to_change.items()}
     prices = {s: 100.0 for s in symbols_to_change}
-    with patch.object(engine, "_pool_metrics", new=AsyncMock(return_value=(metrics, prices, {}))):
+    with patch.object(engine, "_pool_metrics", new=AsyncMock(return_value=(metrics, prices, {}, {}))):
         return asyncio.run(
             engine._ranked_candidates(
                 None, "stock", list(symbols_to_change), "momentum_today", len(symbols_to_change)
@@ -121,7 +121,7 @@ def test_an_unpriced_symbol_does_not_renumber_the_rest():
     survived."""
     metrics = {s: {"momentum_today": v} for s, v in {"AAA": 9.0, "BBB": 5.0, "CCC": 1.0}.items()}
     prices = {"AAA": 100.0, "CCC": 100.0}  # BBB (rank 2) has no price
-    with patch.object(engine, "_pool_metrics", new=AsyncMock(return_value=(metrics, prices, {}))):
+    with patch.object(engine, "_pool_metrics", new=AsyncMock(return_value=(metrics, prices, {}, {}))):
         cands = asyncio.run(
             engine._ranked_candidates(None, "stock", ["AAA", "BBB", "CCC"], "momentum_today", 3)
         )

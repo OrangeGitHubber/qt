@@ -649,3 +649,61 @@ def test_a_cooling_symbol_still_reports_the_position_rail_first():
     )
     assert not ok
     assert "already open" in reason
+
+
+# ---- stale-print guard (crypto) ----
+
+def _crypto(minutes_old: float | None, **kw) -> Candidate:
+    at = None if minutes_old is None else NOON_ET - timedelta(minutes=minutes_old)
+    base = dict(symbol="RENDER/USD", asset_class="crypto", price=1.3749,
+                change_pct=5.0, vwap=1.0, last_trade_at=at)
+    base.update(kw)
+    return Candidate(**base)
+
+
+def test_a_crypto_pair_with_no_recent_prints_is_skipped():
+    """RENDER/USD: last print frozen for 90 minutes while its bar-derived change
+    kept moving, so every gate that reads the change waved it through."""
+    ok, reason = evaluate_entry(params(entry={"require_above_vwap": False}), _crypto(90), NOON_ET)
+    assert not ok
+    assert "no trades on this pair for 90m" in reason
+
+
+def test_a_freshly_trading_pair_passes():
+    """The other direction — without it, blocking all crypto would also pass."""
+    ok, reason = evaluate_entry(params(entry={"require_above_vwap": False}), _crypto(2), NOON_ET)
+    assert ok, reason
+
+
+def test_an_unknown_print_time_is_not_treated_as_stale():
+    """None means the snapshot carried no latestTrade.t. Failing closed here
+    would halt every crypto entry at once if Alpaca changed its payload."""
+    ok, reason = evaluate_entry(params(entry={"require_above_vwap": False}), _crypto(None), NOON_ET)
+    assert ok, reason
+
+
+def test_stocks_are_exempt_from_the_print_age_check():
+    """A stock's last trade is legitimately hours old whenever the market is
+    shut — the check would block every pre-market entry."""
+    stale_stock = cand(change_pct=5.0)
+    stale_stock.last_trade_at = NOON_ET - timedelta(hours=14)
+    ok, reason = evaluate_entry(params(), stale_stock, NOON_ET)
+    assert ok, reason
+
+
+def test_the_print_time_parser_handles_alpacas_real_formats():
+    """Alpaca stamps crypto trades with NANOSECOND precision and an offset —
+    a format that trips naive parsing. If this returns None the whole stale
+    check silently becomes a no-op, which is how it would fail in production."""
+    from qt.services.engine import last_trade_at_from_snapshot as parse
+
+    nanos = parse({"latestTrade": {"t": "2026-08-02T21:42:18.499701309-04:00"}})
+    assert nanos is not None
+    assert nanos.astimezone(timezone.utc).hour == 1  # 21:42 ET == 01:42 UTC next day
+
+    zulu = parse({"latestTrade": {"t": "2026-08-03T01:42:18.499701Z"}})
+    assert zulu is not None and zulu.tzinfo is not None
+
+    assert parse({}) is None                                   # no snapshot data
+    assert parse({"latestTrade": {}}) is None                  # no timestamp
+    assert parse({"latestTrade": {"t": "not-a-date"}}) is None  # unparseable, not a crash
