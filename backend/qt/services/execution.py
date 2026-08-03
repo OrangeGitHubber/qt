@@ -62,15 +62,23 @@ def _qty_for(asset_class: str, sizing_usd: float, price: float, fractional: bool
     return round(sizing_usd / price, 6)
 
 
-async def _await_fill(client: AlpacaClient, order_id: str) -> dict | None:
+async def _await_fill(client: AlpacaClient, order_id: str) -> tuple[dict | None, dict | None]:
+    """Returns (filled_order, last_seen_order).
+
+    The second element is what the order looked like at the moment we gave up,
+    and it has to be captured HERE: the caller's next move is to cancel, which
+    overwrites the broker status with "canceled" and destroys the only evidence
+    of why the order didn't fill. Resting unfilled, expired, and rejected-after-
+    acceptance are three different problems that look identical afterwards."""
+    order = None
     for delay in FILL_POLL_SECONDS:
         await asyncio.sleep(delay)
         order = await client.get_order(order_id)
         if order.get("status") == "filled":
-            return order
+            return order, order
         if order.get("status") in ("canceled", "expired", "rejected"):
-            return None
-    return None
+            return None, order
+    return None, order
 
 
 async def open_trade(
@@ -152,7 +160,7 @@ async def open_trade(
             trade.entry_reason = f"wanted to buy ({reason}) but order rejected: {exc}"
             session.add(trade)
             return None
-        filled = await _await_fill(client, order["id"])
+        filled, last_seen = await _await_fill(client, order["id"])
         if not filled:
             try:
                 await client.cancel_order(order["id"])
@@ -169,9 +177,20 @@ async def open_trade(
             if final and float(final.get("filled_qty") or 0) > 0:
                 filled = final
             else:
+                # Name what the broker actually said. "did not fill" on its own
+                # covers four different failures — still working, cancelled,
+                # expired, rejected after acceptance — and RENDER/USD burned a
+                # session precisely because the row couldn't tell them apart.
+                # last_seen first: `final` is post-cancel and always says
+                # "canceled", which is our own doing, not the reason.
+                observed = last_seen or final or {}
+                status = observed.get("status") or "unknown"
+                partial = float(observed.get("filled_qty") or 0)
                 trade.status = "rejected"
                 trade.entry_reason = (
-                    f"wanted to buy ({reason}) but {'market' if is_market else 'limit'} order did not fill"
+                    f"wanted to buy ({reason}) but {'market' if is_market else 'limit'} order "
+                    f"did not fill in {sum(FILL_POLL_SECONDS)}s "
+                    f"(broker status: {status}, filled {partial:g} of {qty:g})"
                 )
                 session.add(trade)
                 return None
@@ -241,7 +260,7 @@ async def close_trade(
                 )
             )
             return False
-        filled = await _await_fill(client, order["id"])
+        filled, last_seen = await _await_fill(client, order["id"])
         if not filled:
             try:
                 await client.cancel_order(order["id"])
@@ -254,6 +273,7 @@ async def close_trade(
                     category="trade",
                     message=f"[paper] SELL {trade.symbol} did not fill {miss} "
                     f"(attempt {attempts + 1}) — will retry next cycle",
+                    detail=f"broker status: {(last_seen or {}).get('status') or 'unknown'}",
                 )
             )
             return False

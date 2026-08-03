@@ -3,6 +3,25 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## An order that didn't fill now says what the broker said (2026-08-02)
+
+"The order did not fill" was covering four different problems at once: the order
+was still working when we gave up, the broker expired it, the broker rejected it
+after having accepted it, or it genuinely sat with nothing to trade against. The
+journal row read the same in all four cases, so it could tell you *that* nothing
+happened but never *why* — RENDER/USD retried every sixty seconds for forty-one
+minutes and each of the forty rows said exactly the same thing.
+
+Rejected entries now carry the broker's own status, how long we waited, and how
+much of the order actually filled: *"market order did not fill in 6s (broker
+status: pending_new, filled 0 of 72.732562)"*. Unfilled exits carry the same
+detail in the audit log.
+
+The subtlety worth knowing about: QT cancels an order it has given up on, and
+that cancel changes the status to "canceled" a moment later. Reporting the
+status *after* the cancel would just be reporting our own action back at us, so
+the status is now captured at the moment we stop waiting, before the cancel.
+
 ## Times are shown in a timezone you choose — ET by default (2026-08-02)
 
 Timestamps were being displayed wrong, and the cause was not the formatting: the

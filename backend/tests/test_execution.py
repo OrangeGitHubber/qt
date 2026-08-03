@@ -82,6 +82,66 @@ async def test_paper_unfilled_buy_is_cancelled_and_journaled(strategy_row):
     assert cancels == ["order-2"]
 
 
+async def test_unfilled_buy_reports_the_brokers_status_not_our_own_cancel(strategy_row):
+    """RENDER/USD retried every 60s for 41 minutes and every journal row said only
+    "did not fill" — which covers still-working, expired, and rejected-after-
+    acceptance alike, so the row could not say which. The row must carry the
+    status the order had when we gave up, NOT the "canceled" our own cancel
+    produces a moment later."""
+    # Polled twice as still-working, then cancelled by us — the re-read afterwards
+    # reports our cancel. Reporting that would be reporting our own action back.
+    statuses = [
+        {"id": "order-9", "status": "pending_new", "filled_qty": "0"},
+        {"id": "order-9", "status": "pending_new", "filled_qty": "0"},
+        {"id": "order-9", "status": "canceled", "filled_qty": "0"},
+    ]
+
+    with (
+        patch.object(AlpacaClient, "submit_order", new=AsyncMock(return_value={"id": "order-9"})),
+        patch.object(AlpacaClient, "get_order", new=AsyncMock(side_effect=statuses)),
+        patch.object(AlpacaClient, "cancel_order", new=AsyncMock(return_value=None)),
+        patch("qt.services.execution.FILL_POLL_SECONDS", (0, 0)),
+    ):
+        with session_scope() as s:
+            strat = s.get(Strategy, strategy_row)
+            cand = Candidate(symbol="ROCKET", asset_class="stock", price=21.2, change_pct=6.0, vwap=20.8)
+            assert await execution.open_trade(s, _client(), strat, None, "paper", cand, "test entry") is None
+
+    with session_scope() as s:
+        row = s.query(Trade).filter(Trade.strategy_id == strategy_row, Trade.status == "rejected").one()
+        assert "broker status: pending_new" in row.entry_reason
+        assert "canceled" not in row.entry_reason  # our own cancel, not the reason
+        assert "filled 0 of 9" in row.entry_reason  # nothing of the 9 shares we asked for
+
+
+async def test_a_broker_rejection_after_acceptance_is_named_as_such(strategy_row):
+    """The other side of the same coin: when Alpaca accepts an order and then
+    rejects it, the row must say "rejected" — the case that would send us
+    chasing liquidity for a problem that is actually the order itself."""
+    # The post-cancel re-read must report something DIFFERENT, or `final` would
+    # quietly supply "rejected" too and this would pass without the poll ever
+    # having captured it (it did exactly that until a mutation caught it).
+    statuses = [
+        {"id": "order-10", "status": "rejected", "filled_qty": "0"},
+        {"id": "order-10", "status": "canceled", "filled_qty": "0"},
+    ]
+
+    with (
+        patch.object(AlpacaClient, "submit_order", new=AsyncMock(return_value={"id": "order-10"})),
+        patch.object(AlpacaClient, "get_order", new=AsyncMock(side_effect=statuses)),
+        patch.object(AlpacaClient, "cancel_order", new=AsyncMock(return_value=None)),
+        patch("qt.services.execution.FILL_POLL_SECONDS", (0, 0)),
+    ):
+        with session_scope() as s:
+            strat = s.get(Strategy, strategy_row)
+            cand = Candidate(symbol="ROCKET", asset_class="stock", price=21.2, change_pct=6.0, vwap=20.8)
+            assert await execution.open_trade(s, _client(), strat, None, "paper", cand, "test entry") is None
+
+    with session_scope() as s:
+        row = s.query(Trade).filter(Trade.strategy_id == strategy_row, Trade.status == "rejected").one()
+        assert "broker status: rejected" in row.entry_reason
+
+
 async def test_position_too_small_is_rejected_not_ordered(strategy_row):
     with session_scope() as s:
         strat = s.get(Strategy, strategy_row)
