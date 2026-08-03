@@ -42,6 +42,45 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "crypto": dict(CRYPTO_DEFAULTS),
 }
 
+# Stablecoins are pegged to $1, so they CANNOT produce a momentum move: the
+# ±0.05% a scanner sees is peg noise, not a trend. Left in, any strategy with a
+# low enough gain gate buys a dollar with a dollar — spending sleeve budget and a
+# position slot on a thing that by construction goes nowhere. This is a fixed,
+# well-known set rather than a judgement call, so it's built in rather than left
+# to the user's exclude list.
+#
+# Membership rule, so extending this stays obvious: the token's whole purpose is
+# to hold ONE US DOLLAR. Pegged to something that itself moves does NOT belong
+# here — PAXG and XAUT track the gold price and swing several percent a day, so
+# they are real momentum candidates and must keep passing. Nor do euro-pegged
+# coins (EURC, EURT): quoted in USD they move with EUR/USD, which is a real,
+# tradable move. Nor do the governance tokens of stablecoin projects (FXS, MKR,
+# ENA) — those float freely.
+#
+# Beware the near-misses: USDP (Pax Dollar) is a stablecoin, PAXG (Paxos Gold)
+# is not, and they differ by one letter.
+STABLECOIN_BASES: frozenset[str] = frozenset(
+    {
+        "BUSD",    # Binance USD
+        "DAI",     # MakerDAO Dai
+        "FDUSD",   # First Digital USD
+        "FRAX",    # Frax USD
+        "GUSD",    # Gemini Dollar
+        "LUSD",    # Liquity USD
+        "PYUSD",   # PayPal USD
+        "RLUSD",   # Ripple USD
+        "TUSD",    # TrueUSD
+        "USDC",    # Circle USD Coin
+        "USDD",    # Tron USDD
+        "USDE",    # Ethena USDe
+        "USDG",    # Global Dollar
+        "USDP",    # Pax Dollar (NOT PAXG — see above)
+        "USDS",    # Sky Dollar
+        "USDT",    # Tether
+    }
+)
+STABLECOIN_REASON = "pegged to $1 (a stablecoin can't trend)"
+
 _CACHE_TTL_SECONDS = 30
 _cache: dict[str, Any] = {"at": 0.0, "config": None, "result": None}
 
@@ -85,6 +124,17 @@ def _normalize(stored: dict[str, Any]) -> dict[str, Any]:
     return cfg
 
 
+def is_stablecoin(symbol: str) -> bool:
+    """True when this is a CRYPTO PAIR whose base asset is a $1 stablecoin.
+
+    Matches the base only — "USDC" of "USDC/USD" — never the quote, or every USD
+    pair on the venue would qualify. Requires the pair shape, so a stock ticker
+    can never be caught by this list even if one day it collides with a coin
+    name."""
+    base, sep, _quote = symbol.upper().partition("/")
+    return bool(sep) and base in STABLECOIN_BASES
+
+
 def _reject_reason(
     f: dict, exclude_symbols: list, price: float, change_pct: float, dollar_volume: float, symbol: str
 ) -> str | None:
@@ -94,9 +144,19 @@ def _reject_reason(
     not just an empty one. Three rows with no explanation reads as "the scanner
     is broken"; "28 below your $0.50 min price" reads as a setting you chose.
     Phrased as the user's own setting — every one of these is a number they
-    typed."""
+    typed.
+
+    Not every reason is a setting: a stablecoin is refused by construction. It
+    still gets its OWN line in the tally rather than being folded into the
+    exclude list or (as it would otherwise be) counted under the min-gain floor,
+    so a name that vanishes can be explained.
+    """
     if symbol.upper() in (s.upper() for s in exclude_symbols):
         return "on your exclude list"
+    # Before the numeric floors: a stablecoin fails min gain too, and being told
+    # "below your 1% min gain" would hide the real, permanent reason.
+    if is_stablecoin(symbol):
+        return STABLECOIN_REASON
     if price < f["min_price"]:
         return f"below your ${f['min_price']:g} min price"
     if f["max_price"] and price > f["max_price"]:

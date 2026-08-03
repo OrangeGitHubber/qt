@@ -3,6 +3,47 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Clone a strategy, and see where each one came from (2026-08-02)
+
+**Clone.** Every strategy row has a Clone button. It makes an exact copy under
+the name "… (copy)", so trying a variant no longer means retyping a dozen
+settings and hoping the one that matters carried over. The copy always arrives
+switched off, and it is listed underneath the strategy it came from rather than
+as another lookalike in the list.
+
+**Crypto no longer starts confined to US stock hours.** A hand-built crypto
+strategy used to quietly inherit a 09:30–15:30 trading window, shutting it out
+of roughly three quarters of a market that never closes. Crypto now starts with
+no window, and switching a strategy to crypto clears the one it had. The setting
+is still there if you deliberately want crypto traded only during US hours — it
+now tells you how much of the day that costs.
+
+**The list explains its own grouping.** Strategies group under the one they were
+searched or copied from, but anything currently enabled keeps its own top-level
+row, so real money is never hidden behind a fold. That made one relationship
+look like two different things. Rows that came from another strategy now say
+"from &lt;name&gt;" beside their generation badge, so the link is visible even when
+there is no nesting to show it. The count above the list also stopped counting
+groups you cannot see — it now reports only what is actually folded.
+
+## The scanner stopped offering you dollars (2026-08-02)
+
+USDC/USD was showing up as a passing crypto candidate with a "+0.03% gain". USDC
+is a stablecoin, engineered to be worth exactly one dollar, so that 0.03% is
+measurement noise rather than a move anyone can profit from — and a strategy
+with a loose enough gain threshold would have bought a dollar for a dollar,
+spending real budget and one of its limited position slots on something that
+cannot go up.
+
+QT now knows the fixed list of dollar-pegged coins and skips them before they
+reach a strategy, so they no longer have to be added to the exclude list by
+hand. When one is skipped the scanner says so on its own line — "pegged to $1 (a
+stablecoin can't trend)" — rather than letting a name quietly vanish.
+
+Gold-backed coins like PAXG are not affected: they track the gold price, they
+genuinely move, and they remain fair game. (Paxos Gold and Pax Dollar differ by
+one letter, which is exactly the sort of thing that gets fixed wrong.)
+
 ## Crypto buy orders no longer linger at the exchange (2026-08-02)
 
 When QT placed a market order for a coin, that order stayed alive at the broker

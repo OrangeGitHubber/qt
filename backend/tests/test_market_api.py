@@ -159,9 +159,15 @@ def test_the_scanner_names_which_filter_rejected_what():
          patch.object(scanner, "crypto_rolling_stats", new=AsyncMock(return_value=stats)):
         rows, meta = asyncio.run(scanner.scan_crypto(AlpacaClient("k", "s"), cfg))
 
-    assert {r["symbol"] for r in rows} == {"DOT/USD", "USDT/USD", "USDC/USD"}
-    # The two biggest movers are missing, and the panel can now say why.
-    assert meta["rejected"] == {"below your $0.5 min price": 2}
+    # USDT and USDC clear the $0.50 floor but are stablecoins, so they are now
+    # skipped outright (see test_scanner_stablecoins.py) — leaving DOT alone.
+    assert {r["symbol"] for r in rows} == {"DOT/USD"}
+    # The two biggest movers are missing, and the panel can now say why — with
+    # the peg skip counted on its own line, not silently merged into a floor.
+    assert meta["rejected"] == {
+        "below your $0.5 min price": 2,
+        scanner.STABLECOIN_REASON: 2,
+    }
 
 
 def test_a_rejection_reason_names_the_setting_that_caused_it():
