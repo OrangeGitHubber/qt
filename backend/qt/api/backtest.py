@@ -107,6 +107,18 @@ class ScannerReplayDataset:
     # 15-minute bars were cached for them. Reported rather than hidden: those days
     # had their stops checked at daily resolution, not intraday.
     daily_filled_days: int = 0
+    # The last day of the window, and the day the BASELINE prefix opens on.
+    # `start_day` is where TRADING may begin; `baseline_day` sits a few days
+    # earlier and exists only so the first tradable bar has a day-gain reference
+    # (crypto measures against the close 24h back — see BASELINE_WARMUP_DAYS).
+    # Bars between the two are loaded and never traded; `sim_start` enforces it.
+    end_day: str = ""
+    baseline_day: str = ""
+    # Names made eligible because the LIVE side is known to have traded them on
+    # that day, not because the cached movers list produced them. Reported so a
+    # comparison built on a seeded universe can never be read as a reconstruction
+    # of the universe the scanner really had — see `seed_by_day` below.
+    seeded: list[str] = field(default_factory=list)
 
 
 def _fill_intraday_gaps(
@@ -286,10 +298,31 @@ def _days_between(first: str, last: str) -> list[str]:
     ]
 
 
+def _has_bars_from(series: list[dict] | None, day: str) -> bool:
+    """Whether a series holds a bar on or after `day`. ISO timestamps compare
+    lexically, so the day prefix is the whole test."""
+    return any(b["t"][:10] >= day for b in series or [])
+
+
+def _needs_intraday_sweep_detail(window_hours: float, symbols: int) -> str:
+    """The 422 a short window gets when no intraday bars can be found for it.
+
+    One wording, two places: the dataset raises it for callers that read the
+    cache directly, and the scanner replay raises it AFTER trying to fetch the
+    missing bars itself. A silent empty replay presented as a verdict is the
+    worst outcome available, so this must stay reachable in both."""
+    return (
+        f"This window is only {window_hours:.1f}h long, which needs intraday bars, "
+        f"and none of its {symbols} symbol(s) have any cached. Run an intraday "
+        "sweep (Settings → Historical bar cache) and try again."
+    )
+
+
 def load_scanner_replay_dataset(
     asset_class: str, days: int, replay_top_n: int, scanner_cfg: dict | None = None,
     *, end: datetime | None = None, always_eligible: list[str] | None = None,
-    window_hours: float | None = None,
+    window_hours: float | None = None, seed_by_day: dict[str, list[str]] | None = None,
+    allow_empty_intraday: bool = False,
 ) -> ScannerReplayDataset:
     """Read the cached historical top-N risers + their bars for `days` back.
     Prefers cached INTRADAY bars (so intraday exits behave); falls back to daily
@@ -302,7 +335,27 @@ def load_scanner_replay_dataset(
     keeps the original meaning — the last `days` up to this moment — and reads
     exactly the same rows as before, so an ordinary backtest is untouched. It
     exists so a period that ended in the past can be replayed with the
-    configuration that was live during it."""
+    configuration that was live during it.
+
+    `seed_by_day` ({'YYYY-MM-DD': [symbol, …]}) makes named symbols eligible on
+    named days on the CALLER'S authority, alongside whatever the cached movers
+    produce. It exists for the fidelity comparison, and it is not a
+    reconstruction of anything: the cached movers rank a whole day's close-to-
+    close move and are re-filtered by TODAY'S scanner settings, while the live
+    crypto universe is a rolling-24h top-N recomputed every cycle under the
+    settings of the time. Those two sets are simply different, so a name the
+    engine demonstrably traded can be absent from the replay's universe and every
+    such trade reads as one the backtest missed. Seeding the days the engine
+    actually acted removes that difference and leaves the SIGNAL difference,
+    which is the question being asked. Only days the movers cache already knows
+    about are widened — a day with no mover row is unrestricted already, and
+    adding a key for it would narrow the universe rather than widen it. The
+    seeded names come back on `.seeded` so no report can present this as
+    fidelity it does not have.
+
+    `allow_empty_intraday` suppresses the short-window 422 below, for a caller
+    that intends to fetch the missing bars and load again. It does not make the
+    empty case acceptable — see `_needs_intraday_sweep_detail`."""
     from qt.services import barcache
 
     crypto = asset_class == "crypto"
@@ -324,6 +377,23 @@ def load_scanner_replay_dataset(
     finish = end or datetime.now(timezone.utc)
     start_day = (finish - timedelta(days=days)).strftime("%Y-%m-%d")
     end_day = finish.strftime("%Y-%m-%d") if end is not None else None
+    # The window's last day, always known — `end_day` above is deliberately None
+    # for an open-ended run so those queries keep the exact filter they had, but
+    # a caller filling gaps still needs to know where the window stops.
+    last_day = finish.strftime("%Y-%m-%d")
+    # Where the INTRADAY series opens, a few days before trading may begin. Every
+    # bar needs a day-gain baseline before it can be judged at all — crypto
+    # against the close 24h back, stocks against the previous session — and
+    # `_simulate` skips a bar whose change_pct is None without a word. Reading
+    # intraday bars from `start_day` therefore made the window's first 24 hours
+    # unusable, which on a window only a few hours long is the whole thing: the
+    # replay evaluated ZERO bars and the report blamed the strategy's rules. The
+    # equivalent fix on the live-fetch path (see `replay`'s baseline_start) never
+    # reached here, because this path reads the cache instead of fetching.
+    baseline_day = (
+        datetime.strptime(start_day, "%Y-%m-%d")
+        - timedelta(days=BASELINE_WARMUP_DAYS.get(market, 5))
+    ).strftime("%Y-%m-%d")
     cache = barcache.session()
     try:
         # The replay's universe must obey the SAME scanner settings the live
@@ -353,8 +423,25 @@ def load_scanner_replay_dataset(
         # watchlist-only and every scanner trade does. Both are silent, and both
         # blame the backtester for being pointed at half the universe.
         pinned = {s.strip().upper() for s in (always_eligible or []) if s.strip()}
-        eligible_by_day = {day: set(syms) | pinned for day, syms in movers.items()}
-        union = sorted({s for syms in movers.values() for s in syms} | pinned)
+        # Seeded names, per day (see the docstring). Only days the movers cache
+        # already gates are widened: `run_backtest` treats a day ABSENT from
+        # eligible_by_day as unrestricted, so adding a key for such a day would
+        # cut its universe down to the seeds — the opposite of the intent.
+        seeds_by_day = {
+            day: {s.strip().upper() for s in syms if s and s.strip()}
+            for day, syms in (seed_by_day or {}).items()
+        }
+        eligible_by_day = {
+            day: set(syms) | pinned | seeds_by_day.get(day, set())
+            for day, syms in movers.items()
+        }
+        seeded = sorted(
+            {s for day in movers for s in seeds_by_day.get(day, set())} - pinned
+            - {s for syms in movers.values() for s in syms}
+        )
+        union = sorted(
+            {s for syms in movers.values() for s in syms} | pinned | set(seeded)
+        )
         # Intraday needs to cover the WHOLE mover set, not just some of it. This
         # used to test `any(...)`, which was safe only by accident: the intraday
         # table was filled exclusively by the "Sweep intraday" job, which fetches
@@ -365,10 +452,18 @@ def load_scanner_replay_dataset(
         # because run_backtest skips empty series — would vanish while the header
         # still claimed the full universe. Demand full coverage or use daily,
         # which the daily sweep fills completely.
+        # From `baseline_day`, not `start_day` — the extra days are the day-gain
+        # reference and are excluded from trading by `sim_start`, never by being
+        # absent. "Covered", though, still means covered INSIDE the window: a
+        # symbol whose only intraday bars sit in the baseline prefix has nothing
+        # to replay, and counting it would flip a short window to intraday on the
+        # strength of bars that can never trade.
         intraday_bars = barcache.cached_intraday_bars(
-            cache, union, start_day, model=intraday_model, end_day=end_day
+            cache, union, baseline_day, model=intraday_model, end_day=end_day
         )
-        intraday_covered = sorted(s for s in union if intraday_bars.get(s))
+        intraday_covered = sorted(
+            s for s in union if _has_bars_from(intraday_bars.get(s), start_day)
+        )
         # Full coverage is the rule (see above). The exception is a window too
         # short for daily bars to represent AT ALL: a daily bar is stamped at the
         # start of its day, so a 4-hour window contains none of them and the
@@ -382,14 +477,10 @@ def load_scanner_replay_dataset(
         used_intraday = bool(union) and (
             len(intraday_covered) == len(union) or (short_window and bool(intraday_covered))
         )
-        if short_window and not used_intraday:
+        if short_window and not used_intraday and not allow_empty_intraday:
             raise HTTPException(
                 status_code=422,
-                detail=(
-                    f"This window is only {window_hours:.1f}h long, which needs intraday bars, "
-                    f"and none of its {len(union)} symbol(s) have any cached. Run an intraday "
-                    "sweep (Settings → Historical bar cache) and try again."
-                ),
+                detail=_needs_intraday_sweep_detail(window_hours, len(union)),
             )
         # The daily series is loaded either way, and always reaches back over the
         # warm-up: it is the replay timeline when there is no intraday coverage,
@@ -421,7 +512,10 @@ def load_scanner_replay_dataset(
             filled = 0  # a daily replay is daily everywhere; nothing to fill
         # Whatever the resolution, a symbol with no bars can't be replayed. Name
         # them rather than quietly shrinking the universe under the user.
-        replayed = sorted(s for s in union if bars.get(s))
+        # Bars in the BASELINE prefix don't count: they exist to be a reference
+        # price and can never trade, so a symbol holding only those was not
+        # replayed and saying otherwise inflates `universe_size`.
+        replayed = sorted(s for s in union if _has_bars_from(bars.get(s), start_day))
         dropped = sorted(set(union) - set(replayed))
     finally:
         cache.close()
@@ -433,6 +527,7 @@ def load_scanner_replay_dataset(
         start_day=start_day, days_replayed=len(movers), daily=daily,
         daily_filled_days=filled,
         replayed=replayed, dropped=dropped, intraday_covered=len(intraday_covered),
+        end_day=last_day, baseline_day=baseline_day, seeded=seeded,
     )
 
 
@@ -450,6 +545,13 @@ class BacktestBody(BaseModel):
     # express "12 May to 3 June" at all, because its far edge is always today.
     window_start: datetime | None = None
     window_end: datetime | None = None
+    # {'YYYY-MM-DD': [symbol, …]} — names the CALLER knows were in the live
+    # universe on that day, made eligible in a scanner replay alongside the
+    # cached movers. The fidelity comparison fills this from its own journal.
+    # It is not a reconstruction and never silently improves a result: see
+    # `seed_by_day` on load_scanner_replay_dataset, and `universe_seeded` on the
+    # response, which names every symbol that got in this way.
+    seed_by_day: dict[str, list[str]] = Field(default_factory=dict)
     timeframe: str = Field(default="1Hour", pattern="^(15Min|1Hour|1Day)$")
     starting_cash: float = Field(default=5000, ge=100, le=10_000_000)
     spread_pct: float = Field(default=0.1, ge=0, le=2)
@@ -525,6 +627,9 @@ def replay_inputs(ds: ScannerReplayDataset, params: dict, replay_top_n: int) -> 
             "intraday_covered": ds.intraday_covered,
             "daily_filled_days": ds.daily_filled_days,
             "days_replayed": ds.days_replayed,
+            # Names in the universe on the caller's authority rather than from
+            # the cached movers — empty for every ordinary run.
+            "universe_seeded": ds.seeded,
         },
     }
 
@@ -543,6 +648,136 @@ def _wants_intraday_replay(params: dict) -> bool:
     )
 
 
+# How much of the replay window one symbol may be missing before the direct
+# fill below leaves it to the sweep. This pass exists for the RECENT EDGE — the
+# days the periodic sweep has not reached yet — and for a handful of names that
+# were never swept because they never made a mover list. A symbol missing more
+# than this is not an edge, it is an unbuilt cache, and fetching it name by name
+# would turn a 180-day replay into thousands of requests.
+REPLAY_FILL_MAX_DAYS_PER_SYMBOL = 8
+# And a hard ceiling on how many requests the whole pass may make, for the same
+# reason: a stock sweep's mover union runs to thousands, and one symbol whose
+# gaps are scattered costs a request per run of them.
+REPLAY_FILL_MAX_REQUESTS = 60
+
+
+def _contiguous(days: list[str]) -> list[tuple[str, str]]:
+    """Sorted days → the (first, last) runs they form.
+
+    One span from min to max would be simpler and wrong: a symbol missing only
+    the baseline day and only today would have every covered day in between
+    re-downloaded, every run, for as long as that shape persisted."""
+    runs: list[tuple[str, str]] = []
+    for day in sorted(days):
+        if runs and date.fromisoformat(day) - date.fromisoformat(runs[-1][1]) == timedelta(days=1):
+            runs[-1] = (runs[-1][0], day)
+        else:
+            runs.append((day, day))
+    return runs
+
+
+async def fetch_replay_window_intraday(
+    client: AlpacaClient,
+    ds: ScannerReplayDataset,
+    *,
+    asset_class: str,
+    report=None,
+) -> int:
+    """Download the 15-minute bars the replay WINDOW is missing, straight from
+    the broker, and cache them. Returns how many bars were saved.
+
+    The intraday sweep cannot do this, and that is the point. It walks
+    `daily_movers` rows and fetches each mover-day, so a day with no mover row
+    is a day it never asks about — and a day only has a mover row once its DAILY
+    bar exists. Crypto's daily bar for the current UTC day deliberately does not
+    exist (it is still forming; caching the partial would freeze a wrong
+    change_pct forever), so the whole mover→intraday pipeline is structurally
+    incapable of covering today. A fidelity comparison of "since I switched it
+    on last night" is almost entirely today, and got nothing: the crypto cache
+    reached 2026-08-02 while the window ran to 2026-08-03, so every in-universe
+    symbol evaluated zero bars and the report read as six missed trades.
+
+    Also covers a name that is in the universe but was never a mover — a seeded
+    symbol (see `seed_by_day`) or a pinned watchlist one. The sweep has no reason
+    to have fetched those on any day.
+
+    Which days count as missing is decided against the DAILY cache rather than
+    the calendar: a day the symbol has a daily bar for is a day it traded, and
+    anything after the newest daily bar in the cache is too new to have been
+    swept. Weekends and holidays therefore never register as gaps, so this does
+    not re-request empty ranges on every run.
+    """
+    from qt.services import barcache, barsweep
+
+    crypto = asset_class == "crypto"
+    intraday_model = barcache.CryptoIntradayBar if crypto else barcache.IntradayBar
+    daily_model = barcache.CryptoDailyBar if crypto else barcache.DailyBar
+    if not ds.union or not ds.baseline_day or not ds.end_day:
+        return 0
+
+    window_days = _days_between(ds.baseline_day, ds.end_day)
+    # TODAY is never "already covered", however many of its bars are cached. A
+    # window that ends now is asking about the last few hours, and the bars for
+    # those hours did not exist when the earlier run of this fetched the day.
+    # Treating a partially-fetched today as done is how a comparison run twice in
+    # an afternoon would keep answering with the morning's data.
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    sess = barcache.session()
+    try:
+        have = barcache.cached_intraday_days(
+            sess, ds.union, ds.baseline_day, model=intraday_model, end_day=ds.end_day
+        )
+        swept_to = barcache.latest_daily_day(sess, model=daily_model) or ""
+        wanted: list[tuple[str, str, str]] = []
+        for symbol in sorted(ds.union):
+            covered = have.get(symbol, set())
+            traded = {b["t"][:10] for b in ds.daily.get(symbol) or []}
+            missing = [
+                d
+                for d in window_days
+                if (d not in covered or d == today) and (d in traded or d > swept_to)
+            ]
+            if missing and len(missing) <= REPLAY_FILL_MAX_DAYS_PER_SYMBOL:
+                wanted += [(symbol, first, last) for first, last in _contiguous(missing)]
+        if not wanted or len(wanted) > REPLAY_FILL_MAX_REQUESTS:
+            if wanted:
+                log.info(
+                    "replay window fill skipped: %s requests needed (cap %s)",
+                    len(wanted), REPLAY_FILL_MAX_REQUESTS,
+                )
+            return 0
+
+        saved = 0
+        for index, (symbol, first, last) in enumerate(wanted, start=1):
+            if report:
+                report(
+                    f"Downloading the 15-minute bars this window is missing — {symbol} "
+                    f"({index} of {len(wanted)})",
+                    int(index * 100 / len(wanted)),
+                )
+            end_exclusive = (date.fromisoformat(last) + timedelta(days=1)).isoformat()
+            try:
+                # Two attempts, like every other interactive fetch here: somebody
+                # is watching a progress bar, and one symbol failing is not a
+                # failed run.
+                data = await barsweep._bars_with_retry(
+                    client, [symbol], "15Min", first, end_exclusive,
+                    asset_class=asset_class, attempts=2, retry_delay=1.0,
+                )
+            except Exception as exc:  # noqa: BLE001
+                log.warning("replay window bar fetch failed for %s: %s", symbol, exc)
+                continue
+            for name, bars in data.items():
+                if bars:
+                    saved += barcache.save_intraday_bars(
+                        sess, name, bars, model=intraday_model
+                    )
+            sess.commit()
+        return saved
+    finally:
+        sess.close()
+
+
 async def ensure_replay_intraday(
     client: AlpacaClient,
     ds: ScannerReplayDataset,
@@ -555,6 +790,9 @@ async def ensure_replay_intraday(
     report=None,
     end: datetime | None = None,
     always_eligible: list[str] | None = None,
+    window_hours: float | None = None,
+    seed_by_day: dict[str, list[str]] | None = None,
+    allow_empty_intraday: bool = False,
 ) -> tuple[ScannerReplayDataset, bool]:
     """Fetch the 15-minute bars this replay is missing, then re-read the dataset.
 
@@ -567,16 +805,60 @@ async def ensure_replay_intraday(
     Bounded by design: `since_day` limits the pull to the replay window, and the
     sweep is resumable per (day, symbol), so the download happens once and every
     later run over the same period is a cache read. Returns the dataset to use —
-    the reloaded one when the fetch achieved full coverage, otherwise the
-    original, because a partial fill still can't be replayed intraday and the run
-    should continue on daily bars rather than fail."""
-    if ds.used_intraday or not _wants_intraday_replay(params):
+    never a worse one than it was handed, because a partial fill that lost bars
+    would be a downgrade dressed as a top-up.
+
+    TWO fetches, because they close different holes. The mover-day SWEEP fills a
+    universe the cache never had; `fetch_replay_window_intraday` fills the days
+    the sweep cannot reach — the current, still-forming day, and names that were
+    never movers. Only the second runs when the dataset already says
+    `used_intraday`: since a short window accepts PARTIAL coverage (see the
+    dataset's note), "already intraday" can mean one symbol with one bar, and
+    returning early there is precisely how a four-hour window with the cache a
+    day behind replayed nothing at all."""
+    if not _wants_intraday_replay(params):
         return ds, False
 
     from qt.services import barcache, barsweep
 
     crypto = asset_class == "crypto"
     sweep_fn = barsweep.sweep_crypto_intraday if crypto else barsweep.sweep_intraday_movers
+
+    def reload() -> ScannerReplayDataset:
+        return load_scanner_replay_dataset(
+            asset_class, days, replay_top_n, scanner_cfg, end=end,
+            always_eligible=always_eligible, window_hours=window_hours,
+            seed_by_day=seed_by_day, allow_empty_intraday=allow_empty_intraday,
+        )
+
+    def better(fresh: ScannerReplayDataset) -> bool:
+        """Never hand back less than we were given. A reload that lost intraday
+        coverage, or bars, is not an improvement — and quietly adopting it would
+        turn a failed top-up into a shrunken replay nobody asked for."""
+        if ds.used_intraday and not fresh.used_intraday:
+            return False
+        if fresh.used_intraday and not ds.used_intraday:
+            return True
+        return sum(map(len, fresh.bars.values())) > sum(map(len, ds.bars.values()))
+
+    # Always first: cheap when there is nothing to do (one DISTINCT over the
+    # cache), and it is the only pass that can reach the window's newest days.
+    try:
+        filled = await fetch_replay_window_intraday(
+            client, ds, asset_class=asset_class, report=report
+        )
+    except Exception as exc:  # noqa: BLE001 — a failed top-up is not a failed backtest
+        log.warning("replay window intraday fill failed (%s); continuing", exc)
+        filled = 0
+    topped_up = False
+    if filled:
+        fresh = await asyncio.to_thread(reload)
+        if better(fresh):
+            ds, topped_up = fresh, True
+
+    if ds.used_intraday:
+        return ds, topped_up
+
     if report:
         report("Downloading the 15-minute bars this replay is missing…", 0)
 
@@ -608,15 +890,12 @@ async def ensure_replay_intraday(
         )
     except Exception as exc:  # noqa: BLE001 — a failed top-up is not a failed backtest
         log.warning("auto intraday top-up failed (%s); continuing on daily bars", exc)
-        return ds, False
+        return ds, topped_up
     finally:
         sess.close()
 
-    fresh = await asyncio.to_thread(
-        load_scanner_replay_dataset, asset_class, days, replay_top_n, scanner_cfg, end=end,
-        always_eligible=always_eligible,
-    )
-    return (fresh, True) if fresh.used_intraday else (ds, False)
+    fresh = await asyncio.to_thread(reload)
+    return (fresh, True) if better(fresh) else (ds, topped_up)
 
 
 def _strategy_symbols(session: Session, strategy: Strategy) -> list[str]:
@@ -873,7 +1152,19 @@ async def run_portfolio(
     warmup = max(
         warmup_days_for(json.loads(s.params), s.asset_class) for s in strategies
     ) if strategies else 0
+    # The deep warm-up belongs to the DAILY series only. `replay()` got this
+    # guard and this path did not, so a plain intraday portfolio run started its
+    # 15-minute fetch up to 120 days early: for 40 crypto symbols that is roughly
+    # 460,000 bars downloaded and cached to warm indicators the run never reads.
+    # The trigger is a strategy carrying BOTH the VWAP rule and MACD — VWAP takes
+    # precedence in _uses_daily_only_signals, so mixed_portfolio stays False and
+    # the single fetch below used `start`. Results were never wrong (sim_start
+    # still gates trading); the cost was download volume and rate limits.
+    baseline_warmup = max(
+        (BASELINE_WARMUP_DAYS.get(s.asset_class, 5) for s in strategies), default=0
+    )
     start = (window_start - timedelta(days=warmup)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    intraday_start = (window_start - timedelta(days=baseline_warmup)).strftime("%Y-%m-%dT%H:%M:%SZ")
     by_class: dict[str, list[str]] = {}
     for s in strategies:
         by_class.setdefault(s.asset_class, [])
@@ -905,7 +1196,8 @@ async def run_portfolio(
                     )
                 else:
                     bars_cache[asset_class] = await barfetch.fetch_bars(
-                        client, syms, asset_class, body.timeframe, start
+                        client, syms, asset_class, body.timeframe,
+                        start if body.timeframe == "1Day" else intraday_start,
                     )
     except AlpacaError as exc:
         raise HTTPException(status_code=502, detail=f"Bar download failed ({exc.status_code}): {exc}")
@@ -1273,9 +1565,18 @@ async def _scanner_replay(
             .filter(WatchlistItem.asset_class == strategy_dict["asset_class"])
             .all()
         ]
+    seed_by_day = body.seed_by_day or None
+    # `allow_empty_intraday`: the "no intraday at all on a short window" refusal
+    # is held back until AFTER the fetch below, not dropped. Raising it here
+    # would refuse a window the app is perfectly able to download bars for, and
+    # tell the user to go and run a sweep that structurally cannot cover the day
+    # they are asking about (see fetch_replay_window_intraday). The same refusal,
+    # word for word, is re-raised below when the fetch did not help — a silent
+    # empty replay presented as a verdict remains the worst outcome available.
     ds = await asyncio.to_thread(
         load_scanner_replay_dataset, strategy_dict["asset_class"], span, body.replay_top_n, cfg,
         end=window_end, always_eligible=pinned, window_hours=window_hours,
+        seed_by_day=seed_by_day, allow_empty_intraday=True,
     )
     # Missing 15-minute bars are fetched here rather than sent back as an
     # instruction to go and run a sweep. Runs once per window; afterwards the
@@ -1284,8 +1585,24 @@ async def _scanner_replay(
         client, ds, strategy_dict["params"],
         asset_class=strategy_dict["asset_class"], days=span,
         replay_top_n=body.replay_top_n, scanner_cfg=cfg, report=_report,
-        end=window_end, always_eligible=pinned,
+        end=window_end, always_eligible=pinned, window_hours=window_hours,
+        seed_by_day=seed_by_day, allow_empty_intraday=True,
     )
+    if window_hours < MIN_HOURS_FOR_DAILY_REPLAY and not ds.used_intraday:
+        raise HTTPException(
+            status_code=422,
+            detail=_needs_intraday_sweep_detail(window_hours, len(ds.union)),
+        )
+
+    # Where trading may begin. The dataset now carries a BASELINE prefix before
+    # the window — bars that exist only to give the first tradable bar something
+    # to measure its day-gain against — so the floor has to be stated rather than
+    # implied by the earliest bar. For a pinned window it is the window's start;
+    # for an ordinary `days` run it is midnight of `start_day`, which is exactly
+    # where the bars used to begin, so such a run replays as it always did.
+    trade_from = body.window_start or datetime.strptime(
+        ds.start_day, "%Y-%m-%d"
+    ).replace(tzinfo=timezone.utc)
 
     _report("Replaying history…", 0)
     # MACD/RSI/ATR come from the DAILY series, never from the replay stream. On an
@@ -1303,12 +1620,12 @@ async def _scanner_replay(
         ),
         eligible_by_day=ds.eligible_by_day, market=ds.market,
         daily_bars_by_symbol=replay_daily,
-        # The dataset is already trimmed to the window, so these are exactness
-        # rather than safety: the cache is keyed by DAY, so a window that opens or
-        # closes mid-session would otherwise pick up the whole of its first and
-        # last day. Both are None for an ordinary run, which therefore replays
-        # byte-identically to before.
-        sim_start=body.window_start,
+        # The cache is keyed by DAY, so a window that opens or closes mid-session
+        # would otherwise pick up the whole of its first and last day — and the
+        # dataset's baseline prefix reaches further back still. `trade_from` is
+        # midnight of `start_day` for an ordinary run, i.e. where the bars used to
+        # start, so such a run replays byte-identically to before.
+        sim_start=trade_from,
         sim_end=window_end,
         progress=_replay_progress,
     )
@@ -1330,6 +1647,7 @@ async def _scanner_replay(
                 strategy_dict["asset_class"], span, body.replay_top_n, cfg, end=window_end,
                 window_hours=window_hours,
                 always_eligible=pinned,
+                seed_by_day=seed_by_day, allow_empty_intraday=True,
             )
             _report("Replaying history…", 0)
             replay_daily = ds.daily if _needs_warmup(strategy_dict["params"]) else None
@@ -1343,7 +1661,7 @@ async def _scanner_replay(
                 ),
                 eligible_by_day=ds.eligible_by_day, market=ds.market,
                 daily_bars_by_symbol=replay_daily,
-                sim_start=body.window_start,
+                sim_start=trade_from,
                 sim_end=window_end,
                 progress=_replay_progress,
             )
@@ -1379,6 +1697,25 @@ async def _scanner_replay(
     result["replay_top_n"] = body.replay_top_n
     result["universe_size"] = len(ds.replayed)  # what was TESTED
     result["universe_dropped"] = ds.dropped
+    # Names in the universe on the CALLER'S say-so rather than because the cached
+    # movers produced them (see BacktestBody.seed_by_day). Empty for every
+    # ordinary backtest. Reported because a comparison run against a seeded
+    # universe has not reconstructed the universe the scanner really had, and
+    # nothing downstream may present it as though it had.
+    result["universe_seeded"] = ds.seeded
+    # THE UNIVERSE IS NOT A RECONSTRUCTION OF THE LIVE ONE, and the report has to
+    # be able to say so. Two reasons, both structural rather than bugs:
+    #
+    #   * the cached movers rank a whole day's close-to-close move, while the
+    #     live crypto scanner ranks a ROLLING 24h figure recomputed every cycle
+    #     (scanner.rolling_24h — THE definition of a crypto day gain in QT). The
+    #     top-N at 20:57 is simply not the top-N of the day that contains it.
+    #   * the cached rows are re-filtered with TODAY'S scanner settings, on
+    #     purpose (see barcache.movers_between — it is what stops the replay
+    #     trading names now on the exclude list). A floor raised since the trades
+    #     happened therefore judges them by a rule that did not exist yet.
+    result["universe_from_daily_movers"] = True
+    result["scanner_config_is_current"] = True
     result["intraday_covered"] = ds.intraday_covered
     result["daily_filled_days"] = ds.daily_filled_days
     result["days_replayed"] = ds.days_replayed

@@ -3,6 +3,33 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## The fidelity replay can finally see the window it is judging (2026-08-03)
+
+Two faults, both of which made a crypto comparison of the last few hours judge
+nothing at all — and then blame your rules for the silence.
+
+**The replay was looking at a different set of coins.** It rebuilds each day's
+universe from the cached daily risers, ranked by the whole day's move. The live
+scanner ranks a rolling 24-hour figure recomputed every minute. Those are simply
+not the same list, so a coin you demonstrably bought could be absent from the
+replay's — and every one of those trades was scored as a miss. The comparison
+now hands the replay the names your own journal says the engine acted on, on the
+days it acted, and says so plainly rather than passing it off as a
+reconstruction: the report states that the universe was seeded, and that the
+cached risers were re-filtered with today's scanner settings rather than the
+ones in force at the time. A trade the replay could see and still didn't take
+now reads as what it is — a signal difference, not a coverage gap.
+
+**And the bars could never have arrived.** A crypto day-gain is measured against
+the price 24 hours earlier, and the replay loaded bars only from the window's
+own first day, so there was nothing to measure against and every bar was skipped
+in silence. Worse, the missing bars were unreachable: the bar sweep only fetches
+days that already have a completed daily bar, and today never does — so a window
+running into today was permanently invisible, and the advice to "run a sweep"
+could not have helped. The replay now loads a few days of reference bars ahead
+of the window (they cannot trade, they only give the first bar something to
+measure against) and downloads the window's own missing 15-minute bars itself.
+
 ## Three defects an audit found in yesterday's own work (2026-08-03)
 
 An adversarial re-audit of the previous day's changes — including re-breaking

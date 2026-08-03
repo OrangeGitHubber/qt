@@ -83,6 +83,7 @@ def compare(
     assumed_spread_pct: float = 0.0,
     assumed_fee_pct: float = 0.0,
     replayed_symbols: list[str] | None = None,
+    seeded_symbols: list[str] | None = None,
 ) -> dict:
     """Diff what really happened against what the replay says would have.
 
@@ -91,12 +92,20 @@ def compare(
     exit_reason. Rejected rows matter as much as filled ones — they are how a
     backtest-only trade is told apart from a rail doing its job.
 
+    `seeded_symbols` are names that reached the replay's universe because THESE
+    trades put them there, not because the replay reconstructed them (see
+    qt.api.fidelity._seed_by_day). The distinction has to survive into the log:
+    "the replay was watching this and passed" is a much weaker claim when the
+    only reason it was watching is that we told it to — and a much stronger one
+    about the signal, since the coverage excuse is gone.
+
     Every number is rounded where it is produced, so the API layer has nothing
     to decide and the UI cannot render 14 decimal places of false precision.
     """
     universe = (
         {s.upper() for s in replayed_symbols} if replayed_symbols else None
     )
+    seeded = {s.upper() for s in (seeded_symbols or [])}
     sim_trades = list(backtest_result.get("trade_list") or [])
     sim_open = list(backtest_result.get("open_positions") or [])
 
@@ -139,6 +148,9 @@ def compare(
                     "in_replayed_universe": (
                         None if universe is None else live.get("symbol", "").upper() in universe
                     ),
+                    # And whether it was only there because this comparison put
+                    # it there. See `seeded_symbols`.
+                    "universe_seeded": live.get("symbol", "").upper() in seeded,
                 }
             )
             continue
@@ -319,7 +331,18 @@ def _trade_log(matched: list[dict], live_only: list[dict], backtest_only: list[d
         # something nobody checked. That wording sent a real investigation after
         # a signal difference that did not exist.
         covered = r.get("in_replayed_universe")
-        if covered is False:
+        if covered and r.get("universe_seeded"):
+            # A FOURTH state, and the most informative one. This name is in the
+            # replay's universe only because your own trade put it there — the
+            # cached-movers reconstruction did not produce it. So the coverage
+            # question is settled by construction and what remains is the signal.
+            why = (
+                " It was added to the replay's universe because you traded it — the replay's"
+                " own reconstruction of that day's movers did not include it. So it could see"
+                " this symbol and still didn't buy: that is a signal difference, not a"
+                " coverage gap."
+            )
+        elif covered is False:
             why = " It wasn't in the universe the replay covered, so it was never looking for it."
         elif covered is None:
             why = (
@@ -376,6 +399,15 @@ def _decision_stats(matched: list[dict], live_only: list[dict], backtest_only: l
         # number here means the comparison is mismatched, not the backtester.
         "missed_outside_universe": sum(
             1 for r in live_only if r.get("in_replayed_universe") is False
+        ),
+        # Of the trades the replay didn't find, how many it was HANDED the symbol
+        # for — seeded from the journal precisely so the universe could not be the
+        # excuse. These are the only misses that are unambiguously about the
+        # signal, and therefore the only ones worth chasing as a replay bug.
+        "missed_despite_seeding": sum(
+            1
+            for r in live_only
+            if r.get("universe_seeded") and r.get("in_replayed_universe")
         ),
         "match_rate_pct": round(len(matched) / total * 100, 1) if total else None,
         "same_exit_rule_pct": round(len(same_rule) / len(exits) * 100, 1) if exits else None,

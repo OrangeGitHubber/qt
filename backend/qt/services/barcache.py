@@ -438,6 +438,53 @@ def cached_intraday_bars(
     return out
 
 
+def cached_intraday_days(
+    sess: OrmSession, symbols: list[str], start_day: str, model=IntradayBar,
+    *, end_day: str | None = None,
+) -> dict[str, set[str]]:
+    """{symbol: {'YYYY-MM-DD', …}} — which DAYS each symbol already has intraday
+    bars for, without loading the bars themselves.
+
+    A replay that wants to fill its own gaps needs to know what is missing, and
+    reading every bar to find out is the expensive way round: a single crypto
+    pair is ~96 rows a day. This is one DISTINCT over the timestamp prefix, so
+    the answer costs the same whether the cache holds a day or a year.
+
+    Same inclusive `end_day` convention as cached_intraday_bars — see the note
+    there about why the bound is the day AFTER it, exclusive."""
+    if not symbols:
+        return {}
+    end_before = (
+        (date.fromisoformat(end_day) + timedelta(days=1)).isoformat()
+        if end_day is not None
+        else None
+    )
+    out: dict[str, set[str]] = {}
+    day_col = func.substr(model.ts, 1, 10)
+    for i in range(0, len(symbols), 500):
+        chunk = symbols[i : i + 500]
+        query = sess.query(model.symbol, day_col).filter(
+            model.symbol.in_(chunk), model.ts >= start_day
+        )
+        if end_before is not None:
+            query = query.filter(model.ts < end_before)
+        for symbol, day in query.distinct().all():
+            out.setdefault(symbol, set()).add(day)
+    return out
+
+
+def latest_daily_day(sess: OrmSession, model=DailyBar) -> str | None:
+    """The newest day the DAILY cache holds, or None when it is empty.
+
+    Read as "how far the sweep has got". Days after it are not gaps in the
+    cache — they are days the sweep could not have covered yet, which for crypto
+    includes the current UTC day (its daily bar is still forming, so
+    sweep_crypto_daily_bars deliberately refuses to store it). A replay whose
+    window runs into one of those days has to fetch its own bars or see
+    nothing."""
+    return sess.query(func.max(model.day)).scalar()
+
+
 def has_intraday(sess: OrmSession, model=IntradayBar) -> bool:
     """Whether any intraday bars are cached (stage-2 replay is possible)."""
     return sess.query(model).first() is not None

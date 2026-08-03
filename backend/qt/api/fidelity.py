@@ -683,6 +683,36 @@ def _iso(ts: datetime | None) -> str | None:
     return aware.isoformat() if aware else None
 
 
+def _seed_by_day(live_rows: list[dict]) -> dict[str, list[str]]:
+    """{entry day: [symbols the live engine acted on that day]}.
+
+    Handed to a scanner replay as `seed_by_day`, and the reason is narrow: the
+    replay reconstructs its universe from the cached DAILY movers, ranked on a
+    whole day's close-to-close move and re-filtered with TODAY'S scanner
+    settings. The live crypto scanner ranks a ROLLING 24-hour figure recomputed
+    every cycle, under the settings of the time. Those are different sets, so a
+    coin the engine demonstrably bought at 20:57 can be absent from the replay's
+    universe — and then the report says "the backtest missed six trades" when
+    the backtest was never pointed at them.
+
+    A symbol the engine ACTED on was in the engine's universe on that day. That
+    is not an assumption, it is what the journal records. Seeding exactly those
+    (symbol, day) pairs removes the universe difference and leaves the SIGNAL
+    difference, which is the question this page exists to answer.
+
+    Rejected rows count. A rail refusing a trade still proves the engine wanted
+    it, which means the scanner had surfaced it. Per DAY rather than for the
+    whole window on purpose: pinning a name for every day of a long comparison
+    would hand the replay a universe far wider than the scanner ever had, and
+    the invented trades that followed would be an artefact of this function."""
+    out: dict[str, set[str]] = {}
+    for row in live_rows:
+        day, symbol = row.get("entry_day"), (row.get("symbol") or "").strip().upper()
+        if day and symbol:
+            out.setdefault(day, set()).add(symbol)
+    return {day: sorted(symbols) for day, symbols in sorted(out.items())}
+
+
 def _timeframe_for(params: dict, window_hours: float | None = None) -> str:
     """The bar size the STRATEGY demands, not a hardcoded one. Asking for daily
     bars on a strategy that needs intraday ones gets every entry rejected, and the
@@ -747,6 +777,10 @@ async def _replay_segments(
                     window_start=start,
                     window_end=segment.end,
                     scanner_replay=segment.scanner_replay,
+                    # This stretch's OWN trades, not the whole window's — a
+                    # segment must not be handed names that only traded under a
+                    # configuration it is not replaying.
+                    seed_by_day=_seed_by_day(segment.live) if segment.scanner_replay else {},
                     timeframe=_timeframe_for(
                         config["params"], (segment.end - start).total_seconds() / 3600
                     ),
@@ -782,7 +816,24 @@ def _merge_segment_results(segments: list[_Segment]) -> tuple[dict, list[str], l
         "trade_list": [t for s in replayed for t in (s.result.get("trade_list") or [])],
         "open_positions": [p for s in replayed for p in (s.result.get("open_positions") or [])],
     }
-    symbols = sorted({sym for s in replayed for sym in (s.result.get("symbols") or [])})
+    # The universe is only known if EVERY replayed segment reported one. An
+    # empty list means "this segment could not say what it covered", and a union
+    # would let a segment that DID report lend its universe to one that didn't —
+    # reinstating the exact false verdict this reporting was fixed to remove
+    # ("the replay was watching this symbol and passed"). Unknown has to be
+    # contagious: one silent segment makes the merged answer unknown too.
+    #
+    # Inert until recently, which is why it survived: scanner replays always
+    # returned [] here, so the union was always empty and everything correctly
+    # read as unknown. Now that the replay names its symbols, a split comparison
+    # across a universe-changing edit — or one segment over UNIVERSE_LIST_CAP —
+    # would produce a confident answer from partial evidence.
+    per_segment = [list(s.result.get("symbols") or []) for s in replayed]
+    symbols = (
+        sorted({sym for names in per_segment for sym in names})
+        if per_segment and all(per_segment)
+        else []
+    )
     gaps = [g for s in replayed for g in (s.result.get("bar_gaps") or [])]
     return combined, symbols, gaps
 
@@ -1005,6 +1056,7 @@ async def compare(
         fee_assumed = next(
             (s.result.get("fee_pct_per_side") for s in segments if s.result), 0.0
         )
+        results = [s.result for s in segments if s.result]
     else:
         crossed = 0
         result = await run(
@@ -1019,6 +1071,11 @@ async def compare(
                 window_end=until,
                 symbols=symbols,
                 scanner_replay=scanner_replay,
+                # See _seed_by_day: the names the engine acted on were in the
+                # engine's universe, and the cached-movers reconstruction cannot
+                # know that. Scanner replays only — a custom or basket universe
+                # is already exactly the list that produced these trades.
+                seed_by_day=_seed_by_day(live_rows) if scanner_replay else {},
                 timeframe=_timeframe_for(
                     json.loads(strategy.params), (until - replay_from).total_seconds() / 3600
                 ),
@@ -1034,19 +1091,54 @@ async def compare(
         no_trade_reason = (result.get("diagnosis") or {}).get("summary")
         timeframe = result.get("timeframe")
         fee_assumed = result.get("fee_pct_per_side") or 0.0
+        results = [result]
 
+    # Names that got into the replay's universe because the JOURNAL says the
+    # engine acted on them, not because the cached movers produced them. They
+    # have to travel all the way to the trade log: "the replay was watching this
+    # and passed" means something quite different when the only reason it was
+    # watching is that we told it to.
+    seeded_symbols = sorted({s for r in results for s in (r.get("universe_seeded") or [])})
     report = fidelity.compare(
         live_rows,
         result,
         assumed_spread_pct=spread_pct,
         assumed_fee_pct=fee_assumed or 0.0,
         replayed_symbols=replayed_symbols,
+        seeded_symbols=seeded_symbols,
     )
     # When the replay traded NOTHING, the backtester already knows why — it
     # counts every rejection reason as it goes. Passing that through turns a
     # screen of "the backtest missed this" into the one sentence that explains
     # all of them at once.
     report["backtest_no_trade_reason"] = no_trade_reason
+
+    # HOW THE REPLAY'S UNIVERSE WAS ARRIVED AT. Said out loud because it is the
+    # single largest reason a scanner comparison disagrees, and nothing on screen
+    # would otherwise hint at it:
+    #
+    #   * `from_daily_movers` — the replay reconstructs each day's eligible set
+    #     from the cached DAILY movers: top-N by that day's whole close-to-close
+    #     move. The live crypto scanner ranks a ROLLING 24-hour figure recomputed
+    #     every cycle (scanner.rolling_24h), so the set it had at 20:57 is not the
+    #     set the day produces. This is a structural difference, not a bug, and
+    #     it cannot be closed without recording the scanner's real universe at
+    #     decision time.
+    #   * `scanner_config_is_current` — those cached rows are re-filtered with
+    #     TODAY'S price/volume/exclusion settings, deliberately (it is what stops
+    #     a replay trading names now on the exclude list). A floor raised since
+    #     these trades happened therefore judges them by a rule that did not
+    #     exist yet.
+    #   * `seeded` — names let in because the journal proves the engine acted on
+    #     them that day. Whatever they contribute is NOT evidence that the replay
+    #     reconstructed the universe; it is evidence about the SIGNAL, with the
+    #     universe difference deliberately removed.
+    report["universe"] = {
+        "from_daily_movers": any(r.get("universe_from_daily_movers") for r in results),
+        "scanner_config_is_current": any(r.get("scanner_config_is_current") for r in results),
+        "seeded": seeded_symbols,
+        "dropped": sorted({s for r in results for s in (r.get("universe_dropped") or [])}),
+    }
 
     # CONFIG DRIFT. Every trade records the config version that produced it. An
     # UNSEGMENTED replay uses the strategy as it stands TODAY, so if it was edited
