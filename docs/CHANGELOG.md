@@ -3,6 +3,29 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Two trades in a day were being compared against the wrong one (2026-08-04)
+
+The crypto report's most alarming row said you stopped out of AVAX at a 1.13%
+loss while the replay took a 5.15% profit — the same coin, the same day, opposite
+outcomes. It was a near-perfect agreement described backwards.
+
+The replay traded AVAX twice that day: once at 00:38 which it sold for a profit,
+and again at 01:40 which it stopped out of at −1.04%. You traded it once, at
+01:42 — two minutes after the replay's second buy, at the same price to a tenth
+of a cent, and you stopped out on the same rule for almost the same loss. The
+comparison paired your trade against the replay's FIRST one, because a symbol and
+a day resolved to whichever trade came first rather than to the nearest.
+
+Worse, the leftover disappeared. The replay's 00:38 buy is a trade it took and
+you did not — the definition of an invented one — and it was shown nowhere. So
+the report was inventing a disagreement and hiding a real finding at the same
+time.
+
+Trades on the same name and day are now matched up one-to-one, closest in time
+first, and whatever is left over is reported as a genuine miss or a genuine
+invention. A crypto day is twenty-four hours, so trading a coin twice inside one
+is ordinary rather than exotic — this was not a rare corner.
+
 ## A "match" thirteen hours apart is no longer called a match (2026-08-04)
 
 With the crypto comparison finally running, "Crypto - many movements" showed

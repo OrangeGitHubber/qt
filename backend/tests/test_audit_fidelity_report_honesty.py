@@ -432,39 +432,45 @@ def test_a_same_day_exit_with_one_reason_missing_does_not_claim_they_agree():
     assert "weren't compared" in sold["detail"]
 
 
-def test_a_symbol_traded_twice_in_one_day_is_declared_rather_than_dropped():
-    """Matching is by (symbol, day), so a second trade on the same name the same
-    day overwrites the first and vanishes — from `matched`, from `live_only`, from
-    the log and from `live_trades`. The report then quietly describes fewer
-    decisions than the journal holds, which is the sample silently shrinking
-    under a reader who has no way to notice.
+def test_a_symbol_traded_twice_in_one_day_is_compared_rather_than_dropped():
+    """This test used to pin the opposite, and pinning it is what kept it.
 
-    Changing the key is not the answer: a live fill at 14:03 and a 14:00 bar are
-    the same decision, and demanding equal timestamps would report every trade as
-    a mismatch. So the loss is counted and stated."""
+    Matching is by (symbol, day), and a second trade on the same name the same
+    day used to overwrite the first and vanish — from `matched`, from
+    `live_only`, from the log and from `live_trades`. The report described fewer
+    decisions than the journal held, and this test asserted that the loss was at
+    least COUNTED (`same_day_duplicates`), which made a declared hole look like a
+    closed one.
+
+    `_pair_by_nearest` closes it: the group is matched one-to-one on entry time
+    and whatever is left over is a real miss or a real invention. Both trades now
+    reach the report, so the counter reads zero — it stays as the tripwire that
+    would show a future pairing bug as a number rather than as a shorter
+    report."""
     out = compare(
         [_live("SOL/USD", "2026-05-05", entry_price=100.0),
          _live("SOL/USD", "2026-05-05", entry_price=140.0)],
         {"trade_list": [_sim("SOL/USD", "2026-05-05")], "open_positions": []},
     )
-    assert out["decision"]["live_trades"] == 1, "the collapse itself is unchanged"
-    assert out["same_day_duplicates"]["live"] == 1, "…but it is no longer silent"
-    assert out["same_day_duplicates"]["backtest"] == 0
+    assert out["decision"]["live_trades"] == 2, "both real trades are in the report"
+    assert out["decision"]["missed_by_backtest"] == 1, "the one the replay did not make"
+    assert out["same_day_duplicates"] == {"live": 0, "backtest": 0}, "nothing dropped"
 
 
-def test_a_replay_that_trades_a_name_twice_in_a_day_is_declared_too():
+def test_a_replay_that_trades_a_name_twice_in_a_day_is_compared_too():
     """The same hole on the other side. A fix that landed on the live dict and
     not the sim one would hide exactly the case that matters most — invented
-    trades are what the top-N and rail questions turn on."""
+    trades are what the top-N and rail questions turn on, and AVAX on 2026-08-04
+    lost one this way."""
     out = compare(
         [],
         {"trade_list": [_sim("SOL/USD", "2026-05-05", entry_price=100.0),
                         _sim("SOL/USD", "2026-05-05", entry_price=140.0)],
          "open_positions": []},
     )
-    assert out["decision"]["backtest_trades"] == 1
-    assert out["same_day_duplicates"]["backtest"] == 1
-    assert out["same_day_duplicates"]["live"] == 0
+    assert out["decision"]["backtest_trades"] == 2
+    assert out["decision"]["invented_by_backtest"] == 2
+    assert out["same_day_duplicates"] == {"live": 0, "backtest": 0}
 
 
 def test_two_recorded_reasons_that_do_agree_are_still_reported_as_a_match():

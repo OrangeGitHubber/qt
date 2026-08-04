@@ -129,21 +129,43 @@ def compare(
     # A position still open at the window's end is a real decision — the entry
     # happened. Excluding it would count every held winner as "the backtest
     # missed this trade", which is the opposite of the truth.
-    sim_by_key: dict[tuple[str, str], dict] = {}
+    sim_by_key: dict[tuple[str, str], list[dict]] = {}
     for t in sim_trades + sim_open:
-        sim_by_key.setdefault(_key(t.get("symbol", ""), t.get("entry_day")), t)
+        sim_by_key.setdefault(_key(t.get("symbol", ""), t.get("entry_day")), []).append(t)
 
     live_filled = [t for t in live_trades if t.get("status") in ("open", "closed")]
     live_rejected = [t for t in live_trades if t.get("status") == "rejected"]
-    live_by_key = {_key(t.get("symbol", ""), t.get("entry_day")): t for t in live_filled}
+    live_by_key: dict[tuple[str, str], list[dict]] = {}
+    for t in live_filled:
+        live_by_key.setdefault(_key(t.get("symbol", ""), t.get("entry_day")), []).append(t)
+    # PAIRED NEAREST IN TIME, not first-come. Both sides can trade one symbol more
+    # than once in a day — a crypto day is 24 hours, so this is ordinary — and
+    # keeping whichever the replay took FIRST paired the wrong two.
+    #
+    # Measured on AVAX/USD, 2026-08-04. The replay traded it twice: 00:38→01:40
+    # for +5.15%, then 01:40→02:08 for -1.04%. Live traded it once, 01:42→01:48
+    # for -1.13% — the same price to a tenth of a cent as the replay's SECOND
+    # entry, two minutes apart, the same rule firing. The report paired it with
+    # the first and announced "Both sold AVAX the same day, but you on stop-loss
+    # and the replay on take-profit": two systems that agreed, described as
+    # opposites. And the replay's first trade — one it took and live did not,
+    # which is the definition of an invented trade — vanished, because only the
+    # paired row survived to be reported.
+    #
+    # The DAY key itself is untouched and right: a live fill at 14:03 and a 14:00
+    # bar are the same decision, and demanding equal timestamps would report
+    # every trade as a mismatch. What was wrong is which of several candidates a
+    # key resolves to.
+    pairs, unpaired_live, unpaired_sim = _pair_by_nearest(live_by_key, sim_by_key)
     # Which (symbol, day) pairs the engine WANTED but a rail refused. Without
     # this, every correctly-blocked trade would be filed as a backtest error.
     rejected_keys = {_key(t.get("symbol", ""), t.get("entry_day")) for t in live_rejected}
 
     matched: list[dict] = []
     live_only: list[dict] = []
-    for key, live in live_by_key.items():
-        sim = sim_by_key.get(key)
+    for key, live, sim in (
+        [(k, t, None) for k, t in unpaired_live] + [(k, l, s) for k, l, s in pairs]
+    ):
         if sim is None:
             live_only.append(
                 {
@@ -243,9 +265,7 @@ def compare(
 
     backtest_only: list[dict] = []
     rails_blocked: list[dict] = []
-    for key, sim in sim_by_key.items():
-        if key in live_by_key:
-            continue
+    for key, sim in unpaired_sim:
         row = {
             "symbol": sim.get("symbol"),
             "day": key[1],
@@ -272,21 +292,26 @@ def compare(
             backtest_only.append(row)
 
     return {
-        # DECISIONS THIS COMPARISON COULD NOT SEE. Matching is by (symbol, day)
-        # deliberately — see the module docstring — and the cost of that is that a
-        # symbol traded TWICE in one day collapses to a single key: the live dict
-        # keeps the later row, the sim dict keeps the earlier one, and the rest
-        # disappear from every bucket, from the log, and from `live_trades`. The
-        # report then describes fewer decisions than were made without saying so,
-        # which for a round-the-clock crypto strategy is not hypothetical.
+        # DECISIONS THIS COMPARISON COULD NOT SEE — now structurally none, and
+        # kept as the tripwire that says so.
         #
-        # Not fixed by changing the key: a live fill at 14:03 and a 14:00 bar ARE
-        # the same decision, and demanding equal timestamps would report every
-        # trade as a mismatch. Declared instead, so a reader who sees a number
-        # here knows the sample is smaller than the journal.
+        # A symbol traded twice in one day used to collapse to a single key: the
+        # live dict kept the later row, the sim dict the earlier one, and the
+        # rest disappeared from every bucket, from the log and from
+        # `live_trades`. The report described fewer decisions than were made
+        # without saying so, and for a round-the-clock crypto strategy that was
+        # not hypothetical — AVAX on 2026-08-04 lost a genuinely invented trade
+        # that way while its real counterpart was mispaired into a false
+        # disagreement.
+        #
+        # `_pair_by_nearest` matches the groups one-to-one and reports the
+        # leftovers as misses and inventions, so every row now lands somewhere
+        # and these should both read zero. They are computed rather than
+        # hardcoded precisely so that a future pairing bug shows up here as a
+        # number instead of as a quietly shorter report.
         "same_day_duplicates": {
-            "live": len(live_filled) - len(live_by_key),
-            "backtest": len(sim_trades) + len(sim_open) - len(sim_by_key),
+            "live": len(live_filled) - len(pairs) - len(unpaired_live),
+            "backtest": len(sim_trades) + len(sim_open) - len(pairs) - len(unpaired_sim),
         },
         # The comparison told trade by trade, in order, each with a verdict in
         # plain words. The buckets above summarise; this is the thing you can
@@ -322,6 +347,62 @@ def _same_rule(live_reason: str | None, sim_reason: str | None) -> bool | None:
     def head(s: str) -> str:
         return s.split(":")[0].strip().lower()
     return head(live_reason) == head(sim_reason)
+
+
+def _pair_by_nearest(
+    live_by_key: dict[tuple[str, str], list[dict]],
+    sim_by_key: dict[tuple[str, str], list[dict]],
+) -> tuple[list[tuple[tuple[str, str], dict, dict]], list[tuple[tuple[str, str], dict]],
+           list[tuple[tuple[str, str], dict]]]:
+    """Match each (symbol, day) group one-to-one, closest entry times first.
+
+    Greedy on the smallest gap, which is right here rather than merely simple:
+    the groups are tiny (a handful of trades in one symbol on one day) and the
+    nearest pair is the one nobody would argue about. Taking it first cannot
+    strand a better pairing for the rows left over, because any other assignment
+    would have to move that pair further apart to bring another closer.
+
+    Rows with no usable timestamp on either side pair in ORDER, after every timed
+    pair is settled. An imported journal carries days rather than moments and
+    nearest-in-time cannot rank those — order is what the old code effectively
+    used for everything, and it is still the best available answer when there is
+    nothing finer to go on.
+
+    Returns (pairs, unpaired_live, unpaired_sim): the leftovers are trades one
+    side made and the other did not, and they belong in the report as misses and
+    inventions rather than dropped."""
+    pairs: list[tuple[tuple[str, str], dict, dict]] = []
+    left_over_live: list[tuple[tuple[str, str], dict]] = []
+    left_over_sim: list[tuple[tuple[str, str], dict]] = []
+
+    for key in live_by_key.keys() | sim_by_key.keys():
+        lives = list(live_by_key.get(key) or [])
+        sims = list(sim_by_key.get(key) or [])
+        candidates = sorted(
+            (
+                (gap, li, si)
+                for li, live in enumerate(lives)
+                for si, sim in enumerate(sims)
+                if (gap := _entry_gap_seconds(live.get("entry_at"), sim.get("entry_at")))
+                is not None
+            ),
+            key=lambda c: (c[0], c[1], c[2]),
+        )
+        used_live: set[int] = set()
+        used_sim: set[int] = set()
+        for gap, li, si in candidates:
+            if li in used_live or si in used_sim:
+                continue
+            used_live.add(li)
+            used_sim.add(si)
+            pairs.append((key, lives[li], sims[si]))
+        rest_live = [t for i, t in enumerate(lives) if i not in used_live]
+        rest_sim = [t for i, t in enumerate(sims) if i not in used_sim]
+        for live, sim in zip(rest_live, rest_sim):
+            pairs.append((key, live, sim))
+        left_over_live += [(key, t) for t in rest_live[len(rest_sim):]]
+        left_over_sim += [(key, t) for t in rest_sim[len(rest_live):]]
+    return pairs, left_over_live, left_over_sim
 
 
 def _entry_gap_seconds(live_at: str | None, sim_at: str | None) -> float | None:
