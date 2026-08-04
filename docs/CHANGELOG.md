@@ -3,6 +3,18 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## The backtest universe list stops scrolling in a little box (2026-08-03)
+
+Capping the width of grid columns — which stopped form fields spreading across a
+wide card — also squeezed the Backtest page's strategy column to about 270px.
+Two dozen symbols that used to sit in three comfortable rows wrapped into eight,
+and hit a height limit that had been in that list all along without ever being
+reached. The result looked like a new scrollbox; nothing about the list had
+changed except the room it was given.
+
+The cap is for grids of input fields. The strategy column is a content pane with
+a universe in it, so it takes the width again.
+
 ## Prose fills its card, and the forms fill the page (2026-08-03)
 
 Explanatory text was wrapping into a narrow ribbon with most of the row empty
