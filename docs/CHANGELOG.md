@@ -3,6 +3,27 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Refused orders were being counted as open positions (2026-08-04)
+
+This is why "Basic FAANGs and friends" could not be compared, and it had nothing
+to do with anything fixed earlier today.
+
+To judge your strategy fairly the replay is told what the rest of the account was
+holding, so it hits the same account-wide limits the live engine did. That list
+was built from every journal row that had an entry time and no exit time — on
+the assumption that an order which never filled could not have an entry time.
+
+It can. Your journal held **4,612 refused orders carrying one**, and 4,492 of
+them overlapped, against a position cap of 50. So the replay believed the account
+was full at every moment of the window and refused every candidate before it
+ever looked at the entry rules — which is why it took no trades at all, and why
+all three real trades came back as "the replay missed it". The replay never got
+to have an opinion about them.
+
+Nothing needs cleaning up in your data: the fault was in the question being
+asked, not in what the journal recorded. Every comparison run since that filter
+was removed was affected, so past reports on any strategy are worth re-running.
+
 ## The replay opened after the trade it was grading (2026-08-04)
 
 Strategy 25 kept reporting three real trades as "the replay missed it", and the

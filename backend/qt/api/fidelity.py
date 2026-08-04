@@ -1024,23 +1024,38 @@ def _account_positions(
       * THIS strategy's positions that were already open when the window began —
         the replay starts flat, so live's already-open rail could not fire.
 
-    Rejected rows are excluded: they are decisions, not holdings. `entry_at` is
-    the only honest start — a row ordered but unfilled held nothing."""
+    Rejected rows are excluded BY STATUS, not by inference from `entry_at`: a
+    refused order can carry one. Getting that wrong turns a journal of refusals
+    into a full account and stops the replay trading at all — see the filter."""
     rows = (
         session.query(Trade)
         .filter(
             Trade.mode == mode,
-            # A rejected candidate never filled, and an order placed but never
-            # filled held nothing either — `entry_at` is what separates a holding
-            # from a decision. A `status != 'rejected'` filter used to sit here
-            # too and was removed as genuinely dead: no row can fail that and
-            # pass this.
+            # A REFUSED ORDER IS A DECISION, NOT A HOLDING — and it can carry an
+            # entry_at, so `entry_at is not null` does not imply it. This filter
+            # sat here once, was deleted as "genuinely dead: no row can fail that
+            # and pass this", and that claim was wrong: `open_trade`'s
+            # did-not-fill path stamps an entry_at on a rejected row, which
+            # `_account_entries` states in its own docstring twenty lines below.
             #
-            # This one is KEPT even though `entry_at < until` below already drops
-            # NULLs on its own (SQL comparisons against NULL are never true).
-            # Mutation-testing it therefore cannot kill it, and that is recorded
-            # rather than hidden: relying on NULL comparison semantics to enforce
-            # a rule this load-bearing is too subtle to leave implicit.
+            # Measured on the owner's instance after it was removed: 4,612 such
+            # rows, 4,492 of them overlapping at once against a position cap of
+            # 50. Every candidate the replay looked at died at "rail: max open
+            # positions reached" before the entry rules were read, on every bar
+            # of every stretch, and the comparison reported three real trades as
+            # "the replay missed it — this is the kind that points at a real
+            # bug". The replay never got to have an opinion about them.
+            #
+            # It was deleted because mutating it could not make a test fail. The
+            # test that covers this builds its rejected rows with a NULL
+            # entry_at, so no fixture could tell the two clauses apart — a
+            # surviving mutation means no TEST distinguishes the branch, never
+            # that no DATA can.
+            Trade.status != "rejected",
+            # KEPT even though `entry_at < until` below already drops NULLs on
+            # its own (SQL comparisons against NULL are never true). Relying on
+            # NULL comparison semantics to enforce a rule this load-bearing is
+            # too subtle to leave implicit.
             Trade.entry_at.isnot(None),
             Trade.entry_at < until,
             or_(Trade.exit_at.is_(None), Trade.exit_at > since),

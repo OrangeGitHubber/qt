@@ -240,6 +240,37 @@ def test_a_row_that_never_filled_is_not_a_holding(db_session):
     assert "UNFILLEDCO" not in got
 
 
+def test_a_rejected_row_that_carries_an_entry_time_is_still_not_a_holding(db_session):
+    """MEASURED ON THE OWNER'S INSTANCE, and it made every comparison worthless.
+
+    The test above asserts on `entry_at` rather than on `status`, and a comment
+    in `_account_positions` used to argue from that the two were equivalent —
+    "no row can fail `status != rejected` and pass `entry_at is not null`" — so
+    the status filter was deleted as dead. It is not dead. `open_trade`'s
+    did-not-fill path writes a REJECTED row that carries an entry_at, and
+    `_account_entries` says so in its own docstring, two functions below the one
+    that removed it.
+
+    The real journal held 4,612 of them. The replay was handed 4,492 concurrent
+    phantom positions against a cap of 50, so every candidate died at
+    "rail: max open positions reached" before any entry logic ran — on every bar,
+    at every resolution. `backtest_trades: 0`, and three real trades reported as
+    "the replay missed it — this is the kind that points at a real bug".
+
+    The fixture is the whole point: the sibling above only ever built rejected
+    rows with a NULL entry_at, which is why mutating the filter could not kill
+    it. A surviving mutation means no TEST distinguishes the branch, not that no
+    DATA can."""
+    mine, other = _two(db_session)
+    _trade(db_session, other.id, "REJECTEDCO", WIN_FROM, None, status="rejected")
+    got = {p["symbol"] for p in _account_positions(db_session, mine, WIN_FROM, WIN_TO, "paper")}
+    assert "REJECTEDCO" not in got, "a refused order is a decision, not a holding"
+    # The guard must not have thrown out real holdings with it.
+    _trade(db_session, other.id, "REALCO", WIN_FROM, None)
+    got = {p["symbol"] for p in _account_positions(db_session, mine, WIN_FROM, WIN_TO, "paper")}
+    assert "REALCO" in got
+
+
 def test_a_position_closed_before_the_window_is_excluded(db_session):
     mine, other = _two(db_session)
     _trade(db_session, other.id, "GONECO", D0, D0 + timedelta(hours=1), status="closed")
