@@ -255,3 +255,62 @@ def test_the_other_modes_holdings_are_not_borrowed(db_session):
     db_session.flush()
     got = {p["symbol"] for p in _account_positions(db_session, mine, WIN_FROM, WIN_TO, "paper")}
     assert "SHADOWCO" not in got
+
+
+# --- allow_concurrent_symbol: the rail live relaxes -------------------------
+# Reported from a real comparison: "You bought MSFT. The replay did not." The
+# backdrop had blocked a name live allowed, because strategy 25 sets
+# allow_concurrent_symbol and live then scopes the already-open rail to that
+# strategy alone (engine.py:1936). Seeding the account unconditionally turned
+# one false verdict ("invented") into its mirror image ("missed").
+
+def test_a_strategy_allowed_to_share_a_symbol_is_not_blocked_by_another_holder():
+    held = [{"symbol": "AAA", "from": D0 - timedelta(days=1), "to": None, "notional": 100.0}]
+    result = run_backtest(
+        _strategy(allow_concurrent_symbol=True), {"AAA": _bars()}, RISK,
+        account_positions=held,
+    )
+    assert "AAA" in _entries(result)
+
+
+def test_a_strategy_not_allowed_to_share_is_still_blocked():
+    """Anti-vacuity for the test above: the flag is what frees it, not the fix."""
+    held = [{"symbol": "AAA", "from": D0 - timedelta(days=1), "to": None, "notional": 100.0}]
+    result = run_backtest(
+        _strategy(allow_concurrent_symbol=False), {"AAA": _bars()}, RISK,
+        account_positions=held,
+    )
+    assert "AAA" not in _entries(result)
+
+
+def test_sharing_a_symbol_does_not_also_relax_the_account_position_cap():
+    """Live's comment is explicit that the flag relaxes ONLY the symbol rail:
+    the caps 'protect the ACCOUNT'. A fix that let it leak further would hand
+    back the permissiveness this whole change removed."""
+    tight = dict(RISK, max_total_positions=2)
+    others = [
+        {"symbol": f"O{i}", "from": D0 - timedelta(days=1), "to": None, "notional": 1.0}
+        for i in range(2)
+    ]
+    result = run_backtest(
+        _strategy(allow_concurrent_symbol=True), {"AAA": _bars()}, tight,
+        account_positions=others,
+    )
+    assert "AAA" not in _entries(result)
+
+
+def test_a_sharing_strategy_still_cannot_stack_a_second_position_on_its_own():
+    """'Scaling in, not this' — the engine's words. Its OWN holding still blocks.
+
+    Recorded honestly: mutating the rail does NOT break this test, because the
+    replay's open positions are a dict keyed by symbol, so a second buy could
+    only overwrite the first. The invariant is enforced by that structure rather
+    than by the rail, and is pinned here because it is the behaviour that
+    matters — not because this test guards the line above it."""
+    result = run_backtest(
+        _strategy(allow_concurrent_symbol=True, max_positions=5),
+        {"AAA": _bars(), "BBB": _bars()}, RISK,
+    )
+    own = [t for t in (result.get("trade_list") or []) if t["symbol"] == "AAA"]
+    open_aaa = [p for p in (result.get("open_positions") or []) if p["symbol"] == "AAA"]
+    assert len(own) + len(open_aaa) == 1

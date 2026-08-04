@@ -1653,7 +1653,19 @@ def run_backtest(
                 open_positions_strategy=len(state.open_trades),
                 open_exposure_strategy_usd=open_exposure,
                 entries_today=state.entries_by_day.get(day, 0),
-                already_open_symbol=symbol in state.open_trades or symbol in others_symbols,
+                # Live relaxes EXACTLY this rail when allow_concurrent_symbol is
+                # on (engine.py:1936 filters the symbol query to this strategy),
+                # so a strategy that opted in may take a name another strategy
+                # holds. Folding the account in unconditionally blocked entries
+                # live allowed, and the comparison reported them as trades the
+                # replay MISSED — the same false verdict as before, pointing the
+                # other way. The caps above stay account-wide either way, which
+                # is what the engine's own comment says they must.
+                already_open_symbol=(
+                    symbol in state.open_trades
+                    or (not strategy.get("allow_concurrent_symbol")
+                        and symbol in others_symbols)
+                ),
                 last_loss_at=state.last_loss_at.get(symbol),
                 loss_sale_within_31d=(
                     strategy["asset_class"] == "stock"
@@ -1668,7 +1680,11 @@ def run_backtest(
             last_loss = ctx.last_loss_at
             ctx.last_loss_at = None
             rails_ok, rails_reason = check_rails(
-                {"max_positions": strategy["max_positions"], "sleeve_usd": strategy["sleeve_usd"]},
+                {
+                    "max_positions": strategy["max_positions"],
+                    "sleeve_usd": strategy["sleeve_usd"],
+                    "allow_concurrent_symbol": strategy.get("allow_concurrent_symbol", False),
+                },
                 entry_sizing, ctx,
             )
             if rails_ok and last_loss is not None:

@@ -1464,6 +1464,7 @@ async def run_portfolio(
             "rank_by": s.rank_by,
             "top_n": s.top_n,
             "swing_mode": s.swing_mode,
+            "allow_concurrent_symbol": s.allow_concurrent_symbol,
             "sizing_usd": s.sizing_usd,
             "sleeve_usd": s.sleeve_usd,
             "max_positions": s.max_positions,
@@ -1565,6 +1566,11 @@ def replay_strategy(config) -> dict:
         "rank_by": get_or("rank_by", "momentum_today"),
         "top_n": get_or("top_n", 10),
         "swing_mode": get("swing_mode"),
+        # Whether this strategy may hold a symbol ANOTHER strategy already holds.
+        # Only matters once a replay is told what the rest of the account held
+        # (BacktestBody.account_positions): live relaxes exactly this one rail
+        # when it is on — the caps and the cooldown stay account-wide.
+        "allow_concurrent_symbol": get_or("allow_concurrent_symbol", False),
         "sizing_usd": get("sizing_usd"),
         "sleeve_usd": get("sleeve_usd"),
         "max_positions": get("max_positions"),

@@ -3,6 +3,25 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## A strategy allowed to share a symbol was blocked anyway (2026-08-04)
+
+Reported straight off a comparison: *"You bought MSFT. The replay did not."*
+
+Yesterday's change told the replay what the rest of the account was holding, so
+it would stop buying names the engine had refused. It went one step too far. A
+strategy can be set to hold a symbol another strategy already holds — and when
+that setting is on, the engine checks only that strategy's own positions. The
+replay checked everybody's regardless, so it refused entries the engine had
+allowed.
+
+That turned one wrong verdict into its mirror image: trades the replay was said
+to have *invented* became trades it was said to have *missed*. Both point at the
+backtester, and neither was its fault.
+
+The replay now relaxes exactly the rail the engine relaxes, and no more: the
+account position cap, the exposure cap and the after-loss cooldown still count
+every strategy, because those protect the account rather than the strategy.
+
 ## A crypto strategy could stop the engine trading, once a minute, silently (2026-08-04)
 
 Found while building something else, and much more urgent than what it was found

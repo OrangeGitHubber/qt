@@ -203,6 +203,35 @@ def test_an_intraday_macd_run_now_fetches_the_daily_series(client, configured, w
     assert body["daily_signals"]["warning"] is None
 
 
+def test_allow_concurrent_symbol_reaches_the_replay(client, configured, watched_other):
+    """The WIRE for the shared-symbol rail.
+
+    A real comparison reported "You bought MSFT. The replay did not" because the
+    replay was blocked by a holding live permitted: strategy 25 sets
+    allow_concurrent_symbol, and live then scopes the already-open rail to that
+    strategy alone. The flag has to travel from the row, through the strategy
+    snapshot, into run_backtest — three hops, none of which were exercised."""
+    held = [{"symbol": "NVDA", "from": "2020-01-01T00:00:00Z", "to": None, "notional": 10.0}]
+    req = {"symbols": ["NVDA"], "days": 30, "timeframe": "1Hour",
+           "starting_cash": 5000, "spread_pct": 0, "account_positions": held}
+
+    shared = client.post("/api/strategies", json={
+        **_strategy("stock"), "universe": "both", "allow_concurrent_symbol": True}).json()["id"]
+    with patch.object(AlpacaClient, "historical_bars",
+                      new=AsyncMock(side_effect=[{"NVDA": BARS}, {"SPY": BARS}])):
+        permitted = client.post("/api/backtest", json={**req, "strategy_id": shared}).json()
+
+    exclusive = client.post("/api/strategies", json={
+        **_strategy("stock"), "name": "bt exclusive", "universe": "both",
+        "allow_concurrent_symbol": False}).json()["id"]
+    with patch.object(AlpacaClient, "historical_bars",
+                      new=AsyncMock(side_effect=[{"NVDA": BARS}, {"SPY": BARS}])):
+        blocked = client.post("/api/backtest", json={**req, "strategy_id": exclusive}).json()
+
+    assert _entries(permitted) > 0, "a sharing strategy must not be blocked by another holder"
+    assert _entries(blocked) == 0, "an exclusive strategy must still be blocked"
+
+
 def test_the_debug_flag_reaches_the_replay_and_comes_back_on_the_response(
     client, configured, watched_other
 ):
