@@ -375,7 +375,14 @@ def test_a_segmented_comparison_seeds_every_stretch_from_its_own_start(client, c
     assert seeded[0]["last_loss_at"][:13] == lost_at.isoformat()[:13]
     # The FIRST stretch opened before that loss and must not carry it; the second
     # must. A single window-wide seed cannot produce both.
-    assert [sorted(s or {}) for s in seen] == [[], ["RSS"]]
+    # Chunk-agnostic: a long window is now cut into day-sized pieces so it can
+    # keep minute bars (_chunk_for_minute_replay), so the number of replays is
+    # not the claim. The claim is that the FIRST stretch carries no seed and
+    # every stretch after the loss carries it.
+    got = [sorted(s or {}) for s in seen]
+    assert got[0] == []
+    assert got[-1] == ["RSS"]
+    assert any(g == ["RSS"] for g in got), got
 
 
 def test_the_report_only_claims_a_seed_the_replay_confirms(client, configured):

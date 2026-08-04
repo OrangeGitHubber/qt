@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import json
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -248,6 +248,12 @@ class _Segment:
     # stretch two's replay starts flat and would otherwise buy through it.
     rails_seed: dict[str, datetime] = field(default_factory=dict)
     live: list[dict] = field(default_factory=list)
+    # True when this stretch exists only because a long window was cut down to
+    # something a minute replay can cover (see _chunk_for_minute_replay), not
+    # because anything about the strategy changed. `segmented` in the report
+    # means "your configuration changed mid-window" and must not start firing
+    # for every comparison that happens to be older than a day.
+    resolution_chunk: bool = False
     result: dict | None = None
     error: str | None = None
 
@@ -417,6 +423,114 @@ def _build_segments(
     return segments
 
 
+def _merge_chunk_results(first: dict | None, second: dict | None) -> dict | None:
+    """Two day-sized chunks of ONE configuration, as one result for reporting.
+
+    Only the fields `_segment_rows` reads need to be right here: the trades (so a
+    stretch is not reported empty because its trades landed in a later chunk) and
+    the no-trade reason, which may only be claimed when NEITHER chunk traded."""
+    if first is None:
+        return second
+    if second is None:
+        return first
+    trades = (first.get("trade_list") or []) + (second.get("trade_list") or [])
+    positions = (first.get("open_positions") or []) + (second.get("open_positions") or [])
+    diagnosis = first.get("diagnosis") if (first.get("diagnosis") or {}).get("summary")         else second.get("diagnosis")
+    return {
+        **first, "trade_list": trades, "open_positions": positions,
+        # A reason explains a silent run. If either chunk traded, the stretch did.
+        "diagnosis": (diagnosis if not (trades or positions) else None),
+    }
+
+
+def _config_stretches(segments: list[_Segment]) -> list[_Segment]:
+    """The segments as the READER understands them: one per configuration, with
+    any day-sized resolution chunks folded back into the stretch they came from.
+
+    The replay needs the chunks (see _chunk_for_minute_replay); the report must
+    not show them. "Your strategy changed here" and "we cut the window so we
+    could keep minute bars" are different statements, and a change log that
+    listed the second as the first would invent edits the user never made."""
+    out: list[_Segment] = []
+    for segment in segments:
+        if segment.resolution_chunk and out:
+            # The chunks' RESULTS have to be merged, not just their spans. Keeping
+            # the first chunk's result reported a stretch as having traded nothing
+            # whenever its trades happened to fall in a later chunk — the same
+            # per-piece-value-presented-as-the-whole fault this file has now been
+            # bitten by three times.
+            merged = _merge_chunk_results(out[-1].result, segment.result)
+            out[-1] = replace(
+                out[-1], end=segment.end,
+                live=out[-1].live + segment.live,
+                result=merged,
+                error=out[-1].error or segment.error,
+            )
+        else:
+            out.append(segment)
+    return out
+
+
+def _chunk_for_minute_replay(
+    segments: list[_Segment], live_rows: list[dict]
+) -> list[_Segment]:
+    """Cut long stretches down to something a MINUTE replay can cover.
+
+    The live engine decides every 60 seconds. `_timeframe_for` only asks for
+    minute bars while a stretch fits inside MAX_HOURS_FOR_MINUTE_REPLAY, and a
+    comparison's window grows for as long as the strategy stays switched on — so
+    a strategy live for a day and a bit silently drops to 15-minute bars and
+    starts sampling fifteen times less often than the thing it is grading.
+
+    Measured, and this is the whole reason: strategy 25 compared clean at 1Min
+    with a 12-hour window; overnight the same stretch reached 26 hours, fell to
+    15Min, and three real trades came back as "the replay missed it — this is
+    the kind that points at a real bug". Nothing about the strategy had changed.
+    The bar size had.
+
+    Cutting EVERY long stretch into day-sized pieces would be the obvious fix and
+    the wrong one: minute bars run 1,440 per symbol per day, so a strategy live
+    for three months would ask for millions of them to compare a handful of
+    trades. Instead only the pieces that CONTAIN a real trade are kept at day
+    size — those are the only places a comparison has anything to say — and
+    adjacent trade-free pieces are coalesced back into one long stretch, which
+    keeps its coarse bars because there is nothing in it to compare.
+
+    So the cost tracks how often you traded, not how long the strategy has been
+    enabled. Config stretches are never merged ACROSS: `replace` keeps each
+    piece's own config, universe and version, so a stretch that was replayed
+    under version 2 stays under version 2."""
+    cap = timedelta(hours=MAX_HOURS_FOR_MINUTE_REPLAY)
+    entries = sorted(
+        e for e in (_parse(r.get("entry_at")) for r in live_rows if r.get("entry_at"))
+        if e is not None
+    )
+    out: list[_Segment] = []
+    for segment in segments:
+        # No early return for a short stretch: the loop below already yields
+        # exactly one piece for it, marked as the configuration stretch it is.
+        # A guard here was tried and could not be made to fail — it was a
+        # shortcut, not a rule, and a branch that cannot be wrong is a branch
+        # that hides the one that can.
+        pieces: list[tuple[datetime, datetime, bool]] = []
+        start = segment.start
+        while start < segment.end:
+            end = min(start + cap, segment.end)
+            traded = any(start <= e < end for e in entries)
+            # A run of empty pieces becomes ONE piece: it has nothing to compare,
+            # so paying for minute bars over it would buy nothing.
+            if not traded and pieces and not pieces[-1][2]:
+                pieces[-1] = (pieces[-1][0], end, False)
+            else:
+                pieces.append((start, end, traded))
+            start = end
+        out.extend(
+            replace(segment, start=a, end=b, resolution_chunk=i > 0)
+            for i, (a, b, _) in enumerate(pieces)
+        )
+    return out
+
+
 def _change_log(segments: list[_Segment], live_rows: list[dict]) -> list[dict]:
     """Each moment the configuration or basket changed, with what moved and how
     many real trades were made under the stretch that followed.
@@ -426,6 +540,7 @@ def _change_log(segments: list[_Segment], live_rows: list[dict]) -> list[dict]:
     "the universe widened on the 24th, and 30 of them are after that" is a
     finding. The count per stretch is what turns a date into an explanation."""
     log: list[dict] = []
+    segments = _config_stretches(segments)
     for previous, segment in zip(segments, segments[1:]):
         traded = sum(
             1
@@ -1341,6 +1456,7 @@ def _ranking_report(results: list[dict]) -> dict | None:
 def _segment_rows(segments: list[_Segment]) -> list[dict]:
     """What the UI needs to say a comparison was split, and how honest each piece
     of it is."""
+    segments = _config_stretches(segments)
     return [
         {
             "from": s.start.isoformat(),
@@ -1501,7 +1617,9 @@ async def compare(
     # window at THIS machine's edits would be splitting on unrelated events. The
     # export also carries days rather than moments, so there is nothing to cut on.
     segments = (
-        _build_segments(session, strategy, since, until)
+        _chunk_for_minute_replay(
+            _build_segments(session, strategy, since, until), live_rows
+        )
         if body.imported_trades is None
         else []
     )
@@ -1522,7 +1640,12 @@ async def compare(
         if segments[0].start < replay_from < segments[0].end:
             segments[0].replay_start = replay_from
     too_many = len(segments) > MAX_SEGMENTS
-    segmented = 1 < len(segments) <= MAX_SEGMENTS
+    # Counts CONFIG stretches only: a comparison cut into day-sized pieces so it
+    # can keep minute bars has not "segmented" in the sense the reader cares
+    # about, and saying so would make every week-old comparison claim the
+    # strategy had been edited.
+    config_stretches = sum(1 for s in segments if not s.resolution_chunk)
+    segmented = 1 < config_stretches <= MAX_SEGMENTS
     not_segmented_reason = (
         f"The configuration changed {len(segments) - 1} times during this window. "
         f"Splitting it into {len(segments)} stretches would mean {len(segments)} replays "
