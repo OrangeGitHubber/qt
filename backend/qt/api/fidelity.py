@@ -27,7 +27,7 @@ from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from qt.api.backtest import (
@@ -725,6 +725,61 @@ def _seed_by_day(live_rows: list[dict]) -> dict[str, list[str]]:
 WASH_SALE_DAYS = 31
 
 
+def _account_positions(
+    session: Session, strategy: Strategy, since: datetime, until: datetime, mode: str
+) -> list[dict]:
+    """Positions the ACCOUNT held across this window that the replay cannot know
+    about — the second half of the same job `_prior_losses` does for cooldowns.
+
+    `check_rails` reads `open_positions_total`, `open_exposure_usd` and
+    `already_open_symbol` as ACCOUNT-wide facts ("position already open for this
+    symbol (any strategy)"), but a replay of ONE strategy fed its own numbers
+    into all three. That makes it strictly freer than live, and freer means it
+    buys names live refused — which the report then files against the backtester
+    as a trade it invented.
+
+    Two populations, deliberately disjoint from anything the replay opens itself,
+    so nothing is counted twice:
+      * every OTHER strategy's positions overlapping the window;
+      * THIS strategy's positions that were already open when the window began —
+        the replay starts flat, so live's already-open rail could not fire.
+
+    Rejected rows are excluded: they are decisions, not holdings. `entry_at` is
+    the only honest start — a row ordered but unfilled held nothing."""
+    rows = (
+        session.query(Trade)
+        .filter(
+            Trade.mode == mode,
+            # A rejected candidate never filled, and an order placed but never
+            # filled held nothing either — `entry_at` is what separates a holding
+            # from a decision. A `status != 'rejected'` filter used to sit here
+            # too and was removed as genuinely dead: no row can fail that and
+            # pass this.
+            #
+            # This one is KEPT even though `entry_at < until` below already drops
+            # NULLs on its own (SQL comparisons against NULL are never true).
+            # Mutation-testing it therefore cannot kill it, and that is recorded
+            # rather than hidden: relying on NULL comparison semantics to enforce
+            # a rule this load-bearing is too subtle to leave implicit.
+            Trade.entry_at.isnot(None),
+            Trade.entry_at < until,
+            or_(Trade.exit_at.is_(None), Trade.exit_at > since),
+            or_(Trade.strategy_id != strategy.id, Trade.entry_at < since),
+        )
+        .all()
+    )
+    out: list[dict] = []
+    for t in rows:
+        notional = float((t.qty or 0) * (t.entry_price or 0)) or float(t.notional or 0)
+        out.append({
+            "symbol": t.symbol,
+            "from": t.entry_at.isoformat(),
+            "to": t.exit_at.isoformat() if t.exit_at else None,
+            "notional": round(notional, 2),
+        })
+    return out
+
+
 def _prior_losses(
     session: Session, strategy: Strategy, before: datetime, mode: str, risk: dict
 ) -> dict[str, datetime]:
@@ -915,6 +970,10 @@ async def _replay_segments(
                     # configuration it is not replaying.
                     seed_by_day=_seed_by_day(segment.live) if segment.scanner_replay else {},
                     prior_loss_at=segment.rails_seed,
+                    # What the rest of the account held across THIS stretch.
+                    account_positions=_account_positions(
+                        session, strategy, start, segment.end, mode
+                    ),
                     timeframe=_timeframe_for(
                         config["params"], (segment.end - start).total_seconds() / 3600
                     ),
@@ -1420,6 +1479,9 @@ async def compare(
                 # is already exactly the list that produced these trades.
                 seed_by_day=_seed_by_day(live_rows) if scanner_replay else {},
                 prior_loss_at=rails_seed,
+                account_positions=_account_positions(
+                    session, strategy, replay_from, until, body.mode
+                ),
                 timeframe=_timeframe_for(
                     json.loads(strategy.params), (until - replay_from).total_seconds() / 3600
                 ),
@@ -1579,14 +1641,19 @@ async def compare(
         # Read off engine.check_rails against qt.services.backtest's RailContext,
         # field by field; every one of them pushes the same way, which is that the
         # replay had room the live account did not.
+        # Kept scrupulously in step with what _account_positions actually seeds.
+        # A stale entry here is worse than none: it tells the reader to discount
+        # a difference that has already been removed, and the next person to
+        # investigate spends their evening on it.
+        "seeded": [
+            "positions the engine already held when the window opened, and positions OTHER "
+            "strategies held: the 'already open for this symbol' rail is account-wide, and the "
+            "replay is now told about both",
+            f"the account-wide open-position cap ({risk.get('max_total_positions')}) and the "
+            "exposure cap: other strategies' holdings count toward both, as they do live",
+        ],
         "not_seeded": [
-            "positions the engine already held when the window opened — the replay starts flat, "
-            "so the 'already open for this symbol' rail cannot block it",
             "the non-fill cooldown, which the replay does not simulate at all",
-            "positions OTHER strategies held in the same symbol: live's 'already open' rail is "
-            "account-wide, the replay only knows its own",
-            f"the account-wide open-position cap ({risk.get('max_total_positions')}) and exposure "
-            "cap: live counts every strategy's positions, the replay counts only this one's",
             f"the account-wide daily trade limit ({risk.get('max_trades_per_day')}/day): live "
             "counts entries by every strategy, the replay counts only its own",
             "the daily-loss kill switch: live measures the whole account's realised loss for the "

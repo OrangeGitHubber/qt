@@ -115,6 +115,68 @@ def _btlog(
 # one snapshot per open symbol and sells AT MARKET if a rule fires — QT places no
 # resting stop or limit orders. So the live engine's view of the tape is a
 # sequence of 60-second samples, not the continuous tape.
+class _AccountBackdrop:
+    """Positions the ACCOUNT held that this replay cannot know about.
+
+    `check_rails` splits its inputs in two: `open_positions_strategy` and
+    `open_exposure_strategy_usd` are this strategy's, while
+    `open_positions_total`, `open_exposure_usd` and `already_open_symbol` are the
+    whole ACCOUNT's — "position already open for this symbol (any strategy)" is
+    the rail's own wording. The replay fed its own numbers into both halves,
+    because a simulation of one strategy has no idea what the other sixteen were
+    holding. That makes it strictly FREER than live, and a replay that is freer
+    than live buys things live refused and the report files them as trades the
+    backtest invented.
+
+    Two populations belong here, and neither can overlap what the replay holds
+    itself, so there is no double-counting:
+      * positions OTHER strategies held, and
+      * positions THIS strategy already held when the window opened — the replay
+        starts flat, so live's already-open rail could not block it.
+
+    Deliberately NOT a general "account state" object. It seeds facts the replay
+    could not derive, which is the same licence `prior_loss_at` already takes;
+    it must never seed a DECISION, or the comparison starts agreeing with live
+    by construction and stops measuring anything."""
+
+    __slots__ = ("_spans",)
+
+    def __init__(self, positions: list[dict] | None):
+        self._spans: list[tuple[str, datetime, datetime | None, float]] = []
+        for p in positions or []:
+            start = p.get("from")
+            if start is None:
+                continue
+            self._spans.append((
+                str(p.get("symbol") or ""),
+                _as_utc(start),
+                _as_utc(p["to"]) if p.get("to") else None,
+                float(p.get("notional") or 0.0),
+            ))
+
+    def at(self, ts: datetime) -> tuple[int, float, set[str]]:
+        """(count, exposure_usd, symbols) held by the rest of the account at `ts`.
+        Half-open [from, to): a position closed at 14:26 no longer blocks a
+        candidate evaluated on the 14:26 bar, matching how live would see it once
+        the sell has settled."""
+        count, exposure, symbols = 0, 0.0, set()
+        for symbol, start, end, notional in self._spans:
+            if start <= ts and (end is None or ts < end):
+                count += 1
+                exposure += notional
+                symbols.add(symbol)
+        return count, exposure, symbols
+
+
+def _as_utc(value) -> datetime:
+    """Accept an ISO string or a datetime; naive input is treated as UTC, which
+    is what every stored instant in this project already is."""
+    dt = value if isinstance(value, datetime) else datetime.fromisoformat(
+        str(value).replace("Z", "+00:00")
+    )
+    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+
+
 def _daily_signal_report(
     params: dict, daily_bars_by_symbol: dict | None, bar_seconds: float | None
 ) -> dict | None:
@@ -1217,6 +1279,7 @@ def run_backtest(
     progress: Callable[[int, int], None] | None = None,
     prior_loss_at: dict[str, datetime] | None = None,
     debug_log: bool = False,
+    account_positions: list[dict] | None = None,
 ) -> dict:
     """Pure simulation: strategy dict (same shape as the DB row), raw bars per
     symbol, global risk config. Returns metrics + equity curve + trades.
@@ -1399,6 +1462,7 @@ def run_backtest(
 
     # `debug_log` is the caller asking for the lines BACK; the env var is the
     # operator asking for them in the container log. Either turns the logging on.
+    backdrop = _AccountBackdrop(account_positions)
     debug_lines: list[str] | None = [] if debug_log else None
     debug = bool(os.getenv("QT_BACKTEST_DEBUG")) or bool(debug_log)
     def emit(line: str) -> None:
@@ -1576,14 +1640,20 @@ def run_backtest(
             # unavailable. Byte-identical to `sizing` when ATR sizing is off.
             entry_sizing = atr_position_size(params, sizing, strategy["sleeve_usd"], bar.get("atr_pct"))
             daily_loss = max(0.0, -state.realized_by_day.get(day, 0.0))
+            # What the REST of the account held at this instant. Zero unless the
+            # caller seeded it, so an ordinary backtest replays byte-identically.
+            others_n, others_usd, others_symbols = backdrop.at(ts)
             ctx = RailContext(
-                equity=equity,
-                open_positions_total=len(state.open_trades),
-                open_exposure_usd=open_exposure,
+                # Equity rises with the account's other holdings too: the no-leverage
+                # cap is min(max_total_exposure_usd, equity), so counting their
+                # exposure without their equity would invent a rail live never hit.
+                equity=equity + others_usd,
+                open_positions_total=len(state.open_trades) + others_n,
+                open_exposure_usd=open_exposure + others_usd,
                 open_positions_strategy=len(state.open_trades),
                 open_exposure_strategy_usd=open_exposure,
                 entries_today=state.entries_by_day.get(day, 0),
-                already_open_symbol=symbol in state.open_trades,
+                already_open_symbol=symbol in state.open_trades or symbol in others_symbols,
                 last_loss_at=state.last_loss_at.get(symbol),
                 loss_sale_within_31d=(
                     strategy["asset_class"] == "stock"

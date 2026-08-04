@@ -266,18 +266,29 @@ def test_the_seed_itself_is_still_account_wide_because_the_live_rail_is(seeded_r
     )
 
 
-def test_the_rails_section_names_the_account_wide_limits_it_cannot_seed(seeded_run):
+def test_the_rails_section_declares_what_it_still_cannot_seed(seeded_run):
     """Everything the replay cannot reproduce has to be declared, or a surviving
-    mismatch gets blamed on the backtester. Live evaluates the position cap, the
-    exposure cap, the daily trade limit and the loss kill switch across the WHOLE
-    account; the replay only ever sees one strategy, so there is no number that
-    could be handed over. All four push the same way — the replay had room the
-    live account did not — and none of them were said out loud."""
+    mismatch gets blamed on the backtester. Two of the four originally listed
+    here — other strategies' positions, and the account-wide position/exposure
+    caps — ARE seeded now (see _account_positions), so they moved to `seeded`.
+    The remaining two genuinely cannot be, and both push the same way: the
+    replay has room the live account did not."""
     body, _ = seeded_run
     said = " ".join(body["rails"]["not_seeded"]).lower()
-    for missing in ("other strategies", "open-position cap", "daily trade limit",
-                    "kill switch"):
+    for missing in ("daily trade limit", "kill switch", "non-fill"):
         assert missing in said, f"undeclared: {missing}"
+
+
+def test_the_rails_section_does_not_still_disown_what_it_now_seeds(seeded_run):
+    """A stale caveat is worse than none: it tells the reader to discount a
+    difference that has already been removed."""
+    body, _ = seeded_run
+    still_disowned = " ".join(body["rails"]["not_seeded"]).lower()
+    claimed = " ".join(body["rails"]["seeded"]).lower()
+    assert "other strategies" not in still_disowned
+    assert "open-position cap" not in still_disowned
+    assert "other strategies" in claimed
+    assert "open-position cap" in claimed
 
 
 # ---------------------------------------------------------------------------

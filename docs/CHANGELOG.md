@@ -3,6 +3,41 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## The replay now knows what the rest of the account was holding (2026-08-04)
+
+Towards a comparison that matches on **positions**, not prices.
+
+When QT decides whether to buy something, three of the checks are about the
+whole account rather than one strategy: how many positions are open in total,
+how much is at risk in total, and whether *any* strategy already holds that
+symbol — the rejection even says "position already open for this symbol (any
+strategy)". A replay simulates one strategy in isolation, so it answered all
+three with that strategy's own numbers.
+
+**That made the replay freer than the engine.** It bought names the engine had
+refused, and the comparison then filed those against the backtester as trades it
+had invented — a fault report pointing at the wrong thing.
+
+The comparison now reconstructs, from your own trade history, the positions the
+account was holding across the window: every other strategy's, and this
+strategy's own positions that were already open before the window began (the
+replay starts flat, so the already-open rail could never fire for those). Those
+holdings count toward the position cap, the exposure cap and the already-open
+check, exactly as they do live.
+
+They raise the account's equity as well as its exposure, which matters: the
+no-leverage cap is measured against equity, so counting other strategies'
+positions without their value would have invented a limit the engine never hit —
+swapping one false verdict for another.
+
+The report now lists what it seeds as well as what it still cannot, and the two
+lists are kept in step. Three things remain genuinely unseedable and all push the
+same way: the non-fill cooldown, the account-wide daily trade limit, and the
+daily-loss kill switch.
+
+None of this touches an ordinary backtest, which has no account history to
+reconstruct and replays exactly as before.
+
 ## The backtest was testing a different MACD from the one live trades (2026-08-04)
 
 This is the answer to why a replay entered AMZN twenty-five minutes after the

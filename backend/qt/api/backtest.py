@@ -645,6 +645,14 @@ class BacktestBody(BaseModel):
     # into single integers. Capped at DEBUG_LOG_MAX_LINES with the pre-truncation
     # count reported alongside.
     debug: bool = False
+    # Positions the ACCOUNT held that this replay cannot know about: other
+    # strategies' positions, and this strategy's own positions that were already
+    # open when the window started. Each {symbol, from, to|null, notional}.
+    # Empty for every ordinary backtest — only the fidelity comparison, which has
+    # the journal to reconstruct them from, ever fills this. See
+    # qt.services.backtest._AccountBackdrop for why it is not general account
+    # state and must never carry a decision.
+    account_positions: list[dict] = Field(default_factory=list)
     starting_cash: float = Field(default=5000, ge=100, le=10_000_000)
     spread_pct: float = Field(default=0.1, ge=0, le=2)
     # None = use the asset class's real-world rate (see DEFAULT_FEE_PCT). An
@@ -1803,6 +1811,7 @@ async def replay(
         # Empty for every ordinary backtest — see BacktestBody.prior_loss_at.
         prior_loss_at=body.prior_loss_at or None,
         debug_log=body.debug,
+        account_positions=body.account_positions or None,
     )
     if "error" in result:
         raise HTTPException(status_code=422, detail=result["error"])
@@ -2002,6 +2011,7 @@ async def _scanner_replay(
             # Empty for every ordinary backtest — see BacktestBody.prior_loss_at.
             prior_loss_at=body.prior_loss_at or None,
             debug_log=body.debug,
+            account_positions=body.account_positions or None,
         )
 
     replay_daily = ds.daily if _needs_warmup(strategy_dict["params"]) else None
