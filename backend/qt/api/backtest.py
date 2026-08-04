@@ -1469,6 +1469,13 @@ async def run_portfolio(
         sim_start=window_start if warmup else None,
         daily_bars_by_strategy=daily_by_strategy,
         rank_daily_by_strategy=rank_daily_by_strategy,
+        # THE SAME RATES BOTH SINGLE-STRATEGY PATHS CHARGE. Without this an
+        # all-crypto portfolio was scored commission-free while the same
+        # strategies run one at a time paid 0.25% a side — half a percent a round
+        # trip — so the two screens disagreed by construction and the portfolio
+        # one was always the flattering answer. Keyed by asset class so a mixed
+        # book charges its crypto sleeve without inventing a stock commission.
+        fee_pct_by_class=DEFAULT_FEE_PCT,
     )
     if "error" in result:
         raise HTTPException(status_code=422, detail=result["error"])
@@ -1801,11 +1808,13 @@ async def replay(
 
     result["strategy_name"] = strategy_name
     result["symbols"] = symbols
-    # Symbols whose after-loss cooldown the replay STARTED with, echoed back off
-    # the request rather than assumed by the caller. A report that says it seeded
-    # the rails must be quoting something the run itself confirms, or the claim
-    # survives the wiring being removed. Empty for every ordinary backtest.
-    result["rails_seeded"] = sorted(body.prior_loss_at)
+    # `rails_seeded` is NOT set here, deliberately. It used to be
+    # `sorted(body.prior_loss_at)` — the request body echoed straight back into the
+    # result, which confirms nothing: a replay that accepted the seed and then
+    # ignored it reported it as applied just the same, and the fidelity report
+    # reads this field to claim the rails WERE seeded. run_backtest now derives it
+    # from the rail state it actually loaded (see its `rails_seeded`), so unwiring
+    # the seed empties the list instead of leaving the claim standing.
     # `timeframe` is what was REPLAYED (what the stops were checked on); on a
     # mixed run the signals came from a coarser series, named separately.
     result["timeframe"] = replay_timeframe
@@ -2022,9 +2031,8 @@ async def _scanner_replay(
         pass
 
     result["strategy_name"] = strategy_name
-    # See run()'s copy: the seed is echoed off the request so the fidelity report
-    # can only claim it seeded rails the replay actually received.
-    result["rails_seeded"] = sorted(body.prior_loss_at)
+    # `rails_seeded` comes from run_backtest, not from the request — see the note
+    # in replay(). This path had the same echo and the same hole.
     result["scanner_replay"] = True
     result["replay_intraday"] = ds.used_intraday
     result["intraday_topped_up"] = topped_up  # bars were downloaded for this run

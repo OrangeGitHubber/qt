@@ -388,6 +388,7 @@ def optimize(
     iterations: int = 40,
     starting_cash: float = 5000.0,
     spread_pct: float = 0.1,
+    fee_pct: float | None = None,
     market: str = "stock",
     in_sample_frac: float = 0.7,
     min_trades: int = 3,
@@ -424,7 +425,17 @@ def optimize(
     the close) while the indicators come from the daily series. Three of the four
     core knobs are price-triggered exits, so without this a daily replay makes a
     tight stop look almost free — it only ever triggers on a close — and the
-    search drifts toward stops that would whipsaw in real trading."""
+    search drifts toward stops that would whipsaw in real trading.
+
+    `fee_pct` is the commission per side, as a % of notional — the SAME number the
+    Backtest page charges (qt.api.backtest.DEFAULT_FEE_PCT: 0 for stocks, 0.25 for
+    crypto). It was missing entirely, and on crypto that is not a rounding matter:
+    a round trip costs ~0.5%, so a fee-free search systematically preferred
+    higher-frequency settings — more entries look strictly better when the entries
+    are free — and the Backtest page then scored the very same window worse. The
+    two tools disagreed by construction, and the optimizer was the flattering one.
+    None (the default) keeps a caller that says nothing about fees exactly as it
+    was, and keeps the kwarg off injected test fakes with the plain signature."""
     rng = random.Random(seed)
 
     in_sample, out_sample, t0, boundary, t1 = split_in_out_of_sample(
@@ -460,6 +471,12 @@ def optimize(
     # unrankable, and a verdict of "no trades" that says nothing about the config.
     if rank_daily_bars_by_symbol is not None:
         daily_kw = {**daily_kw, "rank_daily_bars_by_symbol": rank_daily_bars_by_symbol}
+    # BOTH SLICES, one dict — an in-sample slice searched fee-free and an
+    # out-of-sample slice validated with fees would make the verdict number
+    # incomparable with the score that chose the winner. Passed only when the
+    # caller named a rate, so a fake with the plain signature stays callable
+    # (same reason as in_kw/out_kw/daily_kw).
+    fee_kw = {} if fee_pct is None else {"fee_pct": fee_pct}
 
     # In scanner-replay mode a symbol may only ENTER on the days it was a top-N
     # riser. The same eligible-by-day map is passed to both slices: run_backtest
@@ -471,7 +488,7 @@ def optimize(
         return backtest_fn(
             strat, in_sample, risk,
             starting_cash=starting_cash, spread_pct=spread_pct, market=market,
-            eligible_by_day=eligible_by_day, **in_kw, **daily_kw,
+            eligible_by_day=eligible_by_day, **in_kw, **daily_kw, **fee_kw,
         )
 
     def run_out_of_sample(combo: dict) -> dict:
@@ -480,7 +497,7 @@ def optimize(
             strat, out_sample, risk,
             starting_cash=starting_cash, spread_pct=spread_pct, market=market,
             # NOT split: the same WHOLE daily series the in-sample slice got.
-            eligible_by_day=eligible_by_day, **out_kw, **daily_kw,
+            eligible_by_day=eligible_by_day, **out_kw, **daily_kw, **fee_kw,
         )
 
     # ---- 1 & 2: random search over the coarse grid (in-sample only) ----
@@ -654,6 +671,12 @@ def optimize(
         # The step size every grid was built from, so the UI can say what "one
         # step either way" on the plateau chart actually means.
         "relative_step": relative_step,
+        # The commission every config in this search paid, per side. Reported so
+        # a search and a backtest of the same window can be shown to have been
+        # scored on the same terms — and so "the optimizer models no fees" can
+        # never again be true without the result saying so. None = the caller
+        # named no rate, i.e. this search was fee-free.
+        "fee_pct_per_side": fee_pct,
         "no_trade_reason": no_trade_reason,
         "iterations": iterations,
         "in_sample_window": _window(t0, boundary),

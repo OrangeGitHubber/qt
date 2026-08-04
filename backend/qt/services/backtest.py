@@ -523,6 +523,13 @@ class _PoolRanker:
         self.evaluated = 0      # symbol-bars offered to the ranking
         self.excluded = 0       # …cut by the top-N or unrankable
         self.unrankable = 0     # …whose metric could not be computed at all
+        # WHICH symbols those were. The count alone cannot answer the question a
+        # 0-trade result raises — "did the ranking quietly make some name (or
+        # every name) permanently un-buyable?" — because a symbol whose metric is
+        # never computable is dropped by ranking.rank_symbols on every bar and so
+        # can never be entered, silently, for the whole run. See report().
+        self._rankable: set[str] = set()
+        self._unrankable: set[str] = set()
         self._prefix: dict[str, dict[str, list[dict]]] = {}
         self._spy: dict[str, float | None] = {}
         self._spy_missing = False
@@ -635,18 +642,65 @@ class _PoolRanker:
             metrics[symbol] = {self.rank_by: value}
             if value is None:
                 self.unrankable += 1
+                self._unrankable.add(symbol)
+            else:
+                self._rankable.add(symbol)
         ranked = ranking.rank_symbols(metrics, self.rank_by, self.top_n)
         self.evaluated += len(bars)
         self.excluded += len(bars) - len(ranked)
         ranked_of = len(ranked)
         return [(symbol, i, ranked_of) for i, (symbol, _v) in enumerate(ranked, start=1)]
 
+    def never_rankable(self) -> list[str]:
+        """Symbols whose metric could NEVER be computed — so `rank_symbols`
+        dropped them on every bar and they could not be entered once, all run."""
+        return sorted(self._unrankable - self._rankable)
+
+    def _unrankable_warning(self) -> str | None:
+        """The other half of "say so rather than quietly do less".
+
+        `applied` only goes False when NO symbol has any daily history at all.
+        Between that and a clean run sits the case that actually bites: the
+        history is present but too SHORT for the metric — relative_strength is a
+        200-day average, so a series of 150 daily bars makes every member
+        unrankable, `rank_symbols` returns nothing on every bar, and the replay
+        takes ZERO trades while reporting `applied: true`. On screen that is
+        indistinguishable from "your strategy never triggered", which is the
+        wrong conclusion to hand somebody about to change their rules.
+
+        Two shapes, both reported: nothing was EVER rankable (no entry was
+        possible at all), and some names were never rankable (those names were
+        silently un-buyable while the rest of the pool traded)."""
+        if not self.applied or not self.evaluated:
+            return None
+        metric = self.rank_by.replace("_", " ")
+        if not self._rankable:
+            return (
+                f"NO trade was possible: this strategy ranks its pool by {metric}, and that "
+                f"value could not be computed for a single one of its {self.pool_size} symbols "
+                "on any bar — so the top-N cut was empty every time and no symbol was ever "
+                "offered to the entry rules. This says nothing about your entry rules. The "
+                "usual cause is a daily series shorter than the metric needs."
+            )
+        missing = self.never_rankable()
+        if missing:
+            shown = ", ".join(missing[:6]) + (f" +{len(missing) - 6} more" if len(missing) > 6 else "")
+            return (
+                f"{len(missing)} of {self.pool_size} symbols could never be ranked by {metric} "
+                f"({shown}), so they were dropped from the top-N cut on every bar and could not "
+                "be bought at all in this run. Live would have ranked them if it had their daily "
+                "history."
+            )
+        return None
+
     def report(self) -> dict:
         """What the run did about ranking, for the result. Reported whether or not
         it worked: "the replay could not reproduce live's ordering" is exactly the
         thing a permissive backtest must not keep to itself."""
+        warning = self.warning or self._unrankable_warning()
         return {
             "applied": self.applied,
+            "symbols_never_rankable": self.never_rankable(),
             "rank_by": self.rank_by,
             "top_n": self.top_n,
             "pool_size": self.pool_size,
@@ -659,7 +713,7 @@ class _PoolRanker:
             "symbol_bars_cut": self.excluded,
             "symbol_bars_unrankable": self.unrankable,
             "benchmark_missing": self._spy_missing,
-            "warning": self.warning,
+            "warning": warning,
         }
 
 
@@ -1225,6 +1279,15 @@ def run_backtest(
         return {"error": "No historical bars for those symbols/timeframe."}
 
     state = SimState(cash=starting_cash, last_loss_at=_seed_losses(prior_loss_at))
+    # WHAT THE SIMULATION ACTUALLY TOOK IN, read off the seeded rail state rather
+    # than off the caller's request. The API used to answer this by echoing its own
+    # request body back — a confirmation that confirms nothing, because a path that
+    # accepted the seed and then ignored it reported it as applied just the same,
+    # and the fidelity report would have said the rails were seeded when they were
+    # not. Snapshotted HERE, before the loop: `state.last_loss_at` gains the
+    # window's own losing exits as the replay runs, and reading it at the end would
+    # report symbols this window produced as though they had been carried in.
+    rails_seeded = sorted(state.last_loss_at)
     equity_curve: list[tuple[str, float]] = []
     last_price: dict[str, float] = {}
     max_deployed = 0.0
@@ -1341,7 +1404,12 @@ def run_backtest(
             # reads better than it was.
             exit_fee = fill * trade.qty * fee_rate
             entry_fee = trade.entry_price * trade.qty * fee_rate
-            fees_paid += exit_fee + entry_fee
+            # Only the EXIT side is added here: the entry side was counted when it
+            # was actually paid (see the entry leg). Counting it again on the
+            # close would double it, and counting it ONLY here left every position
+            # still open at the end reporting a commission of zero on money that
+            # had already left the account.
+            fees_paid += exit_fee
             trade.pnl = round((fill - trade.entry_price) * trade.qty - exit_fee - entry_fee, 2)
             state.cash += fill * trade.qty - exit_fee
             day_flows[symbol] = day_flows.get(symbol, 0.0) + fill * trade.qty - exit_fee
@@ -1470,6 +1538,7 @@ def run_backtest(
                     _btlog(day, symbol, bar, params, f"reject-sizing: qty={qty} cost={fill * qty:.2f} cash={state.cash:.2f}")
                 continue
             state.cash -= fill * qty * (1 + fee_rate)
+            fees_paid += fill * qty * fee_rate  # counted when it is paid, not when it closes
             day_flows[symbol] = day_flows.get(symbol, 0.0) - fill * qty * (1 + fee_rate)
             state.entries_by_day[day] = state.entries_by_day.get(day, 0) + 1
             if debug:
@@ -1632,6 +1701,10 @@ def run_backtest(
         # abstract; "$412 of fees on 63 round trips" is the number that decides
         # whether a strategy this busy can carry its own costs.
         "fees_paid": round(fees_paid, 2),
+        # Symbols whose after-loss cooldown (and, for stocks, wash-sale guard) this
+        # run STARTED with — see the note where it is snapshotted. Empty for every
+        # ordinary backtest, which has no "before the window" to carry in.
+        "rails_seeded": rails_seeded,
         "max_deployed_usd": round(max_deployed, 2),
         "pct_capital_deployed": pct_deployed,
         "return_on_deployed_pct": return_on_deployed,
@@ -1708,6 +1781,7 @@ def run_portfolio_backtest(
     sim_end: datetime | None = None,
     prior_loss_at: dict[str, datetime] | None = None,
     rank_daily_by_strategy: dict[int, dict[str, list[dict]]] | None = None,
+    fee_pct_by_class: dict[str, float] | None = None,
 ) -> dict:
     """Portfolio simulation: replay N strategies over ONE merged timeline sharing
     a SINGLE cash account and the GLOBAL risk rails — exactly like the live engine,
@@ -1741,9 +1815,27 @@ def run_portfolio_backtest(
     beside it are untouched. `rank_daily_by_strategy` is the daily history a
     daily-bar ranking metric is scored from, keyed by strategy id — see
     run_backtest's `rank_daily_bars_by_symbol`.
+
+    `fee_pct_by_class` ({asset_class: commission % per side}) is the round-trip
+    cost, charged PER STRATEGY off its own asset class. Keyed that way rather
+    than as one number because a portfolio is the one replay that can hold both:
+    US equities on Alpaca are commission-free while crypto is charged 0.15–0.25%
+    a side, so a mixed book with one flat rate would either invent a stock fee or
+    excuse the crypto one. None (the default) = free, which keeps every existing
+    portfolio backtest byte-identical — and is why an all-crypto book reported a
+    profit the real account would never have seen until its caller started
+    passing this.
     """
     day_of = _day_fn(market)
     slip = spread_pct / 100
+    # Per-strategy commission rate, resolved once. Same modelling as
+    # run_backtest: cash off the top of each side on the notional, never an
+    # adjustment to the price (see the note there).
+    fee_rate_by_sid = {
+        s["id"]: max(0.0, float((fee_pct_by_class or {}).get(s["asset_class"], 0.0) or 0.0)) / 100
+        for s in strategies
+    }
+    fees_paid = 0.0
     strat_by_id = {s["id"]: s for s in strategies}
     order = {s["id"]: i for i, s in enumerate(strategies)}  # deterministic tie-break
 
@@ -1775,13 +1867,24 @@ def run_portfolio_backtest(
     # annotators have taken a daily source all along — the portfolio simply never
     # passed one. Look-ahead safety is unchanged: _daily_frontier only ever reads
     # daily bars completed BEFORE each replay bar's own day.
+    #
+    # `day_of` IS AN ARGUMENT, and leaving it out cost a full day of look-ahead.
+    # The annotators default to `_et_day`, while `prepared` above was bucketed by
+    # this run's own `day_of` — `_utc_day` for an all-crypto book. A crypto daily
+    # bar opens at 00:00Z, which ET files under the PREVIOUS day, so
+    # _daily_frontier's "daily bars strictly before day D" quietly included day
+    # D's own close: an intraday bar at 02:00Z read a daily MACD/RSI/ATR derived
+    # from a close 22 hours in its future. Measured on a probe with a 20-day
+    # losing streak and a huge up day D, the replay entered on an RSI of 52 where
+    # live could only ever have seen 0. run_backtest passes it; this path never did.
     for sid, prepared in prepared_by_strategy.items():
         daily = (daily_bars_by_strategy or {}).get(sid)
-        _annotate_macd(prepared, strat_by_id[sid]["params"], daily)
+        _annotate_macd(prepared, strat_by_id[sid]["params"], daily, day_of)
         _annotate_atr(
-            prepared, bars_by_strategy.get(sid) or {}, strat_by_id[sid]["params"], daily
+            prepared, bars_by_strategy.get(sid) or {}, strat_by_id[sid]["params"],
+            daily, day_of,
         )
-        _annotate_rsi(prepared, strat_by_id[sid]["params"], daily)
+        _annotate_rsi(prepared, strat_by_id[sid]["params"], daily, day_of)
     # The poller view is a property of the SHARED timeline, not of one strategy:
     # every strategy in a portfolio run replays the same stream, so the bar size is
     # measured once across all of them and applied to all of them. See
@@ -1837,6 +1940,9 @@ def run_portfolio_backtest(
     entries_by_day: dict[str, int] = {}          # cross-strategy trade-rate limiter
     realized_by_day: dict[str, float] = {}       # daily-loss kill switch
     last_loss_at: dict[str, datetime] = _seed_losses(prior_loss_at)
+    # Snapshotted before the loop, for the reason run_backtest gives at the same
+    # spot: this dict grows the window's own losing exits as the replay runs.
+    rails_seeded = sorted(last_loss_at)
     last_price: dict[str, float] = {}
     equity_curve: list[tuple[str, float]] = []
     max_deployed = 0.0
@@ -1882,8 +1988,15 @@ def run_portfolio_backtest(
             trade.exit_price = fill
             trade.exit_at = ts
             trade.exit_reason = reason
-            trade.pnl = round((fill - trade.entry_price) * trade.qty, 2)
-            cash += fill * trade.qty
+            # Both sides' fees land on the trade that closes, exactly as in
+            # run_backtest: the entry fee already left the cash account, but the
+            # P&L has to carry it or every trade reads better than it was.
+            fee_rate = fee_rate_by_sid.get(trade.strategy_id, 0.0)
+            exit_fee = fill * trade.qty * fee_rate
+            entry_fee = trade.entry_price * trade.qty * fee_rate
+            fees_paid += exit_fee  # the entry side was counted when it was paid
+            trade.pnl = round((fill - trade.entry_price) * trade.qty - exit_fee - entry_fee, 2)
+            cash += fill * trade.qty - exit_fee
             realized_by_day[day] = realized_by_day.get(day, 0.0) + trade.pnl
             if trade.pnl < 0:
                 last_loss_at[symbol] = ts
@@ -1982,9 +2095,13 @@ def run_portfolio_backtest(
                 continue
             fill = bar["close"] * (1 + slip)
             qty = _entry_qty(strat["asset_class"], sizing, fill, _fractional(params))
-            if qty <= 0 or fill * qty > cash:
+            # The fee is part of what the buy costs, so it clears the cash check
+            # too — otherwise the sim spends money it doesn't have (run_backtest).
+            fee_rate = fee_rate_by_sid.get(sid, 0.0)
+            if qty <= 0 or fill * qty * (1 + fee_rate) > cash:
                 continue
-            cash -= fill * qty
+            cash -= fill * qty * (1 + fee_rate)
+            fees_paid += fill * qty * fee_rate  # counted when it is paid, not when it closes
             entries_by_day[day] = entries_by_day.get(day, 0) + 1
             open_trades[symbol] = PortfolioTrade(
                 symbol=symbol, qty=qty, entry_price=fill, entry_at=ts,
@@ -2064,6 +2181,14 @@ def run_portfolio_backtest(
         )
 
     all_symbols = {s: series for m in prepared_by_strategy.values() for s, series in m.items()}
+    # The rates that actually applied, by asset class present in the book. The
+    # scalar `fee_pct_per_side` mirrors the single-strategy result and is only a
+    # number when the whole book pays one rate — a mixed book has no single rate,
+    # and printing one of the two would be a smaller lie but still a lie.
+    rates_by_class = {
+        s["asset_class"]: round(fee_rate_by_sid[s["id"]] * 100, 6) for s in strategies
+    }
+    distinct_rates = set(rates_by_class.values())
     return {
         "starting_cash": starting_cash,
         "final_equity": round(final_equity, 2),
@@ -2076,6 +2201,15 @@ def run_portfolio_backtest(
         "profit_factor": round(gross_win / gross_loss, 2) if gross_loss > 0 else None,
         "max_drawdown_pct": _max_drawdown(equity_values),
         "spread_cost_pct_per_side": spread_pct,
+        # What the commissions took, in dollars — the number that decides whether
+        # a book this busy can carry its own costs. Present on every run (0.0 on a
+        # stock book) so a caller can tell "no fees were charged" from "this
+        # backtest doesn't model fees", which is exactly what was indistinguishable
+        # before an all-crypto portfolio could be charged at all.
+        "fees_paid": round(fees_paid, 2),
+        "fee_pct_per_side": next(iter(distinct_rates)) if len(distinct_rates) == 1 else None,
+        "fee_pct_per_side_by_class": rates_by_class,
+        "rails_seeded": rails_seeded,  # see run_backtest
         "exit_model": "poller" if poller_view else "intrabar",  # see run_backtest
         "bar_seconds": bar_seconds,
         "median_bar_move_pct": bar_move_pct,  # see _median_bar_move_pct

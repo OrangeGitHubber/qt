@@ -187,7 +187,7 @@ async def _run_search(
     # out-of-sample slices (the split gives each its own warm-up prefix). Without
     # it the out-of-sample slice — the honest verdict number — begins mid-window
     # with the signal dead for its first ~35 bars. Daily-only, same as the backtest.
-    from qt.api.backtest import WARMUP_DAYS, _needs_warmup
+    from qt.api.backtest import BASELINE_WARMUP_DAYS, DEFAULT_FEE_PCT, warmup_days_for
     from qt.services.backtest import (
         DAILY_RANK_METRICS,
         RANK_LOOKBACK_DAYS,
@@ -278,6 +278,10 @@ async def _run_search(
                         run_backtest,
                         strategy_dict, bars, risk,
                         starting_cash=starting_cash, spread_pct=spread_pct,
+                        # Charged here too: this probe decides which held days get
+                        # real intraday bars, and a fee-free probe holds a
+                        # different set of positions than the search then scores.
+                        fee_pct=DEFAULT_FEE_PCT.get(asset_class, 0.0),
                         market=("crypto" if asset_class == "crypto" else "stock"),
                         eligible_by_day=eligible_by_day,
                         daily_bars_by_symbol=daily_bars,
@@ -302,19 +306,49 @@ async def _run_search(
                         if replay_extra is not None:
                             replay_extra.update(fresh["extra"])
                             replay_extra["intraday_topped_up"] = True
+
+                # WHERE TRADING MAY BEGIN. The dataset now carries a BASELINE
+                # prefix in front of the window — bars that exist only to give the
+                # window's first bar a day-gain reference — and this path never
+                # gated it, so the search TRADED those days: the window it
+                # reported was not the window it searched, and the in/out
+                # boundary (measured from `sim_start`) sat inside the prefix, so
+                # the 70/30 split was neither. `_scanner_replay` has always
+                # floored at `ds.start_day`; this is the same floor.
+                sim_start = datetime.strptime(ds.start_day, "%Y-%m-%d").replace(
+                    tzinfo=timezone.utc
+                )
         else:
             # Read-through the bar cache: only the missing recent edge is actually
             # downloaded, and any cache trouble degrades to a plain fetch.
             _progress.phase = "downloading bars"
             window_start = datetime.now(timezone.utc) - timedelta(days=days)
-            needs_warmup = _needs_warmup(strategy_dict["params"])
-            warmup = WARMUP_DAYS if (timeframe == "1Day" or mixed) and needs_warmup else 0
+            # TWO warm-ups, because they answer two different questions — the same
+            # split qt.api.backtest.replay() makes, which this path never got.
+            #
+            # The DAILY series needs enough history for THIS strategy's own
+            # indicators (warmup_days_for delegates to the live engine's
+            # _daily_lookback_days, so a 50-period ATR gets its 110 days instead
+            # of one flat constant that was either wasteful or short).
+            #
+            # The REPLAYED series needs only enough to give its first bar a
+            # day-gain baseline — but it needs that ALWAYS, indicators or not.
+            # Without it `_prepare` leaves change_pct None on the window's first
+            # day and `run_backtest` skips those bars in silence, so every search
+            # was blind on day one of its window (and the previous flat
+            # `WARMUP_DAYS if daily-signalled else 0` gave a plain intraday search
+            # no prefix at all).
+            warmup = warmup_days_for(strategy_dict["params"], asset_class)
             # The ranking metric's lookback is a claim on the SAME prefix, and a
             # deeper one than any indicator. Fetch short and the metric is None
             # across the opening stretch, every member drops out of the ranking,
             # and the search scores every config at zero trades.
             warmup = max(warmup, rank_lookback)
+            baseline_warmup = BASELINE_WARMUP_DAYS.get(asset_class, 5)
             start = (window_start - timedelta(days=warmup)).strftime("%Y-%m-%dT%H:%M:%SZ")
+            baseline_start = (
+                window_start - timedelta(days=baseline_warmup)
+            ).strftime("%Y-%m-%dT%H:%M:%SZ")
             if mixed:
                 # Two fetches with deliberately different windows, exactly like the
                 # mixed backtest: the DAILY series reaches back over the warm-up so
@@ -323,12 +357,22 @@ async def _run_search(
                 # crypto — fetching warm-up intraday too would multiply the
                 # download for bars that could never trade).
                 daily_bars = await barfetch.fetch_bars(client, symbols, asset_class, "1Day", start)
+                # From `baseline_start`, not `window_start`: the mixed branch used
+                # to open its 15-minute series exactly at the window, so the first
+                # day had no day-gain reference and was silently unusable.
                 bars = await barfetch.fetch_bars(
-                    client, symbols, asset_class, "15Min",
-                    window_start.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                    client, symbols, asset_class, "15Min", baseline_start,
                 )
             else:
-                bars = await barfetch.fetch_bars(client, symbols, asset_class, timeframe, start)
+                # A 1Day search reads its own bars as the indicator source, so it
+                # needs the deep prefix; an intraday one only needs the baseline
+                # days (15-minute crypto bars run 96 per symbol per day, so
+                # pulling the indicator warm-up at that size would be an enormous
+                # download for bars that can never trade).
+                bars = await barfetch.fetch_bars(
+                    client, symbols, asset_class, timeframe,
+                    start if timeframe == "1Day" else baseline_start,
+                )
             if rank_lookback:
                 # A 1Day search IS a daily series (run_backtest reads its own bars
                 # then) and a mixed one already has one; the remaining case is an
@@ -345,9 +389,13 @@ async def _run_search(
                     rank_daily = {**(rank_daily or bars), "SPY": spy.get("SPY") or []}
             if not any(bars.get(s) for s in symbols):
                 raise ValueError("No historical bars for those symbols/timeframe.")
-            # A mixed run always gates trading at the window start: its intraday
-            # bars begin there, and the daily series before it is warm-up only.
-            sim_start = window_start if (warmup or mixed) else None
+            # ALWAYS, now that every branch fetches a prefix. It is what stops the
+            # baseline days being traded, and it is what tells
+            # split_in_out_of_sample to measure the in/out boundary over the
+            # WINDOW rather than over window+warm-up — with no sim_start the
+            # boundary sat inside the warm-up prefix and the "70/30" split was not
+            # 70/30 at all.
+            sim_start = window_start
 
         _progress.phase = "searching"
 
@@ -364,6 +412,12 @@ async def _run_search(
             iterations=iterations,
             starting_cash=starting_cash,
             spread_pct=spread_pct,
+            # THE SAME COMMISSION THE BACKTEST PAGE CHARGES. Without it the search
+            # scored every config fee-free while both single-strategy backtest
+            # paths charged crypto 0.25% a side — so the optimizer preferred
+            # busier settings and the Backtest page then scored its winner worse
+            # on the identical window. The two tools now cost a trade the same.
+            fee_pct=DEFAULT_FEE_PCT.get(asset_class, 0.0),
             relative_step=relative_step,
             market=market,
             eligible_by_day=eligible_by_day,

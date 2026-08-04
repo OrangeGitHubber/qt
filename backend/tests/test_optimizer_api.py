@@ -295,8 +295,16 @@ def test_the_search_tops_up_intraday_bars_and_reports_what_it_replayed(configure
     optimizer_api._progress.error = None
     optimizer_api._progress.result = None
 
+    # A REAL risk config, not {}. This used to pass an empty dict and got away
+    # with it only because the out-of-sample slice never reached a rail check:
+    # with no sim_start the slice carried no warm-up, so its first day had no
+    # day-gain baseline and every bar was skipped. Now that the slice can trade,
+    # `{}` raises KeyError('max_trades_per_day') inside check_rails — the empty
+    # dict was never a valid input, it was only never exercised.
+    from qt.services.engine import RISK_DEFAULTS
+
     asyncio.run(optimizer_api._run_search(
-        FakeClient(), strategy_dict, {}, ds.replayed, "stock",
+        FakeClient(), strategy_dict, dict(RISK_DEFAULTS), ds.replayed, "stock",
         inputs["timeframe"], 30, 5, 5000, 0.1,
         prebuilt_bars=inputs["bars"], prebuilt_daily=inputs["daily"],
         eligible_by_day=inputs["eligible_by_day"], replay_extra=inputs["extra"],

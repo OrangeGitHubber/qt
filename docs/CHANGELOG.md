@@ -3,6 +3,48 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## The optimizer was searching fee-free, and a crypto portfolio could see tomorrow (2026-08-04)
+
+**An all-crypto portfolio backtest was reading the future.** Its MACD, RSI and
+ATR filed each day by New York time while its bars were filed by UTC. A crypto
+day opens at midnight UTC, which New York files under the *previous* day — so an
+intraday bar at 2am was scored using a daily close twenty-two hours ahead of
+itself. Reproduced deliberately: twenty losing days followed by one big up day,
+and the replay bought at 2am quoting an RSI that only exists if you can see the
+end of that day. Live could only ever have seen a flat zero. The single-strategy
+backtest never had this; only the portfolio path did.
+
+**The optimizer paid no commission.** Every search scored its candidates
+fee-free, while the Backtest page charges 0.25% a side on crypto — so the
+optimizer preferred busier settings that trade more often, handed you a winner,
+and then the Backtest page scored that same winner worse on the very same window.
+The two tools disagreed by construction. The optimizer now pays what the
+backtest charges.
+
+**A portfolio backtest had no fee model at all** — no setting, no total, and so
+no caveat on screen. An all-crypto portfolio result was silently gross. It is now
+charged per asset class rather than by one blended number, because a portfolio is
+the one replay that can hold both, and it reports the dollars it took. While
+adding it: commission was only being counted when a position closed, so anything
+still open at the end of the window reported zero fees on money already spent.
+
+**The optimizer skipped the first day of every search.** It never got the
+warm-up the backtest received a few days ago, so day one had no history to judge
+against — and its scanner replay went further and actually *traded* the warm-up
+days it was only supposed to measure against.
+
+**A search could report "no trades" when the truth was "not enough history to
+rank".** Relative strength is a two-hundred-day average; give it a hundred and
+fifty days and every symbol is unrankable on every bar, the shortlist comes out
+empty every time, and nothing trades. The report said ranking had been applied
+and raised no warning, which reads on screen as "your rules never fire". It now
+says when a pool — or an individual symbol — can never be ranked at all.
+
+**And the fidelity report's "rails seeded" list was just echoing the request.**
+It repeated back the cooldowns we asked for rather than the ones the replay
+actually loaded, so a version that accepted them and ignored them would have
+looked identical. It now comes from the rail state the replay really used.
+
 ## Seven things the fidelity screen was showing wrong (2026-08-04)
 
 Rendered, not read. Six defects plus one found by deliberately looking at a
