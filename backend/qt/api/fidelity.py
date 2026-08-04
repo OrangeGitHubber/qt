@@ -1033,6 +1033,56 @@ def _exit_model(results: list[dict]) -> dict:
     }
 
 
+def _ranking_report(results: list[dict]) -> dict | None:
+    """The replay's own ranking counters, plus what an UNRANKABLE symbol-bar
+    actually cost — which the counters alone do not say.
+
+    The three numbers arrive as bare integers (`symbol_bars_ranked: 261`,
+    `symbol_bars_cut: 116`, `symbol_bars_unrankable: 29`) and a reader has no way
+    to tell which of the two possible meanings the third one has. They are
+    opposite in seriousness:
+
+      * passed through as though ranked — a hole in the top-N cut, and exactly how
+        a replay invents a trade live would never have looked at; or
+      * dropped — the pool quietly shrinks and the next name down takes the place.
+
+    It is the second. `_Ranker.rank` computes each bar's metric, and
+    `ranking.rank_symbols` drops every symbol whose value is None before taking
+    the top N, so an unrankable bar is never eligible and cannot produce a trade.
+    That also means it is already inside `symbol_bars_cut` — `excluded` is
+    `len(bars) - len(ranked)` — so the two must not be added together, which is
+    the other reading a bare pair of integers invites.
+
+    Traced through qt.services.backtest._Ranker.rank and qt.services.ranking
+    .rank_symbols rather than assumed; both are read-only from here.
+
+    Said in the report because 29 of 261 is 11% of the sample, and a tenth of the
+    pool going missing on the days it went missing is a coverage caveat on every
+    "the replay missed this trade" verdict below."""
+    ranking = next((r["ranking"] for r in results if r.get("ranking")), None)
+    if not ranking:
+        return None
+    offered = ranking.get("symbol_bars_ranked") or 0
+    unrankable = ranking.get("symbol_bars_unrankable") or 0
+    if not unrankable:
+        return {**ranking, "unrankable_effect": None}
+    share = round(unrankable / offered * 100, 1) if offered else None
+    return {
+        **ranking,
+        "unrankable_effect": (
+            f"{unrankable} of the {offered} symbol-bars offered to the ranking"
+            + (f" ({share}%)" if share is not None else "")
+            + f" had no {(ranking.get('rank_by') or 'ranking').replace('_', ' ')} value, so they"
+            " were DROPPED before the top-N cut — the replay could not enter those names on"
+            " those bars, and the next name down took the place. They cannot invent a trade;"
+            " they shrink the pool. They are already counted inside the"
+            f" {ranking.get('symbol_bars_cut')} cut, not on top of it. Where a real trade of"
+            " yours is reported as one the replay missed, this is one of the ways it could"
+            " have gone unseen."
+        ),
+    }
+
+
 def _segment_rows(segments: list[_Segment]) -> list[dict]:
     """What the UI needs to say a comparison was split, and how honest each piece
     of it is."""
@@ -1052,6 +1102,22 @@ def _segment_rows(segments: list[_Segment]) -> list[dict]:
                 if s.result
                 else 0
             ),
+            # WHY THIS STRETCH was silent. The report-level
+            # `backtest_no_trade_reason` cannot say this: it is one string for a
+            # comparison that may hold a silent stretch and a busy one, and
+            # quoting the silent stretch's reason over the whole run is how a VWAP
+            # rejection from a config edited away weeks ago ended up presented as
+            # the explanation for a run that traded. Scoped to the stretch it is
+            # actually about.
+            #
+            # Passed straight through, with no "…and only if this stretch traded
+            # nothing" guard: the backtester sets `diagnosis.summary` to None on
+            # any run that opened a position, so a stretch that traded has nothing
+            # here already. A second guard here looked prudent and was unreachable
+            # — it could not be made to fail — so it is the backtester's invariant
+            # that holds this up, and a test pins it as such rather than pretending
+            # this line is doing the work.
+            "no_trade_reason": (s.result.get("diagnosis") or {}).get("summary") if s.result else None,
             "error": s.error,
         }
         for s in segments
@@ -1325,7 +1391,21 @@ async def compare(
     # counts every rejection reason as it goes. Passing that through turns a
     # screen of "the backtest missed this" into the one sentence that explains
     # all of them at once.
-    report["backtest_no_trade_reason"] = no_trade_reason
+    #
+    # ONLY when it traded nothing. The backtester writes a diagnosis whenever it
+    # has rejections to explain, which a run that also took trades certainly has,
+    # and on a SEGMENTED comparison the reason is picked from whichever stretch
+    # holds the most live trades — not from a stretch that was silent. Strategy 25
+    # came back carrying "the 'price above VWAP' condition rejected the qualifying
+    # bars… try disabling the VWAP rule" beside `backtest_trades: 5`: a no-trade
+    # explanation for a run that took five trades, naming a rule the reader would
+    # then go and switch off. Gated here rather than in either branch above,
+    # because there are two branches and the last four bugs in this file were a
+    # fix that landed on one of them. Per-stretch reasons survive on the segment
+    # rows, where they are correctly scoped to the stretch they describe.
+    report["backtest_no_trade_reason"] = (
+        no_trade_reason if report["decision"]["backtest_trades"] == 0 else None
+    )
 
     # HOW THE REPLAY'S UNIVERSE WAS ARRIVED AT. Said out loud because it is the
     # single largest reason a scanner comparison disagrees, and nothing on screen
@@ -1359,9 +1439,7 @@ async def compare(
         # NOT — the replay considered names live would never have looked at, and
         # any "the replay invented this trade" verdict below has to be read with
         # that in mind, because that is exactly how such a trade gets invented.
-        "ranking": next(
-            (r["ranking"] for r in results if r.get("ranking")), None
-        ),
+        "ranking": _ranking_report(results),
     }
 
     # THE RAIL STATE THE REPLAY WAS HANDED, said out loud for the same reason
@@ -1372,6 +1450,32 @@ async def compare(
     # of leaving it making a claim nothing supports.
     confirmed = {s for r in results for s in (r.get("rails_seeded") or [])}
     cooldown_h = float(risk.get("cooldown_hours_after_loss", 24) or 0)
+    claimed = sorted(confirmed & set(rails_seed))
+    # WHICH OF THOSE COULD ACTUALLY BLOCK THIS REPLAY. The seed is deliberately
+    # account-wide and cross-strategy, because the live rail is: engine
+    # ._build_rail_context takes max(exit_at) over every closed losing trade for
+    # the symbol in this mode with no strategy filter at all, and the note above
+    # check_rails says the cooldown and wash-sale guard stay portfolio-wide
+    # whatever a strategy is set to. So the SEMANTICS are right and are left
+    # alone — the replay is not being over-blocked.
+    #
+    # What was wrong was the reporting. Strategy 25 is a stock strategy over an
+    # 11-symbol custom universe, and its report listed 29 seeded symbols: eleven
+    # crypto pairs and eight unrelated stocks among them, none of which the replay
+    # would ever evaluate, none of which could refuse a single entry, and all of
+    # which buried the handful that could. The 31-day wash-sale horizon is what
+    # makes the list that long — it reaches far past the 24h cooldown and sweeps
+    # up everything the account lost on in a month.
+    #
+    # Scoped only when the replay's universe is KNOWN. A scanner strategy can
+    # surface any name on any day, so there is nothing to scope against and the
+    # whole list is the honest answer.
+    in_universe = (
+        {s.upper() for s in symbols}
+        | {s.upper() for seg in segments for s in seg.symbols}
+        | {s.upper() for s in replayed_symbols}
+    )
+    relevant = [s for s in claimed if s in in_universe] if in_universe else claimed
     report["rails"] = {
         # Symbols the account had already lost on when the window opened, so the
         # replay began holding them off exactly as the engine was. `cooldown_until`
@@ -1384,16 +1488,35 @@ async def compare(
                 "last_loss_at": _iso(rails_seed[symbol]),
                 "cooldown_until": _iso(rails_seed[symbol] + timedelta(hours=cooldown_h)),
             }
-            for symbol in sorted(confirmed & set(rails_seed))
+            for symbol in relevant
         ],
+        # Seeded, account-wide and correctly so, but on names this replay was
+        # never going to evaluate. Counted rather than listed: the number is the
+        # only part that carries information, and the rows were the noise.
+        "seeded_losses_outside_universe": len(claimed) - len(relevant),
         "cooldown_hours_after_loss": cooldown_h,
         # WHAT IS STILL NOT SEEDED. Each is a way the replay can still look freer
         # than the engine was, and naming them is cheaper than being asked later
         # why a mismatch survived.
+        #
+        # The last four are not "not seeded" so much as NOT SEEDABLE: live
+        # evaluates them across the whole account and the replay only ever sees
+        # one strategy, so there is no single number that could be handed over.
+        # Read off engine.check_rails against qt.services.backtest's RailContext,
+        # field by field; every one of them pushes the same way, which is that the
+        # replay had room the live account did not.
         "not_seeded": [
             "positions the engine already held when the window opened — the replay starts flat, "
             "so the 'already open for this symbol' rail cannot block it",
             "the non-fill cooldown, which the replay does not simulate at all",
+            "positions OTHER strategies held in the same symbol: live's 'already open' rail is "
+            "account-wide, the replay only knows its own",
+            f"the account-wide open-position cap ({risk.get('max_total_positions')}) and exposure "
+            "cap: live counts every strategy's positions, the replay counts only this one's",
+            f"the account-wide daily trade limit ({risk.get('max_trades_per_day')}/day): live "
+            "counts entries by every strategy, the replay counts only its own",
+            "the daily-loss kill switch: live measures the whole account's realised loss for the "
+            "day, the replay only this strategy's",
         ],
     }
 

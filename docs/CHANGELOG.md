@@ -3,6 +3,52 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## The fidelity report was overstating what it had actually checked (2026-08-04)
+
+The comparison exists to tell you whether the backtester can be trusted, so it
+has to be harder on itself than on anything else. An audit of its own honesty
+found six places where it claimed more than it had established.
+
+**It printed an explanation for why the backtest took no trades, on a run that
+took five.** When a comparison is split into stretches — because you changed the
+strategy mid-window — the explanation was taken from whichever stretch had the
+most real trades, then stamped across the whole report. Your FAANG run hit this
+exactly: the silent first stretch supplied the sentence, the second supplied the
+trades. Each stretch now carries its own reason, and the report-level one appears
+only when nothing traded at all.
+
+**It offered a spread setting it had already admitted it could not support.** Two
+compared fills produced *"use 0.3345% as the spread cost in future backtests"* —
+a number you would paste into a setting that then biases every backtest the app
+runs, derived from a sample the tool itself labelled insufficient. The
+measurement is still shown, because observing it is honest; the recommendation is
+withheld until there are enough fills, and says why.
+
+**It scored positions nobody had sold as an exit-day disagreement.** A report
+where every matched trade was still open read "0% exit-day agreement" — the
+harshest verdict available, reached without comparing anything. Those are now
+counted separately as still-open.
+
+**It claimed two exits agreed on their reason when only one side had recorded
+one.** The fallback text asserted agreement that nothing established.
+
+**It showed a stock strategy 29 cooled-off symbols, eleven of them crypto pairs**
+it would never look at. The cooldown really is account-wide — that part was
+right, and narrowing it would have been wrong — but the list is now scoped to
+symbols the replay could actually be blocked on, with a count of the rest.
+
+**And it did not say which rails it cannot reproduce.** Four account-wide limits
+were evaluated as though they applied to one strategy only: other strategies'
+positions in the same symbol, the account position and exposure caps, the daily
+trade limit, and the daily-loss kill switch. All four push the same way — they
+make the replay freer than reality. They are now named in the report, alongside
+a count of same-symbol same-day trades, which the comparison collapses into one.
+
+Symbol-bars the replay could not rank now say what became of them: they are
+dropped before the top-N cut, so they shrink the pool rather than sneak past it,
+and they are already counted inside the "cut" figure rather than in addition
+to it.
+
 ## The fee Alpaca takes in coin was jamming your crypto stop-losses (2026-08-04)
 
 An audit of the live order path — the code that actually places and closes real

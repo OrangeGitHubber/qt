@@ -33,6 +33,14 @@ from __future__ import annotations
 
 from statistics import median
 
+# Below this many observations a difference is an anecdote, not a measurement.
+# Named rather than inlined because the same bar has to be applied in two
+# different places to two different samples, and an inlined `30` in one of them
+# was how `suggested_spread_pct` came to be published off two fills while the
+# very next field admitted the sample was too thin to judge.
+MIN_MATCHES_TO_JUDGE = 30
+MIN_FILLS_TO_JUDGE = 30
+
 
 def _pct_delta(live: float | None, sim: float | None) -> float | None:
     """How far the simulated price sat from the live one, as a % of the live
@@ -237,6 +245,22 @@ def compare(
             backtest_only.append(row)
 
     return {
+        # DECISIONS THIS COMPARISON COULD NOT SEE. Matching is by (symbol, day)
+        # deliberately — see the module docstring — and the cost of that is that a
+        # symbol traded TWICE in one day collapses to a single key: the live dict
+        # keeps the later row, the sim dict keeps the earlier one, and the rest
+        # disappear from every bucket, from the log, and from `live_trades`. The
+        # report then describes fewer decisions than were made without saying so,
+        # which for a round-the-clock crypto strategy is not hypothetical.
+        #
+        # Not fixed by changing the key: a live fill at 14:03 and a 14:00 bar ARE
+        # the same decision, and demanding equal timestamps would report every
+        # trade as a mismatch. Declared instead, so a reader who sees a number
+        # here knows the sample is smaller than the journal.
+        "same_day_duplicates": {
+            "live": len(live_filled) - len(live_by_key),
+            "backtest": len(sim_trades) + len(sim_open) - len(sim_by_key),
+        },
         # The comparison told trade by trade, in order, each with a verdict in
         # plain words. The buckets above summarise; this is the thing you can
         # actually read and act on — "the replay bought it a day late" is a bug
@@ -337,8 +361,19 @@ def _trade_log(matched: list[dict], live_only: list[dict], backtest_only: list[d
         elif m["exit_day_matches"] and m["exit_reason_matches"] is not False:
             live_x, sim_x = m.get("live_exit_at"), m.get("sim_exit_at")
             timed = _has_clock(live_x) and _has_clock(sim_x)
-            event(live_x or m["live_exit_day"], m["live_exit_day"], m["symbol"], "sold", "match",
-                  f"Both sold {m['symbol']}, {m['sim_exit_reason'] or 'same reason'}.",
+            # "same reason" used to be the fallback when a reason was MISSING on
+            # one side, so a row whose reasons were never compared still went out
+            # asserting they agreed. `exit_reason_matches` is None exactly then;
+            # say so instead of claiming a comparison nobody made.
+            detail = (
+                f"Both sold {m['symbol']}, {m['sim_exit_reason']}."
+                if m["exit_reason_matches"] is True
+                else f"Both sold {m['symbol']} on the same day. Only one side recorded why, "
+                     "so the reasons weren't compared."
+            )
+            event(live_x or m["live_exit_day"], m["live_exit_day"], m["symbol"], "sold",
+                  "match" if m["exit_reason_matches"] is True else "same day, reason unknown",
+                  detail,
                   live_at=live_x if timed else None, sim_at=sim_x if timed else None)
         elif not m["live_exit_day"] and not m["sim_exit_day"]:
             # NEITHER side has exited — both are still holding. There is no exit
@@ -432,7 +467,14 @@ def _decision_stats(matched: list[dict], live_only: list[dict], backtest_only: l
     comparable = [m for m in matched if m["exit_comparable"]]
     exits = [m for m in comparable if m["live_exit_reason"] and m["sim_exit_reason"]]
     same_rule = [m for m in exits if m["exit_reason_matches"]]
-    same_day = [m for m in comparable if m["exit_day_matches"]]
+    # Only trades where SOMEBODY has sold. `exit_day_matches` demands two real
+    # days, so a position both sides are still holding scored as a disagreement
+    # about an exit neither of them made — and a report where nothing had been
+    # sold yet read as 0% exit-day agreement, which is a verdict delivered
+    # without a comparison. There is nothing to agree or disagree about until one
+    # side leaves.
+    ended = [m for m in comparable if m["live_exit_day"] or m["sim_exit_day"]]
+    same_day = [m for m in ended if m["exit_day_matches"]]
     return {
         "live_trades": len(matched) + len(live_only),
         "backtest_trades": len(matched) + len(backtest_only),
@@ -456,7 +498,18 @@ def _decision_stats(matched: list[dict], live_only: list[dict], backtest_only: l
         ),
         "match_rate_pct": round(len(matched) / total * 100, 1) if total else None,
         "same_exit_rule_pct": round(len(same_rule) / len(exits) * 100, 1) if exits else None,
-        "same_exit_day_pct": round(len(same_day) / len(comparable) * 100, 1) if comparable else None,
+        "same_exit_day_pct": round(len(same_day) / len(ended) * 100, 1) if ended else None,
+        # How many exits that percentage was computed over. Without it a 100%
+        # built on one exit is indistinguishable from one built on forty.
+        "exits_compared": len(ended),
+        # Matched trades NEITHER side has sold yet. Excluded from the exit-day
+        # percentage above rather than counted as a disagreement, and named here
+        # so their absence from the denominator is visible rather than silent.
+        "both_still_open": sum(
+            1
+            for m in comparable
+            if not m["live_exit_day"] and not m["sim_exit_day"]
+        ),
         # Trades whose EXIT was a force-close, an account reset or a
         # reconciliation. Surfaced rather than silently dropped: if most of your
         # exits were by hand, the exit half of this report is describing very
@@ -474,7 +527,7 @@ def _decision_stats(matched: list[dict], live_only: list[dict], backtest_only: l
         "boundary_spanning_exits": sum(1 for m in matched if m["exit_spans_boundary"]),
         # Below this, differences are anecdotes. The same "count the coins"
         # discipline the optimizer applies to its own winners.
-        "enough_to_judge": len(matched) >= 30,
+        "enough_to_judge": len(matched) >= MIN_MATCHES_TO_JUDGE,
     }
 
 
@@ -512,19 +565,43 @@ def _execution_stats(matched: list[dict], assumed_spread_pct: float, assumed_fee
         else None
     )
     median_abs = round(median(abs(d) for d in both), 4) if both else None
+    enough = len(both) >= MIN_FILLS_TO_JUDGE
     return {
         "fills_compared": len(both),
         "median_entry_delta_pct": round(median(entry_deltas), 4) if entry_deltas else None,
         "median_exit_delta_pct": round(median(exit_deltas), 4) if exit_deltas else None,
         # One-sided cost, which is the shape the backtest's own input takes.
+        # This is the MEASUREMENT and is always reported, however few fills went
+        # into it — `fills_compared` sits beside it and says how few.
         "measured_cost_per_side_pct": median_abs,
         "assumed_spread_pct": assumed_spread_pct,
         "assumed_fee_pct": assumed_fee_pct,
-        # What to actually put in the backtest form. None when there is nothing
-        # measured — a suggestion built on no data is worse than no suggestion.
-        "suggested_spread_pct": median_abs,
+        # What to actually put in the backtest form — an ACTIONABLE claim, and
+        # therefore held to a higher bar than the measurement above it.
+        #
+        # None on no data, and None on too little. Those used to be different:
+        # the field went out populated whenever a single fill existed, so a
+        # comparison reporting `enough_to_judge: false` on two fills still told
+        # the reader to type 0.3345% into every future backtest. A median of two
+        # is one unusual fill away from anything, and this number is copied into
+        # a setting that then biases every backtest the app runs — the one place
+        # in the report where a weak answer is more expensive than no answer.
+        "suggested_spread_pct": median_abs if enough else None,
+        # Why it was withheld, so the absence reads as a decision rather than as
+        # the report having failed to compute something.
+        "suggested_spread_withheld": (
+            None
+            if enough
+            else (
+                f"Measured over {len(both)} fill{'' if len(both) == 1 else 's'}, which is too "
+                f"few to set a cost from — {MIN_FILLS_TO_JUDGE} is the bar. The measured figure "
+                "is shown above as an observation; don't put it in the backtest form yet."
+                if both
+                else "No matched fills to measure."
+            )
+        ),
         "backtest_pnl_optimism_usd": pnl_gap,
-        "enough_to_judge": len(both) >= 30,
+        "enough_to_judge": enough,
     }
 
 

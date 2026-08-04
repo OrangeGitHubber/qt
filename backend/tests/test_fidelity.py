@@ -149,13 +149,38 @@ def test_a_full_sample_clears_the_bar():
 
 def test_the_suggested_cost_comes_from_the_measured_fills():
     """The payoff: a number to type into the backtest form, derived from real
-    fills rather than guessed."""
-    live = [_live(f"S{n}", "2026-05-05", entry=100.0, exit_price=110.0) for n in range(3)]
-    sim = _result([_sim(f"S{n}", "2026-05-05", entry=99.8, exit_price=110.22) for n in range(3)])
+    fills rather than guessed.
+
+    Fifteen trades, so thirty fills — the sample the suggestion demands. Below it
+    the measurement is still reported and the suggestion is withheld; see
+    test_a_thin_sample_measures_the_cost_but_refuses_to_suggest_it."""
+    live = [_live(f"S{n}", "2026-05-05", entry=100.0, exit_price=110.0) for n in range(15)]
+    sim = _result([_sim(f"S{n}", "2026-05-05", entry=99.8, exit_price=110.22) for n in range(15)])
     out = compare(live, sim, assumed_spread_pct=0.1)
     assert out["execution"]["assumed_spread_pct"] == 0.1
     assert out["execution"]["suggested_spread_pct"] == 0.2   # median |delta| per side
-    assert out["execution"]["fills_compared"] == 6
+    assert out["execution"]["suggested_spread_withheld"] is None
+    assert out["execution"]["fills_compared"] == 30
+
+
+def test_a_thin_sample_measures_the_cost_but_refuses_to_suggest_it():
+    """Reported live on strategy 25: `enough_to_judge: false` at two fills, and
+    `suggested_spread_pct: 0.3345` emitted anyway — which the panel renders as
+    "Use 0.3345% as the spread cost in future backtests". That number is copied
+    into a setting that biases every backtest the app runs, so a median of two is
+    the one place a weak answer costs more than no answer.
+
+    The MEASUREMENT still goes out: it is an observation, labelled as one, with
+    the fill count beside it. Only the instruction is withheld."""
+    live = [_live(f"T{n}", "2026-05-05", entry=100.0, exit_price=110.0) for n in range(2)]
+    sim = _result([_sim(f"T{n}", "2026-05-05", entry=99.8, exit_price=110.22) for n in range(2)])
+    out = compare(live, sim)
+    x = out["execution"]
+    assert x["fills_compared"] == 4
+    assert x["enough_to_judge"] is False
+    assert x["measured_cost_per_side_pct"] == 0.2, "the observation is still reported"
+    assert x["suggested_spread_pct"] is None, "…but not as something to act on"
+    assert "4 fills" in x["suggested_spread_withheld"]
 
 
 def test_no_matches_suggests_nothing_rather_than_zero():
@@ -253,8 +278,10 @@ def test_a_force_exit_never_pollutes_the_measured_trading_cost():
     )
     # Two entries and ONE exit compared — the forced exit is set aside.
     assert out["execution"]["fills_compared"] == 3
-    # …so the suggestion stays in slippage territory instead of being dragged to 45%.
-    assert out["execution"]["suggested_spread_pct"] < 0.5
+    # …so the measured cost stays in slippage territory instead of being dragged
+    # to 45%. Read off the MEASUREMENT rather than the suggestion, which three
+    # fills are too few to earn — that is a different claim, tested separately.
+    assert out["execution"]["measured_cost_per_side_pct"] < 0.5
 
 
 def test_a_force_exit_is_kept_out_of_the_pnl_gap_too():
