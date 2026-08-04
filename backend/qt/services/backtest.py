@@ -115,6 +115,55 @@ def _btlog(
 # one snapshot per open symbol and sells AT MARKET if a rule fires — QT places no
 # resting stop or limit orders. So the live engine's view of the tape is a
 # sequence of 60-second samples, not the continuous tape.
+def _daily_signal_report(
+    params: dict, daily_bars_by_symbol: dict | None, bar_seconds: float | None
+) -> dict | None:
+    """Which bars the daily-style indicators were actually computed from.
+
+    The live engine reads MACD, RSI and ATR off COMPLETED DAILY closes, always.
+    A replay can only match that if it was handed a daily series; without one it
+    computes them from its own bars, and on a fine timeframe that is a different
+    indicator wearing the same name. A 1-minute MACD crosses when a minute of
+    tape turns, a daily MACD when a day does.
+
+    This was silent, and it cost a whole session's investigation: strategy 25's
+    replay entered AMZN 25 minutes after the engine did, and every named entry
+    condition looked satisfied at both instants. The per-bar log showed the MACD
+    line moving every minute — a daily MACD is one value per day. Nothing in the
+    response said which one had been used, so the numbers looked comparable and
+    were not.
+
+    None when the strategy uses no daily-style indicator: there is nothing to
+    caveat, and a caveat on every result is a caveat nobody reads."""
+    names = [n for n, on in (
+        ("MACD", _macd_on(params)), ("RSI", _rsi_on(params)), ("ATR", _atr_on(params)),
+    ) if on]
+    if not names:
+        return None
+    from_daily = bool(daily_bars_by_symbol)
+    intraday = bar_seconds is not None and bar_seconds < 86_400
+    listed = " and ".join(names) if len(names) < 3 else "MACD, RSI and ATR"
+    report = {
+        "indicators": names,
+        "computed_from": "daily bars" if from_daily else "the replay's own bars",
+        "matches_live": bool(from_daily or not intraday),
+        "warning": None,
+    }
+    if not from_daily and intraday:
+        every = (
+            f"{int(bar_seconds // 60)}-minute" if bar_seconds < 3600
+            else f"{int(bar_seconds // 3600)}-hour"
+        )
+        report["warning"] = (
+            f"{listed} came from this replay's own {every} bars, NOT from daily bars."
+            f" The live engine always reads {listed} off completed DAILY closes, so"
+            f" this run tested a {every} {names[0]} — a different signal that turns"
+            " at different times. Entry and exit timings here are not comparable to"
+            " live, and neither is any conclusion about whether the rule works."
+        )
+    return report
+
+
 LIVE_POLL_SECONDS = 60
 
 # Ceiling on the per-bar debug log returned to a caller. A 1-minute replay of a
@@ -1748,6 +1797,8 @@ def run_backtest(
         "pct_capital_deployed": pct_deployed,
         "return_on_deployed_pct": return_on_deployed,
         "time_in_market_pct": time_in_market,
+        # Which bars MACD/RSI/ATR actually came from. None when none are on.
+        "daily_signals": _daily_signal_report(params, daily_bars_by_symbol, bar_seconds),
         # Only when the caller asked. Truncated rather than streamed: a 1-minute
         # replay of eleven symbols is ~20,000 lines, and the point of asking is
         # always a narrow window, so the caller filters. `debug_log_total` is the

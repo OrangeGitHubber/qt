@@ -173,6 +173,36 @@ def test_a_scanner_plus_watchlist_strategy_replays_both(client, configured, seed
     assert {p["symbol"] for p in body["open_positions"]} == {"MOVER", "OTHER"}
 
 
+def test_an_intraday_macd_run_now_fetches_the_daily_series(client, configured, watched_other):
+    """End to end: the fix. A VWAP+MACD strategy replayed intraday must come back
+    saying its MACD came from daily bars — previously it silently did not."""
+    params = {
+        "entry": {"min_day_gain_pct": 3, "require_above_vwap": True,
+                  "require_macd_bullish": True,
+                  "entry_window_start": None, "entry_window_end": None},
+        "exit": {"trailing_stop_pct": 5, "stop_loss_pct": 4, "take_profit_pct": 0,
+                 "max_holding_hours": 0, "flatten_before_close": False,
+                 "exit_below_vwap": False},
+    }
+    sid = client.post(
+        "/api/strategies",
+        json={**_strategy("stock"), "universe": "both", "params": params},
+    ).json()["id"]
+    daily = [
+        {"t": (datetime.now(timezone.utc) - timedelta(days=60 - i)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+         "o": 100 + i, "h": 100 + i, "l": 100 + i, "c": 100 + i, "v": 1000, "vw": 100 + i}
+        for i in range(60)
+    ]
+    fetch = AsyncMock(return_value={"NVDA": daily})
+    with patch.object(AlpacaClient, "historical_bars", new=fetch):
+        body = client.post("/api/backtest", json={
+            "strategy_id": sid, "symbols": ["NVDA"], "days": 30, "timeframe": "1Hour",
+            "starting_cash": 5000, "spread_pct": 0}).json()
+    assert body["daily_signals"] is not None
+    assert body["daily_signals"]["computed_from"] == "daily bars"
+    assert body["daily_signals"]["warning"] is None
+
+
 def test_the_debug_flag_reaches_the_replay_and_comes_back_on_the_response(
     client, configured, watched_other
 ):

@@ -3,6 +3,48 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## The backtest was testing a different MACD from the one live trades (2026-08-04)
+
+This is the answer to why a replay entered AMZN twenty-five minutes after the
+engine did, and it is the most consequential thing found in this whole sweep.
+
+**The live engine always computes MACD from completed DAILY closes. An intraday
+backtest of a strategy that also uses the VWAP rule was computing it from its own
+bars** — so a 1-minute replay ran a *1-minute MACD*. Same name, different signal:
+a daily MACD crosses when a day turns, a minute MACD when a minute does. On 3
+August the engine bought AMZN at 14:01 on a bullish daily MACD while the replay
+sat through 74 bars of "MACD not bullish" and entered at 14:26 when the minute
+MACD finally crossed.
+
+The cause was a single word. The check deciding whether to fetch daily history
+stands down the moment the VWAP rule is switched on, treating VWAP-plus-MACD as a
+misconfigured strategy. It isn't — live runs that combination perfectly happily,
+taking VWAP from the intraday tape and MACD from daily closes. But standing down
+meant no daily bars were fetched, and MACD quietly fell back to whatever bars the
+replay happened to be using.
+
+**Any intraday backtest of such a strategy was therefore testing a rule the live
+engine does not run**, which is also why the same strategy over the same window
+produced a different basket at different bar sizes — 15-minute bars bought NFLX,
+1-minute bars bought NVDA. Those runs were not comparable to each other, let alone
+to live.
+
+Two changes:
+
+**The daily series is now fetched whenever a strategy uses MACD, RSI or ATR on an
+intraday replay**, regardless of VWAP — so the indicators are computed the way
+live computes them.
+
+**And every result now states which bars its indicators came from.** If they came
+from the replay's own bars rather than daily ones, it says so plainly and says
+that the timings are not comparable to live. The fidelity report shows the worst
+case across a split comparison, because one stretch falling back is enough to make
+the whole comparison suspect. Strategies using none of those indicators get no
+such note at all.
+
+If you have tuned an intraday strategy that uses both VWAP and MACD, its past
+backtest numbers were measuring the wrong signal and are worth re-running.
+
 ## The replay can now show its working, bar by bar (2026-08-04)
 
 Chasing why the engine bought AMZN at 14:01 while the replay waited until 14:26,

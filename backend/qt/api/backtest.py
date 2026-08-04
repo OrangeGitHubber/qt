@@ -1710,8 +1710,21 @@ async def replay(
     # was being re-downloaded on every run. Only the missing recent edge is
     # fetched, and any cache trouble degrades to a plain Alpaca fetch.
     _report(f"Downloading {len(symbols)} symbol{'' if len(symbols) == 1 else 's'} of history…")
+    # A daily indicator on an INTRADAY replay needs the daily series whether or
+    # not `mixed` fired. `mixed` rests on _uses_daily_only_signals, which returns
+    # False the moment the VWAP rule is on — it calls that combination
+    # "misconfigured" and stands down. But VWAP + MACD is an ordinary strategy and
+    # live runs it without difficulty: VWAP intraday, MACD off completed daily
+    # closes. Standing down meant no daily fetch, so _annotate_macd fell back to
+    # the replay's OWN closes and computed a ONE-MINUTE MACD against live's daily
+    # one — two different indicators sharing a name. Measured on strategy 25:
+    # live bought AMZN at 14:01 on a bullish daily MACD; the replay sat through
+    # 74 bars of "MACD not bullish" waiting for a 1-minute crossover at 14:26.
+    # _needs_warmup is the same question without the VWAP veto, and is already
+    # what decides whether warm-up history is worth fetching at all.
+    daily_signals_intraday = _needs_warmup(params) and replay_timeframe != "1Day"
     try:
-        if mixed:
+        if mixed or daily_signals_intraday:
             # Two fetches, deliberately different windows: the DAILY series reaches
             # back over the warm-up so the indicators are defined from day one,
             # while the intraday series covers only the tested window — 15-minute

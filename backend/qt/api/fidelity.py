@@ -1504,6 +1504,16 @@ async def compare(
         # any "the replay invented this trade" verdict below has to be read with
         # that in mind, because that is exactly how such a trade gets invented.
         "ranking": _ranking_report(results),
+        # Which bars the replay's MACD/RSI/ATR came from. Belongs in THIS report
+        # above all others: a comparison whose replay ran a 1-minute MACD against
+        # live's daily one is not measuring the backtester's fidelity at all, and
+        # every timing difference it lists is an artefact. Any stretch that fell
+        # back makes the whole comparison suspect, so the worst case wins.
+        "daily_signals": next(
+            (r["daily_signals"] for r in results
+             if r.get("daily_signals") and r["daily_signals"].get("warning")),
+            next((r["daily_signals"] for r in results if r.get("daily_signals")), None),
+        ),
     }
 
     # THE RAIL STATE THE REPLAY WAS HANDED, said out loud for the same reason
