@@ -13,10 +13,12 @@ from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from fastapi.testclient import TestClient
 
 from qt import security
 from qt.broker.alpaca import SECRET_KEY_ID, SECRET_KEY_SECRET, AlpacaClient
 from qt.db import session_scope
+from qt.main import app
 from qt.models import Strategy, StrategyConfigVersion, Trade
 
 
@@ -49,6 +51,26 @@ def _strategy(asset_class: str = "stock") -> dict:
         "sizing_usd": 1000, "sleeve_usd": 5000, "max_positions": 3,
         "swing_mode": False, "ignore_regime": True,
     }
+
+
+@pytest.fixture()
+def client():
+    """A client whose event loop OUTLIVES a single request — which is the whole
+    premise of these tests.
+
+    The shared fixture returns `TestClient(app)` without entering it, so Starlette
+    spins up a portal per request and tears it down on the way out, cancelling any
+    task still running. A backtest job is created by /start and deliberately
+    outlives it, so it was surviving only when the replay happened to finish
+    inside that request. It always did on a fast machine; on CI it stopped, and
+    the job came back reporting itself cancelled — a real failure of the harness
+    that read exactly like a broken feature.
+
+    Entering the context manager keeps one portal (and one lifespan) for the whole
+    test, which is what a real deployment gives a job. Scoped to this module: the
+    other ~1,090 tests are single-request and have no reason to change."""
+    with TestClient(app) as c:
+        yield c
 
 
 @pytest.fixture()
