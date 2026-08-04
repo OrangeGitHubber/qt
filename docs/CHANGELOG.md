@@ -3,6 +3,30 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## The replay could trade at the closing bell; the engine cannot (2026-08-04)
+
+With the position-cap fault fixed, the comparison on "Basic FAANGs and friends"
+matched MSFT, AMZN and SPY — and turned up one trade the replay had invented:
+NFLX at 16:00 on 3 August.
+
+The obvious explanation was an after-hours price spike, and it was wrong. NFLX
+was above the entry threshold from the 09:30 opening bar and never fell below
+it. What the replay's own log showed was that it looked at NFLX exactly once all
+day: the strategy ranks its ten names and only evaluates the best five on any
+bar, and NFLX only reached the top five on the closing print.
+
+That print is the one bar the live engine can never act on. It checks the
+broker's clock every cycle and will not open a stock position while the market
+is shut, and at 16:00:00 it is shut. The replay had no such check — so it got
+one extra decision point every single day that real trading never has, and it
+spent it. Stock entries are now refused outside 09:30–16:00 New York, matching
+live. Crypto is untouched: it never closes.
+
+Two things deliberately left: exits are not gated yet (live skips those when the
+market is shut too, so a stop hit on the closing print should wait for the next
+open), and half-days are not modelled, because only the broker's calendar knows
+about them.
+
 ## Refused orders were being counted as open positions (2026-08-04)
 
 This is why "Basic FAANGs and friends" could not be compared, and it had nothing

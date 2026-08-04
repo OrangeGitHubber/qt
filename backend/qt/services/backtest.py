@@ -1053,6 +1053,51 @@ def _fractional(params: dict) -> bool:
     return bool(params.get("execution", {}).get("market_orders", False))
 
 
+def _in_trading_session(ts: datetime, asset_class: str, bar: dict) -> bool:
+    """Could the LIVE engine have opened a position on this bar at all?
+
+    It reads the broker's clock every tick and skips stock entries outright when
+    the market is shut — `engine._consider_entries`: "if strategy.asset_class ==
+    'stock' and not market_open: continue". The simulator had no counterpart. It
+    buckets days by the ET session but never asked whether a BAR sat inside
+    trading hours, so it got one decision point per day the engine never has:
+    the 16:00 closing print.
+
+    Measured, and it is not theoretical. Strategy 25's comparison reported "the
+    replay bought NFLX. You never did — it believes something was tradable that
+    wasn't", at 16:00 ET. NFLX had been over the entry threshold since the 09:30
+    bar; what changed at the close was that it finally reached the top 5 of a
+    ranked 10-name pool, and the only bar it was ever a candidate on was the one
+    bar the engine cannot trade.
+
+    Crypto is exempt because it has no session to be outside of — gating a 24/7
+    book by New York hours would delete two thirds of every crypto comparison.
+
+    HALF DAYS ARE NOT MODELLED. The broker's calendar knows that Thanksgiving
+    Friday closes at 13:00 ET and this does not, so a replay covering one keeps
+    the 13:00–16:00 bars it should refuse. That is strictly smaller than the gap
+    being closed here (one bar every day, versus three hours a handful of times a
+    year) and closing it needs the calendar, which the simulator has no access
+    to. Named rather than left to be discovered."""
+    if asset_class != "stock":
+        return True
+    # A DAILY bar is a whole session, not an instant inside one. It is stamped at
+    # the START of its day — midnight ET straight from the broker, 14:00Z once
+    # the cache has restamped it (barcache.cached_daily_bars) — so asking whether
+    # that timestamp falls between 09:30 and 16:00 answers a question nobody
+    # asked, and answers "no" for every daily replay ever run. Both first AND
+    # last of its day is how the rest of this file tells a daily bar from a
+    # genuine intraday close; see _prepare's `first_of_day`.
+    #
+    # An intraday bar alone in its day — a window whose edge clips a session to
+    # one bar — is exempted by the same test. That is a boundary of a window
+    # somebody chose, not a free trade every day, and it is the smaller error.
+    if bar.get("first_of_day") and bar.get("last_of_day"):
+        return True
+    et = ts.astimezone(ET)
+    return (9, 30) <= (et.hour, et.minute) < (16, 0)
+
+
 def _entry_qty(asset_class: str, sizing: float, fill: float, fractional: bool) -> float:
     if asset_class == "stock" and not fractional:
         return float(int(sizing // fill))  # whole shares
@@ -1786,6 +1831,14 @@ def run_backtest(
                 rsi=bar.get("rsi"),
                 rank=rank_pos, rank_of=rank_of,
             )
+            # THE MARKET'S OWN HOURS, checked before the strategy's rules. Not an
+            # entry rule the user chose — whether the engine existed at this
+            # moment at all. See _in_trading_session.
+            if not _in_trading_session(ts, strategy["asset_class"], bar):
+                reject(day, symbol, "closed")
+                if debug:
+                    _btlog(day, symbol, bar, params, "reject-entry: market closed", debug_lines)
+                continue
             ok, entry_reason = evaluate_entry(params, cand, ts.astimezone(ET))
             # The same sentence the live journal writes (engine._rank_note), so a
             # replayed entry and the real one it is being compared against read
@@ -2441,6 +2494,11 @@ def run_portfolio_backtest(
                 rsi=bar.get("rsi"),
                 rank=rank_pos, rank_of=rank_of,
             )
+            # The same gate as run_backtest's, and it has to be restated here
+            # rather than shared: these are two independent bar loops, and the
+            # last four bugs in this file were a fix that landed on one of them.
+            if not _in_trading_session(ts, strat["asset_class"], bar):
+                continue
             ok, entry_reason = evaluate_entry(params, cand, ts.astimezone(ET))
             entry_reason += _rank_note(
                 (rank_cfg_by_sid.get(sid) or (None,))[0], cand
