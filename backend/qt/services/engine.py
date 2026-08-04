@@ -109,6 +109,14 @@ class RailContext:
     last_loss_at: datetime | None  # last losing exit for this symbol (any strategy)
     loss_sale_within_31d: bool  # stocks: sold this symbol at a loss in last 31 days
     risk: dict = field(default_factory=dict)
+    # WHO took that losing exit — "this strategy" or another strategy's name.
+    # Purely for the rejection message, and only because the message without it
+    # was actively misleading: the cooldown is account-wide BY DESIGN (see
+    # _build_rail_context), so a strategy that has never once filled this symbol
+    # can be blocked by it, and "cooldown after loss" read as though it had lost.
+    # 353 such rows in 54 minutes were debugged against that wrong reading.
+    # None (the backtester never sets it) simply drops the clause.
+    last_loss_by: str | None = None
     leverage_unlocked: bool = False
     daily_loss_usd: float = 0.0
     # Consecutive "did not fill" attempts on this symbol (any strategy), and when
@@ -277,7 +285,18 @@ def check_rails(strategy_cfg: dict, sizing_usd: float, ctx: RailContext) -> tupl
         cooldown = timedelta(hours=risk["cooldown_hours_after_loss"])
         since = datetime.now(timezone.utc) - ctx.last_loss_at
         if since < cooldown:
-            return False, f"rail: cooldown after loss ({since.total_seconds()/3600:.1f}h of {risk['cooldown_hours_after_loss']}h)"
+            # This cooldown is ACCOUNT-WIDE by design — any strategy's losing exit
+            # on this symbol cools the symbol for every strategy (see
+            # _build_rail_context, and the same statement in the Strategies UI).
+            # The message has to SAY so: read as "cooldown after loss" alone it
+            # claims the blocked strategy lost, and a strategy that has never
+            # filled the symbol at all reads as broken rather than as cooled off
+            # by somebody else's trade.
+            whose = f"the losing exit was {ctx.last_loss_by}'s" if ctx.last_loss_by else "any strategy's loss counts"
+            return False, (
+                f"rail: cooldown after loss ({since.total_seconds()/3600:.1f}h of "
+                f"{risk['cooldown_hours_after_loss']}h) — account-wide on this symbol, {whose}"
+            )
     guard = risk.get("wash_sale_guard", "block")
     if ctx.loss_sale_within_31d and guard == "block":
         return False, "rail: wash-sale guard — sold this stock at a loss within 31 days"
@@ -1111,16 +1130,19 @@ async def _consider_entries(
                 if not rails_ok:
                     row["decision"], row["reason"] = "blocked", f"{entry_reason}, but {rails_reason}"
                     trace["candidates"].append(row)
-                    session.add(
-                        Trade(
-                            strategy_id=strategy.id,
-                            config_version_id=version_id,
-                            mode=mode, symbol=cand.symbol, asset_class=cand.asset_class,
-                            account_id=get_setting(session, "current_account_id"),
-                            qty=0, notional=0, status="rejected",
-                            entry_reason=f"wanted to buy ({entry_reason}{rank_note}) but {rails_reason}",
+                    # The trace above always shows the block; the JOURNAL only
+                    # records it when it's news. See RAIL_REJECTION_REPEAT_MINUTES.
+                    if _rail_rejection_is_new(session, mode, strategy.id, cand.symbol, rails_reason):
+                        session.add(
+                            Trade(
+                                strategy_id=strategy.id,
+                                config_version_id=version_id,
+                                mode=mode, symbol=cand.symbol, asset_class=cand.asset_class,
+                                account_id=get_setting(session, "current_account_id"),
+                                qty=0, notional=0, status="rejected",
+                                entry_reason=f"wanted to buy ({entry_reason}{rank_note}) but {rails_reason}",
+                            )
                         )
-                    )
                     continue
 
                 bought_reason = f"{entry_reason}{rank_note}; {rails_reason}"
@@ -1256,15 +1278,16 @@ async def _consider_dca_entries(
         )
         reason = f"DCA scheduled lot (every {interval_days}d)"
         if not rails_ok:
-            session.add(
-                Trade(
-                    strategy_id=strategy.id, config_version_id=version_id,
-                    mode=mode, symbol=sym, asset_class=cand.asset_class,
-                    account_id=get_setting(session, "current_account_id"),
-                    qty=0, notional=0, status="rejected",
-                    entry_reason=f"wanted to buy ({reason}) but {rails_reason}",
+            if _rail_rejection_is_new(session, mode, strategy.id, sym, rails_reason):
+                session.add(
+                    Trade(
+                        strategy_id=strategy.id, config_version_id=version_id,
+                        mode=mode, symbol=sym, asset_class=cand.asset_class,
+                        account_id=get_setting(session, "current_account_id"),
+                        qty=0, notional=0, status="rejected",
+                        entry_reason=f"wanted to buy ({reason}) but {rails_reason}",
+                    )
                 )
-            )
             continue
 
         from qt.services import execution
@@ -1681,6 +1704,74 @@ async def rank_pool(session: Session, client: AlpacaClient, strategy: Strategy) 
     return rows
 
 
+# A rail that blocks a candidate blocks it on EVERY 60-second tick until the
+# condition lifts, and each block used to write its own journal row. A 24-hour
+# post-loss cooldown therefore wrote ~1,440 rows per symbol per strategy; one
+# crypto probe produced 500 rows in 54 minutes, 497 of them rejections, and the
+# journal the owner reads to answer "why didn't it trade?" was buried under the
+# answer repeated a thousand times.
+#
+# It is the same shape as the non-fill breaker's own rows evicting its evidence
+# (see the lookback query below): a guard whose output floods the table it is
+# read from. So the journal records the rail's STATE CHANGES, not its ticks —
+# one row when a rail starts blocking a (strategy, symbol), and a refresh no
+# more than hourly so a long block still shows up in a recent-hours view.
+#
+# Nothing downstream counts these rows: the fidelity comparison uses them as a
+# SET of (symbol, day) keys with one representative reason, entries_today and
+# the scoreboard exclude rejections, and the non-fill streak excludes rail rows
+# in its query. Fewer duplicates costs no information anywhere.
+RAIL_REJECTION_REPEAT_MINUTES = 60
+
+
+def _rail_signature(entry_reason: str | None) -> str:
+    """The IDENTITY of the rail in a rejection reason, without the numbers that
+    change every tick — "cooldown after loss (2.9h of 24.0h)" and the same rail
+    3.0h later share a signature, but a different rail never does.
+
+    Returns "" when the text names no rail at all (an execution-side rejection
+    such as "did not fill", or a hand-written reason). An empty signature never
+    matches anything, so those rows are never suppressed and never suppress.
+    """
+    text = entry_reason or ""
+    marker = "rail: "
+    idx = text.find(marker)
+    if idx == -1:
+        return ""
+    return text[idx + len(marker) :].split("(")[0].strip()
+
+
+def _rail_rejection_is_new(
+    session: Session, mode: str, strategy_id: int, symbol: str, rails_reason: str
+) -> bool:
+    """Should this rail rejection be journalled, or is it the same block we
+    already recorded a moment ago? True = write the row."""
+    signature = _rail_signature(rails_reason)
+    if not signature:
+        return True  # not a rail we recognise — never suppress
+    latest = (
+        session.query(Trade)
+        .filter(
+            Trade.mode == mode,
+            Trade.strategy_id == strategy_id,
+            Trade.symbol == symbol,
+            Trade.status == "rejected",
+        )
+        .order_by(Trade.created_at.desc())
+        .first()
+    )
+    if latest is None or _rail_signature(latest.entry_reason) != signature:
+        return True  # a different rail (or none yet) — this is a state change
+    created = latest.created_at
+    if created is None:
+        return True
+    if created.tzinfo is None:
+        created = created.replace(tzinfo=timezone.utc)
+    return (datetime.now(timezone.utc) - created) >= timedelta(
+        minutes=RAIL_REJECTION_REPEAT_MINUTES
+    )
+
+
 def _build_rail_context(
     session: Session, mode: str, strategy: Strategy, symbol: str, equity: float,
     risk: dict, leverage_unlocked: bool, daily_loss: float, today_start: datetime,
@@ -1708,19 +1799,39 @@ def _build_rail_context(
     if strategy.allow_concurrent_symbol:
         symbol_q = symbol_q.filter(Trade.strategy_id == strategy.id)
     already_open = symbol_q.count() > 0
-    last_loss = (
-        session.query(func.max(Trade.exit_at))
-        .filter(Trade.mode == mode, Trade.symbol == symbol, Trade.status == "closed", Trade.pnl < 0)
-        .scalar()
+    # The most recent LOSING exit on this symbol, and which strategy took it.
+    # Deliberately NOT filtered by strategy — see the account-wide note above.
+    # The owner is fetched with it purely so the rejection can name them.
+    loss_row = (
+        session.query(Trade.exit_at, Trade.strategy_id)
+        .filter(
+            Trade.mode == mode, Trade.symbol == symbol, Trade.status == "closed",
+            Trade.pnl < 0, Trade.exit_at.isnot(None),
+        )
+        .order_by(Trade.exit_at.desc())
+        .first()
     )
+    last_loss, last_loss_by = (loss_row[0], None) if loss_row else (None, None)
+    if loss_row is not None:
+        if loss_row[1] == strategy.id:
+            last_loss_by = "this strategy"
+        else:
+            owner = session.get(Strategy, loss_row[1]) if loss_row[1] else None
+            last_loss_by = f"“{owner.name}”" if owner else "a strategy since deleted"
     if last_loss is not None and last_loss.tzinfo is None:
         last_loss = last_loss.replace(tzinfo=timezone.utc)
     wash = False
     if strategy.asset_class == "stock":
         cutoff = datetime.now(timezone.utc) - timedelta(days=31)
+        # Filtered by MODE, like every other query here. Shadow mode places no
+        # real orders, so a shadow "loss" is a simulated sale that the IRS has
+        # never heard of — it must not block a real paper entry. This was the one
+        # query in this function without the filter, so weeks of shadow-mode
+        # journal could silently wash-sale-block live entries for 31 days.
         wash = (
             session.query(func.count(Trade.id))
             .filter(
+                Trade.mode == mode,
                 Trade.symbol == symbol, Trade.asset_class == "stock",
                 Trade.status == "closed", Trade.pnl < 0, Trade.exit_at >= cutoff,
             )
@@ -1776,6 +1887,7 @@ def _build_rail_context(
         daily_loss_usd=daily_loss,
         nonfill_strikes=strikes,
         last_nonfill_at=last_nonfill,
+        last_loss_by=last_loss_by,
     )
 
 

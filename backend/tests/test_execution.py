@@ -404,6 +404,11 @@ async def test_a_crypto_market_EXIT_is_never_immediate_or_cancel(strategy_row):
     with (
         patch.object(AlpacaClient, "submit_market_order", fake_market),
         patch.object(AlpacaClient, "get_order", new=AsyncMock(return_value=filled)),
+        # A crypto exit now asks the broker what it actually holds before sizing
+        # the sell (fee-in-kind clamp). Unpatched, this test would reach out to
+        # Alpaca for real; the broker agrees with the journal here.
+        patch.object(AlpacaClient, "list_positions",
+                     new=AsyncMock(return_value=[{"symbol": "ADAUSD", "qty": "10"}])),
         patch("qt.services.execution.FILL_POLL_SECONDS", (0,)),
     ):
         with session_scope() as s:

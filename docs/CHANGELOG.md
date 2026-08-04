@@ -3,6 +3,61 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## The fee Alpaca takes in coin was jamming your crypto stop-losses (2026-08-04)
+
+An audit of the live order path — the code that actually places and closes real
+orders — found four faults in how QT sells. The first one costs money.
+
+**Alpaca charges its crypto commission in the coin, so slightly less of it lands
+than you bought.** You order 2.1322 and 2.12687 arrives. QT wrote the order's
+quantity into the journal, so every exit asked to sell about 0.25% more coin
+than the account actually held. Alpaca refuses an oversell outright. The trade
+stayed open and the next tick tried the same impossible order again — on a coin
+that was falling, which is precisely why the stop-loss was firing.
+
+A reconciliation job fixes the quantity, but it runs every fifteen minutes while
+exits run every sixty seconds. **That left a window of up to a quarter of an hour
+in which a crypto stop-loss simply could not execute.** Exits now ask the broker
+what it really holds before sizing the sell.
+
+**An exit that only partly filled was thrown away.** A comment in the code
+explained that this could not happen to exits — the reasoning was wrong, and a
+resting order part-fills just as readily as the immediate kind. The sold portion
+was ignored, so the journal went on claiming coins that were gone, and every
+later cycle oversold. The remainder is now taken up properly.
+
+**An exit that filled during cancellation was recorded as a miss.** Entries have
+handled this since the RENDER incident; exits never learned it, and would leave
+the journal insisting you held something the broker had already sold.
+
+**A sell too small to be legal was retried forever.** A part-filled entry can
+leave a dollar of coin behind, below Alpaca's minimum order size — so it can
+never be sold, and resubmitting it is not a retry but a loop. QT now reports it
+once and leaves the position alone for you to flatten. Separately, a sell that
+keeps failing for any other reason now raises an alert after five attempts
+rather than failing quietly; it keeps trying, because abandoning a real position
+would be worse.
+
+Two more, found in the safety rails:
+
+**"Cooldown after a loss" was blaming the wrong strategy.** The rail is
+account-wide by design — a loss on a symbol benches that symbol everywhere, to
+stop several strategies piling into the same falling thing. But the message did
+not say so, so it appeared on strategies that had never once traded the symbol
+and read as though they had just lost on it. It now names the strategy whose
+loss caused the block, and says the block is account-wide.
+
+**A shadow-mode loss could trigger the wash-sale guard.** Shadow strategies place
+no orders, so their "losses" are sales that never happened — yet they could block
+real paper entries on that symbol for thirty-one days. That query was the only
+one of its kind missing a mode filter.
+
+And a smaller one you had noticed yourself: **a blocked candidate wrote an
+identical journal row every sixty seconds.** One strategy produced 353 such rows
+in under an hour, burying everything else. QT now records the rail when it
+*changes*, refreshed hourly, so a long block still shows up without flooding the
+page you read.
+
 ## Two clocks in one row, four hours apart (2026-08-03)
 
 A line in the fidelity log read:
