@@ -28,6 +28,12 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
 from sqlalchemy.orm import Session as OrmSession
 
 from qt.paths import bar_cache_url
+# The scanner owns the stablecoin list, and it must stay owned in ONE place: the
+# whole point of the skip reaching this module is that the replay and the live
+# scanner refuse the same names. scanner imports the broker client and the
+# settings service, neither of which touches the bar cache, so this is not a
+# cycle.
+from qt.services import scanner
 
 log = logging.getLogger("qt.barcache")
 
@@ -275,11 +281,17 @@ def rank_movers(
     max_price: float = 0.0,
     min_dollar_volume: float = 0.0,
     exclude: set[str] | None = None,
+    crypto: bool = False,
 ) -> list[tuple[str, float, float, float]]:
     """Reconstruct a day's 'today's risers': the top-N symbols by % gain that
     clear the scanner's filters. Returns (symbol, change_pct, price, $ volume),
     ranked highest-gain first. Mirrors the live scanner's filter order so a
-    replay matches what the scanner would have surfaced that day."""
+    replay matches what the scanner would have surfaced that day.
+
+    `crypto` turns on the stablecoin skip, which is a CRYPTO-only rule and has to
+    be told rather than guessed: the cache stores 'USDCUSD', and a slash-less
+    string is indistinguishable from a stock ticker. False (the default) is the
+    stock path, where the rule does not apply at all."""
     ranked: list[tuple[str, float, float, float]] = []
     banned = {_norm_symbol(s) for s in (exclude or set())}
     for q in quotes:
@@ -288,6 +300,8 @@ def rank_movers(
         # Also filtered on the way IN, so a sweep stops spending rows on names
         # you've banned. Read-time filtering is what fixes an EXISTING cache.
         if banned and _norm_symbol(q.symbol) in banned:
+            continue
+        if crypto and scanner.is_stablecoin_pair(q.symbol):
             continue
         # Rank on the intraday PEAK (daily high) when we have it: an intraday
         # scanner flags a stock that spiked +40% at 10am even if it closed flat,
@@ -386,6 +400,7 @@ def movers_between(
     max_price: float = 0.0,
     min_dollar_volume: float = 0.0,
     end_day: str | None = None,
+    crypto: bool = False,
 ) -> dict[str, list[str]]:
     """{day: [symbols ranked]} for all reconstructed days on/after start_day —
     the per-day 'today's risers' a scanner-replay backtest gates entries on.
@@ -408,7 +423,21 @@ def movers_between(
     the next backtest with no re-sweep.
 
     The exclude list is matched loosely on purpose: the cache stores 'TRUMPUSD'
-    where the scanner config holds 'TRUMP/USD'."""
+    where the scanner config holds 'TRUMP/USD'.
+
+    `crypto` turns on the stablecoin skip. It belongs HERE as well as at sweep
+    time and for the same reason every other filter does: read-time filtering is
+    what fixes an EXISTING cache, and without it every mover row swept before
+    this rule existed goes on offering USDC and USDT to the replay. It is
+    crypto-only and must be told rather than guessed — the cache stores
+    'USDCUSD', and a slash-less string is indistinguishable from a stock ticker.
+
+    Deliberately NOT applied to the watchlist / basket / custom universes, which
+    never come through here: those are lists the user typed, and a user who puts
+    a stablecoin on their own watchlist has made a choice. The live engine draws
+    the same line — `is_stablecoin` is consulted by the SCANNER's filter and by
+    nothing else — and flattening it would be a second divergence in the
+    opposite direction."""
     query = sess.query(model).filter(model.day >= start_day)
     if end_day is not None:
         query = query.filter(model.day <= end_day)
@@ -417,6 +446,8 @@ def movers_between(
     out: dict[str, list[str]] = {}
     for m in rows:  # rows are rank-ordered, so appending while under the cap keeps the top N
         if banned and _norm_symbol(m.symbol) in banned:
+            continue
+        if crypto and scanner.is_stablecoin_pair(m.symbol):
             continue
         if min_price and m.price < min_price:
             continue

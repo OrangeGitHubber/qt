@@ -3,6 +3,89 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## The replay now hits every safety rail the engine hits (2026-08-04)
+
+The last few gaps between "what the backtester was allowed to do" and "what the
+engine was actually allowed to do" are closed. All of them made the replay
+*freer* than live, and a replay that is freer than live buys things live refused
+— which the fidelity page then reported as trades the backtester invented.
+
+**The daily trade limit and the daily-loss kill switch are account-wide.** Live
+counts every strategy's trades against your "max trades per day", and adds up
+every strategy's realised profit and loss for the day before deciding whether to
+stop trading. A replay of one strategy only ever counted its own, so it carried
+most of a fresh daily budget the account did not have. It is now told what the
+rest of the account did, so it stops where live stopped. A winning trade
+elsewhere still buys headroom back, exactly as it does live.
+
+**Both of those reset at midnight New York — for crypto too.** The engine has
+always rolled its daily counters over at the start of the US trading day. The
+replay rolled a crypto book over at midnight UTC, four or five hours earlier, so
+for the one asset class that trades straight through both moments the two
+systems handed out fresh trade budgets at different times. An evening crypto
+trade is now on the same day for both.
+
+**Symbols the engine had benched are benched for the replay.** After three
+orders in a row fail to fill, the engine puts a symbol away for an hour, then
+two, then four. The replay fills every order by construction, so it never knew
+about any of that and happily bought symbols live had given up on. It now
+inherits that history.
+
+**And stablecoins are refused in backtests, not just live.** The scanner learned
+to skip USDC, USDT and friends on 2 August — a token pegged to a dollar cannot
+trend. That skip never reached the historical mover list backtests read from, so
+every replay and every optimizer run could still buy a dollar with a dollar.
+Names on your own watchlist, basket or symbol list are untouched: that is your
+choice to make.
+
+The fidelity report's "what we could not reproduce" list has been rewritten to
+match. It now names only what remains — the replay fills every order at the bar
+close, and its prices are modelled rather than replayed — because a stale caveat
+is worse than none: it tells you to discount a difference that has already gone.
+
+## The replay now obeys the same four rails the engine does (2026-08-04)
+
+The last of the safety rails a comparison could not reproduce. Each one made the
+replay freer than the engine, and a freer replay buys things you didn't — which
+the report then blamed on the backtester.
+
+**It now counts the whole account's trades for the day, and the whole account's
+losses.** The daily trade limit and the daily-loss kill switch are account-wide
+in the engine — every strategy's entries count against one budget — while the
+replay counted only its own. Both are now reconstructed from your trade history.
+Another strategy's winning day genuinely buys headroom back, so the realised
+figure is carried signed rather than clamped per strategy, exactly as the engine
+clamps it once at the end.
+
+**The daily rails now reset at New York midnight, not UTC midnight.** The engine
+has no separate crypto rule here — deliberately, because a UTC reset would hand a
+round-the-clock book a fresh budget in the middle of its session. The replay was
+resetting on the UTC day for crypto, so the trade limit and the kill switch fired
+four or five hours away from where they really did.
+
+**Note this changes crypto backtest results** where either daily rail bites
+between midnight and about 5am UTC. Those runs were wrong before and are right
+now, but a number you have written down may move. Stock backtests are unaffected.
+
+**The non-fill cooldown is simulated at last.** When an order repeatedly fails to
+fill, the engine benches that symbol for a while. The replay knew nothing about
+it, so it happily bought names live had put in the corner. Simulating it needed
+the rail checker to be given a clock instead of reading the wall clock — a change
+two audits had flagged and skipped because it straddled the live engine and the
+simulator. The engine's own behaviour is untouched: it passes the same clock it
+used to read for itself.
+
+A side effect worth knowing: a stock inside its 24-hour cooldown used to be
+reported as a wash-sale block, because that guard answered first. It now says
+cooldown, which is what the engine says.
+
+**And the replay stops trading stablecoins.** The engine refuses USDC and USDT as
+momentum candidates; the cached movers the replay reads from never learned that,
+so every replay and optimizer run could still trade them. The skip now applies
+when the cache is read as well as when it is written — every cache on disk was
+built before the rule existed, and nothing would have told you to rebuild it. A
+stablecoin you deliberately pinned to a watchlist or basket is still eligible.
+
 ## A strategy allowed to share a symbol was blocked anyway (2026-08-04)
 
 Reported straight off a comparison: *"You bought MSFT. The replay did not."*

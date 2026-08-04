@@ -4,6 +4,13 @@ Design rules:
 - Decision logic is in PURE functions (evaluate_entry / evaluate_exit /
   check_rails) that take plain data and return (verdict, reason) — so the
   risk rails get exhaustive unit tests with no mocking gymnastics.
+  "Pure" includes THE CLOCK. Two of check_rails' rails are elapsed-time rules
+  (the after-loss cooldown and the non-fill cooldown), and it used to read
+  datetime.now() for both — which made it impure in the one way that matters
+  to a replay, because a backtest asking "would this have been blocked at
+  14:02 last Tuesday" got an answer measured from today. It now takes `now`
+  and every caller says which instant it is judging: the engine passes the
+  wall clock, the backtester passes its bar's timestamp.
 - The engine never trusts itself over the journal: every action and every
   rail-rejection is persisted with its reason.
 - Modes: off → shadow (journal only, no orders) → paper (simulated orders).
@@ -262,7 +269,22 @@ def evaluate_entry(params: dict, candidate: Candidate, now_et: datetime) -> tupl
     return True, ", ".join(parts)
 
 
-def check_rails(strategy_cfg: dict, sizing_usd: float, ctx: RailContext) -> tuple[bool, str]:
+def check_rails(
+    strategy_cfg: dict,
+    sizing_usd: float,
+    ctx: RailContext,
+    now: datetime | None = None,
+) -> tuple[bool, str]:
+    """Verdict on one candidate against the risk rails, at the instant `now`.
+
+    `now` is the clock the two ELAPSED-TIME rails are measured against — the
+    after-loss cooldown and the non-fill cooldown. None means "the wall clock",
+    which is what the live engine wants and is the behaviour this function had
+    before the parameter existed; a REPLAY passes the timestamp of the bar it is
+    judging, so the answer describes that moment rather than this one. Nothing
+    else in here reads a clock, so with `now` supplied the function is pure.
+    """
+    now = now or datetime.now(timezone.utc)
     risk = ctx.risk
     if ctx.already_open_symbol:
         return False, (
@@ -272,7 +294,7 @@ def check_rails(strategy_cfg: dict, sizing_usd: float, ctx: RailContext) -> tupl
         )
     cooldown_h = nonfill_cooldown_hours(ctx.nonfill_strikes)
     if cooldown_h and ctx.last_nonfill_at is not None:
-        since = datetime.now(timezone.utc) - ctx.last_nonfill_at
+        since = now - ctx.last_nonfill_at
         if since < timedelta(hours=cooldown_h):
             return False, (
                 f"rail: cooling off after {ctx.nonfill_strikes} non-fills "
@@ -302,7 +324,7 @@ def check_rails(strategy_cfg: dict, sizing_usd: float, ctx: RailContext) -> tupl
         return False, f"rail: daily loss kill switch (${ctx.daily_loss_usd:,.0f} ≥ ${max_loss:,.0f})"
     if ctx.last_loss_at is not None:
         cooldown = timedelta(hours=risk["cooldown_hours_after_loss"])
-        since = datetime.now(timezone.utc) - ctx.last_loss_at
+        since = now - ctx.last_loss_at
         if since < cooldown:
             # This cooldown is ACCOUNT-WIDE by design — any strategy's losing exit
             # on this symbol cools the symbol for every strategy (see
@@ -1222,6 +1244,11 @@ async def _consider_entries(
                     },
                     entry_sizing,
                     ctx,
+                    # The wall clock, read HERE per candidate — the same instant
+                    # and the same frequency check_rails read it for itself
+                    # before the parameter existed. Live behaviour is unchanged;
+                    # it is now merely stated rather than assumed.
+                    datetime.now(timezone.utc),
                 )
                 version_id = _latest_version_id(session, strategy.id)
                 if not rails_ok:
@@ -1381,6 +1408,7 @@ async def _consider_dca_entries(
                     },
             strategy.sizing_usd,
             ctx,
+            datetime.now(timezone.utc),  # the wall clock, as before — see _consider_entries
         )
         reason = f"DCA scheduled lot (every {interval_days}d)"
         if not rails_ok:

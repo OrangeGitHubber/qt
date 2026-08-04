@@ -449,6 +449,12 @@ def load_scanner_replay_dataset(
             max_price=float(f.get("max_price") or 0),
             min_dollar_volume=float(f.get("min_dollar_volume") or 0),
             end_day=end_day,
+            # The live scanner refuses stablecoins by construction
+            # (scanner._reject_reason), and until now that refusal was live-only:
+            # the movers cache still offered USDC/USDT to every replay and every
+            # optimizer run, which is a live-vs-replay divergence inside the very
+            # feature whose job is detecting divergence.
+            crypto=crypto,
         )
         if not movers:
             asset = "crypto" if crypto else "stock"
@@ -653,6 +659,23 @@ class BacktestBody(BaseModel):
     # qt.services.backtest._AccountBackdrop for why it is not general account
     # state and must never carry a decision.
     account_positions: list[dict] = Field(default_factory=list)
+    # The other two halves of the same account backdrop, and for the same reason:
+    # `check_rails` counts BOTH daily rails across the whole account with no
+    # strategy filter, so a one-strategy replay was freer than live on both.
+    #   * `account_entries` — when the REST of the account filled an entry, each
+    #     {at}. Counts against the cross-strategy max_trades_per_day limiter.
+    #   * `account_realized` — the rest of the account's closed P&L, each
+    #     {at, pnl}, SIGNED. Feeds the whole-account daily-loss kill switch.
+    # Same population rule as account_positions: other strategies' rows, plus
+    # this strategy's rows from before the window (which the replay cannot
+    # reproduce because it starts flat).
+    account_entries: list[dict] = Field(default_factory=list)
+    account_realized: list[dict] = Field(default_factory=list)
+    # The non-fill circuit breaker's evidence, each {symbol, at, filled}: live
+    # benches a symbol after three consecutive misses, and the replay fills every
+    # order by construction so it can never generate that evidence itself. See
+    # qt.services.backtest._NonfillLedger. Empty for every ordinary backtest.
+    nonfill_events: list[dict] = Field(default_factory=list)
     starting_cash: float = Field(default=5000, ge=100, le=10_000_000)
     spread_pct: float = Field(default=0.1, ge=0, le=2)
     # None = use the asset class's real-world rate (see DEFAULT_FEE_PCT). An
@@ -1818,6 +1841,9 @@ async def replay(
         prior_loss_at=body.prior_loss_at or None,
         debug_log=body.debug,
         account_positions=body.account_positions or None,
+        account_entries=body.account_entries or None,
+        account_realized=body.account_realized or None,
+        nonfill_events=body.nonfill_events or None,
     )
     if "error" in result:
         raise HTTPException(status_code=422, detail=result["error"])
@@ -2018,6 +2044,9 @@ async def _scanner_replay(
             prior_loss_at=body.prior_loss_at or None,
             debug_log=body.debug,
             account_positions=body.account_positions or None,
+            account_entries=body.account_entries or None,
+            account_realized=body.account_realized or None,
+            nonfill_events=body.nonfill_events or None,
         )
 
     replay_daily = ds.daily if _needs_warmup(strategy_dict["params"]) else None

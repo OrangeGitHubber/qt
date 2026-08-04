@@ -58,8 +58,113 @@ def _day_fn(market: str):
     """The day-bucketing function for a market. Stocks bucket by the ET SESSION
     day (the default — keeps every existing stock backtest byte-identical);
     crypto is 24/7 and Alpaca's crypto bars are UTC-aligned, so crypto buckets by
-    the UTC calendar day — matching how crypto movers are keyed in the cache."""
+    the UTC calendar day — matching how crypto movers are keyed in the cache.
+
+    THIS IS THE BAR DAY, NOT THE RAIL DAY. See _rail_day_start."""
     return _utc_day if market == "crypto" else _et_day
+
+
+def _rail_day_start(ts: datetime) -> datetime:
+    """The instant the DAILY RISK RAILS reset for the trading day containing
+    `ts` — midnight America/New_York, in UTC.
+
+    This is `engine._trading_day_start` restated for simulated time, and it is
+    ET for every asset class because live is: that function has no crypto branch
+    at all, and both daily counters — the cross-strategy `max_trades_per_day`
+    limiter and the daily-loss kill switch — are measured from the value it
+    returns. Its own docstring gives the reason, and the reason is specifically
+    about crypto: a UTC reset lands at 7–8pm ET the previous evening and would
+    hand a 24/7 book a fresh trade budget and fresh loss headroom in the middle
+    of its trading day.
+
+    The replay used to bucket these two rails by `_day_fn(market)`, which is
+    `_utc_day` for crypto. So for exactly the asset class that trades through
+    both boundaries, the replay's limiter and kill switch reset 4–5 hours away
+    from live's — the replay took an eleventh trade live had refused, or refused
+    a tenth live had taken, and the comparison reported both as the strategy's
+    signal disagreeing with itself.
+
+    The BAR day is deliberately left alone. `_day_fn` buckets bars for the
+    day-gain baseline, the day index, the equity curve and the per-day
+    attribution, and crypto buckets those by UTC on purpose (Alpaca's crypto
+    bars are UTC-aligned and the movers cache is keyed that way). Those are two
+    different questions — "which bar belongs to which day" and "when does the
+    risk budget reset" — and answering them with one function is what produced
+    this bug. They are now separate on purpose."""
+    et_midnight = ts.astimezone(ET).replace(hour=0, minute=0, second=0, microsecond=0)
+    return et_midnight.astimezone(timezone.utc)
+
+
+# Restated from engine._build_rail_context's lookback query. Both numbers are
+# load-bearing: the 7 days is what stops an ancient miss reviving a streak, and
+# the 50 is the row cap the live query reads under. Module-level because the
+# fidelity comparison has to reach BACK this far when it reconstructs the
+# evidence, or a streak that began on Friday cannot bench a symbol on Monday.
+NONFILL_LOOKBACK_DAYS = 7
+NONFILL_MAX_ROWS = 50
+
+
+class _NonfillLedger:
+    """The non-fill circuit breaker's state, per symbol, at any instant.
+
+    Live benches a symbol after three consecutive "did not fill" attempts and
+    doubles the wait on each further miss (engine.nonfill_cooldown_hours). The
+    replay cannot generate that evidence — every simulated order fills at the
+    bar close, by construction — so it was optimistic about precisely the
+    symbols live had put away, and a comparison would report the replay's buys
+    on a benched symbol as trades it invented.
+
+    A STATIC seed would not do. The streak moves during the window as live
+    accrues misses and as a fill clears them, so what is seeded is the EVENTS
+    and the count is recomputed at each bar, exactly the way
+    engine._build_rail_context reads it back off the journal:
+
+      * newest first, within the last 7 days, at most 50 rows;
+      * a fill (an open or closed row) ENDS the walk — whatever came before it
+        is history;
+      * a "did not fill" rejection is a strike;
+      * every OTHER rejection is skipped rather than counted or treated as a
+        reset — never having placed an order is not the same as having placed
+        one and missed.
+
+    Account-wide per symbol, with no strategy filter, because the live query has
+    none either. The replay's own simulated fills are deliberately NOT added:
+    they are hypothetical, and the only thing a fill can do here is shorten a
+    streak — which would make the replay freer again, the exact failure this
+    seeds against."""
+
+    __slots__ = ("_by_symbol",)
+
+    def __init__(self, events: list[dict] | None):
+        self._by_symbol: dict[str, list[tuple[datetime, bool]]] = {}
+        for e in events or []:
+            when = e.get("at")
+            if when is None:
+                continue
+            symbol = str(e.get("symbol") or "").upper()
+            self._by_symbol.setdefault(symbol, []).append(
+                (_as_utc(when), bool(e.get("filled")))
+            )
+        for rows in self._by_symbol.values():
+            rows.sort()
+
+    def at(self, symbol: str, ts: datetime) -> tuple[int, datetime | None]:
+        """(consecutive non-fill strikes, when the most recent one was) for
+        `symbol` as at `ts`. Events at or after `ts` are invisible: the engine
+        deciding at 14:26 had not yet seen 14:27's miss."""
+        rows = self._by_symbol.get(symbol.upper())
+        if not rows:
+            return 0, None
+        floor = ts - timedelta(days=NONFILL_LOOKBACK_DAYS)
+        window = [(when, filled) for when, filled in rows if floor <= when < ts]
+        strikes, last = 0, None
+        for when, filled in reversed(window[-NONFILL_MAX_ROWS:]):
+            if filled:
+                break
+            strikes += 1
+            if last is None:
+                last = when
+        return strikes, last
 
 
 def _btlog(
@@ -116,32 +221,43 @@ def _btlog(
 # resting stop or limit orders. So the live engine's view of the tape is a
 # sequence of 60-second samples, not the continuous tape.
 class _AccountBackdrop:
-    """Positions the ACCOUNT held that this replay cannot know about.
+    """What the ACCOUNT was doing that this replay cannot know about.
 
     `check_rails` splits its inputs in two: `open_positions_strategy` and
     `open_exposure_strategy_usd` are this strategy's, while
-    `open_positions_total`, `open_exposure_usd` and `already_open_symbol` are the
-    whole ACCOUNT's — "position already open for this symbol (any strategy)" is
-    the rail's own wording. The replay fed its own numbers into both halves,
-    because a simulation of one strategy has no idea what the other sixteen were
-    holding. That makes it strictly FREER than live, and a replay that is freer
-    than live buys things live refused and the report files them as trades the
-    backtest invented.
+    `open_positions_total`, `open_exposure_usd`, `already_open_symbol`,
+    `entries_today` and `daily_loss_usd` are the whole ACCOUNT's — "position
+    already open for this symbol (any strategy)" is the rail's own wording, and
+    the trade-rate limiter and the kill switch are counted with no strategy
+    filter at all (engine._build_rail_context / engine._daily_loss). The replay
+    fed its own numbers into both halves, because a simulation of one strategy
+    has no idea what the other sixteen were holding or trading. That makes it
+    strictly FREER than live, and a replay that is freer than live buys things
+    live refused and the report files them as trades the backtest invented.
 
-    Two populations belong here, and neither can overlap what the replay holds
-    itself, so there is no double-counting:
-      * positions OTHER strategies held, and
-      * positions THIS strategy already held when the window opened — the replay
-        starts flat, so live's already-open rail could not block it.
+    Three populations, each the same shape and each disjoint from what the
+    replay does itself, so nothing is counted twice:
+      * POSITIONS — other strategies', plus this strategy's that were already
+        open when the window began (the replay starts flat, so live's
+        already-open rail could not block it);
+      * ENTRIES — every fill by the rest of the account, which counts against
+        the cross-strategy `max_trades_per_day` limiter;
+      * REALIZED P&L — every closed trade by the rest of the account, which
+        counts toward the whole-account daily-loss kill switch.
 
     Deliberately NOT a general "account state" object. It seeds facts the replay
     could not derive, which is the same licence `prior_loss_at` already takes;
     it must never seed a DECISION, or the comparison starts agreeing with live
     by construction and stops measuring anything."""
 
-    __slots__ = ("_spans",)
+    __slots__ = ("_spans", "_entries", "_realized")
 
-    def __init__(self, positions: list[dict] | None):
+    def __init__(
+        self,
+        positions: list[dict] | None,
+        entries: list | None = None,
+        realized: list[dict] | None = None,
+    ):
         self._spans: list[tuple[str, datetime, datetime | None, float]] = []
         for p in positions or []:
             start = p.get("from")
@@ -153,6 +269,18 @@ class _AccountBackdrop:
                 _as_utc(p["to"]) if p.get("to") else None,
                 float(p.get("notional") or 0.0),
             ))
+        # Bare instants, or {"at": …} — the caller's convenience, since one of
+        # these is a list of timestamps and the other a list of amounts.
+        self._entries: list[datetime] = sorted(
+            _as_utc(e.get("at") if isinstance(e, dict) else e)
+            for e in (entries or [])
+            if (e.get("at") if isinstance(e, dict) else e) is not None
+        )
+        self._realized: list[tuple[datetime, float]] = sorted(
+            (_as_utc(r["at"]), float(r.get("pnl") or 0.0))
+            for r in (realized or [])
+            if r.get("at") is not None
+        )
 
     def at(self, ts: datetime) -> tuple[int, float, set[str]]:
         """(count, exposure_usd, symbols) held by the rest of the account at `ts`.
@@ -166,6 +294,24 @@ class _AccountBackdrop:
                 exposure += notional
                 symbols.add(symbol)
         return count, exposure, symbols
+
+    def entries_in(self, day_start: datetime, ts: datetime) -> int:
+        """How many entries the REST of the account had taken so far on this
+        trading day — the seeded half of `entries_today`.
+
+        Half-open [day_start, ts] on the near side and INCLUSIVE at `ts`: live
+        counts `entry_at >= today_start` with no upper bound, so a fill that
+        landed on this very bar has already been counted by the time the engine
+        evaluates the next candidate."""
+        return sum(1 for when in self._entries if day_start <= when <= ts)
+
+    def realized_in(self, day_start: datetime, ts: datetime) -> float:
+        """The rest of the account's realized P&L so far this trading day
+        (SIGNED — negative is a loss), for the daily-loss kill switch. Live sums
+        `pnl` over closed trades with `exit_at >= day_start` and takes
+        max(0, -total), so winners genuinely offset losers and this must stay
+        signed rather than being clamped here."""
+        return sum(pnl for when, pnl in self._realized if day_start <= when <= ts)
 
 
 def _as_utc(value) -> datetime:
@@ -1072,8 +1218,14 @@ class SimState:
     cash: float
     open_trades: dict[str, SimTrade] = field(default_factory=dict)
     closed: list[SimTrade] = field(default_factory=list)
+    # Keyed by the BAR day — this one is read by the no-trade-day summaries, which
+    # describe the replay's own timeline and must line up with its day index.
     entries_by_day: dict[str, int] = field(default_factory=dict)
-    realized_by_day: dict[str, float] = field(default_factory=dict)
+    # Keyed by the RAIL day (ET midnight, see _rail_day_start) — these two feed
+    # check_rails and nothing else, and live resets both at the ET boundary
+    # whatever the asset class.
+    entries_by_rail_day: dict[str, int] = field(default_factory=dict)
+    realized_by_rail_day: dict[str, float] = field(default_factory=dict)
     last_loss_at: dict[str, datetime] = field(default_factory=dict)
 
 
@@ -1280,6 +1432,9 @@ def run_backtest(
     prior_loss_at: dict[str, datetime] | None = None,
     debug_log: bool = False,
     account_positions: list[dict] | None = None,
+    account_entries: list | None = None,
+    account_realized: list[dict] | None = None,
+    nonfill_events: list[dict] | None = None,
 ) -> dict:
     """Pure simulation: strategy dict (same shape as the DB row), raw bars per
     symbol, global risk config. Returns metrics + equity curve + trades.
@@ -1358,7 +1513,14 @@ def run_backtest(
     through, has a truthful answer to seed with.
 
     A loss INSIDE the window overwrites the seed for that symbol: this is the
-    starting point, not a floor."""
+    starting point, not a floor.
+
+    `account_positions`, `account_entries` and `account_realized` are the rest of
+    the ACCOUNT — see _AccountBackdrop. `nonfill_events` is the non-fill circuit
+    breaker's evidence — see _NonfillLedger. All four are empty for an ordinary
+    backtest and only the fidelity comparison, which has the journal to
+    reconstruct them from, ever supplies them; with none of them the replay is
+    byte-identical to one that never had them."""
     params = strategy["params"]
     swing = strategy["swing_mode"]
     sizing = strategy["sizing_usd"]
@@ -1462,7 +1624,8 @@ def run_backtest(
 
     # `debug_log` is the caller asking for the lines BACK; the env var is the
     # operator asking for them in the container log. Either turns the logging on.
-    backdrop = _AccountBackdrop(account_positions)
+    backdrop = _AccountBackdrop(account_positions, account_entries, account_realized)
+    nonfills = _NonfillLedger(nonfill_events)
     debug_lines: list[str] | None = [] if debug_log else None
     debug = bool(os.getenv("QT_BACKTEST_DEBUG")) or bool(debug_log)
     def emit(line: str) -> None:
@@ -1565,7 +1728,11 @@ def run_backtest(
             trade.pnl = round((fill - trade.entry_price) * trade.qty - exit_fee - entry_fee, 2)
             state.cash += fill * trade.qty - exit_fee
             day_flows[symbol] = day_flows.get(symbol, 0.0) + fill * trade.qty - exit_fee
-            state.realized_by_day[day] = state.realized_by_day.get(day, 0.0) + trade.pnl
+            # The kill switch's day, not the bar's — see _rail_day_start.
+            rail_day = _et_day(ts)
+            state.realized_by_rail_day[rail_day] = (
+                state.realized_by_rail_day.get(rail_day, 0.0) + trade.pnl
+            )
             if trade.pnl < 0:
                 state.last_loss_at[symbol] = ts
             state.closed.append(trade)
@@ -1639,10 +1806,27 @@ def run_backtest(
             # the sleeve; falls back to the fixed `sizing` when off or atr_pct is
             # unavailable. Byte-identical to `sizing` when ATR sizing is off.
             entry_sizing = atr_position_size(params, sizing, strategy["sleeve_usd"], bar.get("atr_pct"))
-            daily_loss = max(0.0, -state.realized_by_day.get(day, 0.0))
-            # What the REST of the account held at this instant. Zero unless the
-            # caller seeded it, so an ordinary backtest replays byte-identically.
+            # THE RAIL DAY, which is not the bar day — see _rail_day_start. Both
+            # daily counters below reset at ET midnight, for crypto too, because
+            # live's engine._trading_day_start has no asset-class branch.
+            rail_day = _et_day(ts)
+            day_start = _rail_day_start(ts)
+            # What the REST of the account held, traded and lost at this instant.
+            # All zero unless the caller seeded it, so an ordinary backtest
+            # replays byte-identically.
             others_n, others_usd, others_symbols = backdrop.at(ts)
+            # Live sums the WHOLE account's realized P&L for the day and takes
+            # max(0, -total) once, at the end — so another strategy's winner
+            # genuinely offsets this one's loser. Summing signed and clamping
+            # here, rather than clamping each side, is what reproduces that.
+            daily_loss = max(
+                0.0,
+                -(
+                    state.realized_by_rail_day.get(rail_day, 0.0)
+                    + backdrop.realized_in(day_start, ts)
+                ),
+            )
+            strikes, last_nonfill = nonfills.at(symbol, ts)
             ctx = RailContext(
                 # Equity rises with the account's other holdings too: the no-leverage
                 # cap is min(max_total_exposure_usd, equity), so counting their
@@ -1652,7 +1836,14 @@ def run_backtest(
                 open_exposure_usd=open_exposure + others_usd,
                 open_positions_strategy=len(state.open_trades),
                 open_exposure_strategy_usd=open_exposure,
-                entries_today=state.entries_by_day.get(day, 0),
+                # The cross-strategy limiter. Live counts every non-rejected
+                # entry in the account since the ET day boundary, so the replay's
+                # own count is only half of it: the rest of the account's entries
+                # are seeded and added here.
+                entries_today=(
+                    state.entries_by_rail_day.get(rail_day, 0)
+                    + backdrop.entries_in(day_start, ts)
+                ),
                 # Live relaxes EXACTLY this rail when allow_concurrent_symbol is
                 # on (engine.py:1936 filters the symbol query to this strategy),
                 # so a strategy that opted in may take a name another strategy
@@ -1675,26 +1866,29 @@ def run_backtest(
                 risk=risk,
                 leverage_unlocked=False,
                 daily_loss_usd=daily_loss,
+                # The non-fill circuit breaker, recomputed at this instant from
+                # the seeded evidence — see _NonfillLedger. (0, None) unless the
+                # caller seeded it, which leaves the rail dormant exactly as it
+                # was when the replay did not model it at all.
+                nonfill_strikes=strikes,
+                last_nonfill_at=last_nonfill,
             )
-            # cooldown rail uses wall-clock now(); replicate it against sim time instead
-            last_loss = ctx.last_loss_at
-            ctx.last_loss_at = None
+            # `now=ts` is what makes the two ELAPSED-TIME rails — the after-loss
+            # cooldown and the non-fill cooldown — measure from simulated time
+            # rather than from this afternoon. The cooldown used to be lifted out
+            # of check_rails and re-implemented here against `ts`, which worked
+            # but left the non-fill cooldown unsimulated and put the cooldown
+            # AFTER every other rail instead of in live's order (a stock inside
+            # its 24h cooldown is also inside the 31-day wash-sale window, so it
+            # was reported as a wash-sale block — live would have said cooldown).
             rails_ok, rails_reason = check_rails(
                 {
                     "max_positions": strategy["max_positions"],
                     "sleeve_usd": strategy["sleeve_usd"],
                     "allow_concurrent_symbol": strategy.get("allow_concurrent_symbol", False),
                 },
-                entry_sizing, ctx,
+                entry_sizing, ctx, ts,
             )
-            if rails_ok and last_loss is not None:
-                cooldown = timedelta(hours=risk.get("cooldown_hours_after_loss", 24))
-                if ts - last_loss < cooldown:
-                    rails_ok = False
-                    rails_reason = (
-                        f"rail: cooldown after loss ({(ts - last_loss).days}d since {last_loss.date()} "
-                        f"< {risk.get('cooldown_hours_after_loss', 24)}h)"
-                    )
             if not rails_ok:
                 diag["entry_ok_but_rail_blocked"] += 1
                 reject(day, symbol, _rail_category(rails_reason))
@@ -1715,6 +1909,9 @@ def run_backtest(
             fees_paid += fill * qty * fee_rate  # counted when it is paid, not when it closes
             day_flows[symbol] = day_flows.get(symbol, 0.0) - fill * qty * (1 + fee_rate)
             state.entries_by_day[day] = state.entries_by_day.get(day, 0) + 1
+            state.entries_by_rail_day[rail_day] = (
+                state.entries_by_rail_day.get(rail_day, 0) + 1
+            )
             if debug:
                 _btlog(day, symbol, bar, params, f"ENTER @ {fill:.2f} x{qty} ({entry_reason})", debug_lines)
             state.open_trades[symbol] = SimTrade(
@@ -2127,8 +2324,12 @@ def run_portfolio_backtest(
     cash = starting_cash
     open_trades: dict[str, PortfolioTrade] = {}  # keyed by symbol (account-wide, matches the live 'already open' rail)
     closed: list[PortfolioTrade] = []
-    entries_by_day: dict[str, int] = {}          # cross-strategy trade-rate limiter
-    realized_by_day: dict[str, float] = {}       # daily-loss kill switch
+    # Both keyed by the RAIL day (ET midnight — see _rail_day_start), not by the
+    # bar day: live resets these two counters at the ET boundary for crypto as
+    # well, and a portfolio run is very often a mixed book where the bar day is
+    # UTC. Nothing else reads them.
+    entries_by_rail_day: dict[str, int] = {}     # cross-strategy trade-rate limiter
+    realized_by_rail_day: dict[str, float] = {}  # daily-loss kill switch
     last_loss_at: dict[str, datetime] = _seed_losses(prior_loss_at)
     # Snapshotted before the loop, for the reason run_backtest gives at the same
     # spot: this dict grows the window's own losing exits as the replay runs.
@@ -2187,7 +2388,10 @@ def run_portfolio_backtest(
             fees_paid += exit_fee  # the entry side was counted when it was paid
             trade.pnl = round((fill - trade.entry_price) * trade.qty - exit_fee - entry_fee, 2)
             cash += fill * trade.qty - exit_fee
-            realized_by_day[day] = realized_by_day.get(day, 0.0) + trade.pnl
+            rail_day = _et_day(ts)
+            realized_by_rail_day[rail_day] = (
+                realized_by_rail_day.get(rail_day, 0.0) + trade.pnl
+            )
             if trade.pnl < 0:
                 last_loss_at[symbol] = ts
             closed.append(trade)
@@ -2245,7 +2449,8 @@ def run_portfolio_backtest(
                 continue
             strat_open = [t for t in open_trades.values() if t.strategy_id == sid]
             strat_exposure = sum(t.entry_price * t.qty for t in strat_open)
-            daily_loss = max(0.0, -realized_by_day.get(day, 0.0))
+            rail_day = _et_day(ts)
+            daily_loss = max(0.0, -realized_by_rail_day.get(rail_day, 0.0))
             # ATR sizing (opt-in) per this strategy; falls back to its fixed
             # sizing_usd when off or atr_pct is unavailable. Flows through BOTH the
             # rails and the fill below, matching the live engine.
@@ -2258,7 +2463,7 @@ def run_portfolio_backtest(
                 open_exposure_usd=open_exposure,
                 open_positions_strategy=len(strat_open),
                 open_exposure_strategy_usd=strat_exposure,
-                entries_today=entries_by_day.get(day, 0),
+                entries_today=entries_by_rail_day.get(rail_day, 0),
                 already_open_symbol=symbol in open_trades,
                 last_loss_at=last_loss_at.get(symbol),
                 loss_sale_within_31d=(
@@ -2270,17 +2475,15 @@ def run_portfolio_backtest(
                 leverage_unlocked=False,
                 daily_loss_usd=daily_loss,
             )
-            # cooldown rail uses wall-clock now(); replicate it against sim time
-            last_loss = ctx.last_loss_at
-            ctx.last_loss_at = None
+            # `now=ts` puts the elapsed-time rails on simulated time — see the
+            # same call in run_backtest. A portfolio run seeds no non-fill
+            # evidence (it simulates the whole account already, and the breaker's
+            # evidence is journal rows, not simulated ones), so that rail stays
+            # dormant here exactly as it was.
             rails_ok, _rails_reason = check_rails(
                 {"max_positions": strat["max_positions"], "sleeve_usd": strat["sleeve_usd"]},
-                sizing, ctx,
+                sizing, ctx, ts,
             )
-            if rails_ok and last_loss is not None:
-                cooldown = timedelta(hours=risk.get("cooldown_hours_after_loss", 24))
-                if ts - last_loss < cooldown:
-                    rails_ok = False
             if not rails_ok:
                 continue
             fill = bar["close"] * (1 + slip)
@@ -2292,7 +2495,7 @@ def run_portfolio_backtest(
                 continue
             cash -= fill * qty * (1 + fee_rate)
             fees_paid += fill * qty * fee_rate  # counted when it is paid, not when it closes
-            entries_by_day[day] = entries_by_day.get(day, 0) + 1
+            entries_by_rail_day[rail_day] = entries_by_rail_day.get(rail_day, 0) + 1
             open_trades[symbol] = PortfolioTrade(
                 symbol=symbol, qty=qty, entry_price=fill, entry_at=ts,
                 entry_reason=entry_reason, high_water=fill,

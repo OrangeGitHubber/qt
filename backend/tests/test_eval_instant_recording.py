@@ -162,7 +162,8 @@ def test_a_rail_rejection_records_the_instant_and_the_price(monkeypatch, strateg
     same tape, and a rejected row records no price at all otherwise."""
     _run(
         monkeypatch, strategy_row, _fills,
-        check_rails=lambda cfg, sizing, ctx: (False, "the sleeve is full"),
+        # `now` is check_rails' explicit clock — the engine passes the wall clock.
+        check_rails=lambda cfg, sizing, ctx, now=None: (False, "the sleeve is full"),
     )
 
     rows = _rows(strategy_row)

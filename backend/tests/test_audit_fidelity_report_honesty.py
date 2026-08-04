@@ -268,27 +268,44 @@ def test_the_seed_itself_is_still_account_wide_because_the_live_rail_is(seeded_r
 
 def test_the_rails_section_declares_what_it_still_cannot_seed(seeded_run):
     """Everything the replay cannot reproduce has to be declared, or a surviving
-    mismatch gets blamed on the backtester. Two of the four originally listed
-    here — other strategies' positions, and the account-wide position/exposure
-    caps — ARE seeded now (see _account_positions), so they moved to `seeded`.
-    The remaining two genuinely cannot be, and both push the same way: the
-    replay has room the live account did not."""
+    mismatch gets blamed on the backtester.
+
+    Every rail originally listed here is now seeded (see `_account_positions`,
+    `_account_entries`, `_account_realized`, `_nonfill_events`), so the list has
+    turned over completely. What remains is what the replay's MODEL cannot
+    reproduce rather than what it was not told: it fills every order at the bar
+    close, so it can never miss a fill of its own inside the window, and its
+    prices are modelled rather than replayed."""
     body, _ = seeded_run
     said = " ".join(body["rails"]["not_seeded"]).lower()
-    for missing in ("daily trade limit", "kill switch", "non-fill"):
+    for missing in ("fills every order", "slippage"):
         assert missing in said, f"undeclared: {missing}"
 
 
 def test_the_rails_section_does_not_still_disown_what_it_now_seeds(seeded_run):
     """A stale caveat is worse than none: it tells the reader to discount a
-    difference that has already been removed."""
+    difference that has already been removed. Every phrase below named a rail
+    that has since been seeded — the caveat has to have gone, and the claim has
+    to have appeared in its place."""
     body, _ = seeded_run
     still_disowned = " ".join(body["rails"]["not_seeded"]).lower()
     claimed = " ".join(body["rails"]["seeded"]).lower()
-    assert "other strategies" not in still_disowned
-    assert "open-position cap" not in still_disowned
-    assert "other strategies" in claimed
-    assert "open-position cap" in claimed
+    for gone in ("other strategies", "open-position cap", "daily trade limit",
+                 "kill switch", "non-fill cooldown"):
+        assert gone not in still_disowned, f"stale caveat: {gone}"
+        assert gone in claimed, f"seeded but not claimed: {gone}"
+
+
+def test_the_rails_section_states_which_day_boundary_the_daily_rails_use(seeded_run):
+    """The two daily rails reset at midnight NEW YORK, for crypto as well —
+    engine._trading_day_start has no asset-class branch. The replay used to roll
+    a crypto book over at midnight UTC, so the limiter and the kill switch fired
+    4–5 hours away from live's and the comparison reported the extra or missing
+    trades as signal disagreement. A reader has to be able to see which boundary
+    was used without reading the source."""
+    body, _ = seeded_run
+    claimed = " ".join(body["rails"]["seeded"]).lower()
+    assert "midnight new york" in claimed
 
 
 # ---------------------------------------------------------------------------

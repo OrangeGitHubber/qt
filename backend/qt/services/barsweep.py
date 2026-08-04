@@ -154,6 +154,7 @@ def reconstruct_movers(
     progress: ReconstructProgressFn | None = None,
     daily_model=DailyBar,
     mover_model=DailyMover,
+    crypto: bool = False,
 ) -> int:
     """Recompute each past day's 'today's risers' from the cached daily bars.
 
@@ -208,6 +209,11 @@ def reconstruct_movers(
             min_price=min_price,
             max_price=max_price,
             min_dollar_volume=min_dollar_volume,
+            # Stablecoins are refused by the live scanner by construction, so
+            # they must not be swept into the movers a replay reads back — see
+            # barcache.rank_movers. Crypto only; there is no such thing for a
+            # stock.
+            crypto=crypto,
         )
         barcache.store_movers(sess, day, ranked, model=mover_model)
         if ranked:
@@ -471,6 +477,7 @@ def reconstruct_crypto_movers(
         progress=progress,
         daily_model=CryptoDailyBar,
         mover_model=CryptoDailyMover,
+        crypto=True,  # the stablecoin skip is a crypto rule; this is the crypto path
     )
 
 

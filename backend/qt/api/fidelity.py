@@ -780,6 +780,130 @@ def _account_positions(
     return out
 
 
+def _account_entries(
+    session: Session, strategy: Strategy, since: datetime, until: datetime, mode: str
+) -> list[dict]:
+    """When the REST of the account filled an entry inside this window — the
+    seeded half of `entries_today`.
+
+    THE DEFINITION IS COPIED FROM THE ENGINE. `_build_rail_context` counts
+    `Trade.entry_at >= today_start` with `status != 'rejected'`, in this mode,
+    WITH NO STRATEGY FILTER: the trade-rate limiter is deliberately
+    cross-strategy. A one-strategy replay counted only its own entries, so on an
+    account running several strategies it had most of a fresh daily budget that
+    live did not, and it entered where live had already hit the cap.
+
+    The population rule is `_account_positions`', unchanged: other strategies'
+    rows, plus this strategy's rows from BEFORE the window. This strategy's
+    in-window entries are excluded because the replay makes its own and adding
+    them would double-count — it would spend the day's budget twice.
+
+    `status != 'rejected'` is restated here rather than inherited from the
+    entry_at NULL check, because unlike `_account_positions` these two are NOT
+    equivalent: a rejected row from `open_trade`'s did-not-fill path can carry an
+    entry_at, and live does not count it."""
+    rows = (
+        session.query(Trade.entry_at)
+        .filter(
+            Trade.mode == mode,
+            Trade.status != "rejected",
+            Trade.entry_at.isnot(None),
+            Trade.entry_at >= since,
+            Trade.entry_at < until,
+            or_(Trade.strategy_id != strategy.id, Trade.entry_at < since),
+        )
+        .all()
+    )
+    return [{"at": when.isoformat()} for (when,) in rows if when is not None]
+
+
+def _account_realized(
+    session: Session, strategy: Strategy, since: datetime, until: datetime, mode: str
+) -> list[dict]:
+    """The rest of the account's realized P&L inside this window — the seeded
+    half of the daily-loss kill switch.
+
+    THE DEFINITION IS COPIED FROM THE ENGINE. `_daily_loss` sums `Trade.pnl` over
+    CLOSED trades with `exit_at >= day_start` in this mode, again with no
+    strategy filter, and takes max(0, -total) once at the end. So the amounts are
+    sent SIGNED — a winner elsewhere in the account really does buy this
+    strategy's losses some headroom, and clamping each row would refuse trades
+    live allowed.
+
+    Same population rule as `_account_positions` and `_account_entries`. A trade
+    this strategy opened INSIDE the window is excluded even when it closes inside
+    it, because the replay opens and closes that one itself; a trade it opened
+    BEFORE the window is included, because the replay starts flat and never sees
+    that exit at all."""
+    rows = (
+        session.query(Trade.exit_at, Trade.pnl)
+        .filter(
+            Trade.mode == mode,
+            Trade.status == "closed",
+            Trade.exit_at >= since,
+            Trade.exit_at < until,
+            or_(Trade.strategy_id != strategy.id, Trade.entry_at < since),
+        )
+        .all()
+    )
+    return [
+        {"at": when.isoformat(), "pnl": float(pnl or 0.0)}
+        for when, pnl in rows
+        if when is not None
+    ]
+
+
+def _nonfill_events(
+    session: Session, since: datetime, until: datetime, mode: str
+) -> list[dict]:
+    """The non-fill circuit breaker's evidence across this window (and the week
+    before it), so the replay can tell which symbols live had benched.
+
+    The replay fills every order at the bar close by construction, so it can
+    never produce a "did not fill" of its own — it was therefore optimistic about
+    exactly the symbols live had put away after three misses, and would buy them
+    where live refused.
+
+    THE CLASSIFICATION IS COPIED FROM THE ENGINE (`_build_rail_context`'s
+    lookback query): a row that is open or closed is a FILL, which ends the
+    streak; a rejected row whose reason says "did not fill" is a STRIKE; every
+    other rejection is neither, because never having placed an order is not the
+    same as having placed one and missed — those rows are simply not returned.
+    Account-wide per symbol, no strategy filter, because the live query has none.
+
+    Reaches `_NonfillLedger.LOOKBACK_DAYS` back BEFORE the window: live's own
+    query looks 7 days back, and a streak that began on the Friday is what
+    benches a symbol on the Monday the comparison starts."""
+    floor = since - timedelta(days=backtest.NONFILL_LOOKBACK_DAYS)
+    rows = (
+        session.query(Trade.symbol, Trade.created_at, Trade.status)
+        .filter(
+            Trade.mode == mode,
+            Trade.created_at >= floor,
+            Trade.created_at < until,
+            or_(
+                Trade.status.in_(("open", "closed")),
+                Trade.entry_reason.like("%did not fill%"),
+            ),
+        )
+        .all()
+    )
+    # A rail rejection is dropped BY THE QUERY above — its status is "rejected"
+    # and its reason does not say "did not fill" — which is the same place live
+    # drops it. There is deliberately no second check here: a Python guard
+    # restating the SQL predicate cannot disagree with it, so it can never fire,
+    # and unfireable code reads like a rule when it is only an echo.
+    return [
+        {
+            "symbol": symbol,
+            "at": created.isoformat(),
+            "filled": status in ("open", "closed"),
+        }
+        for symbol, created, status in rows
+        if symbol and created is not None
+    ]
+
+
 def _prior_losses(
     session: Session, strategy: Strategy, before: datetime, mode: str, risk: dict
 ) -> dict[str, datetime]:
@@ -970,10 +1094,18 @@ async def _replay_segments(
                     # configuration it is not replaying.
                     seed_by_day=_seed_by_day(segment.live) if segment.scanner_replay else {},
                     prior_loss_at=segment.rails_seed,
-                    # What the rest of the account held across THIS stretch.
+                    # What the rest of the account held, traded and lost across
+                    # THIS stretch — all three halves of the same backdrop.
                     account_positions=_account_positions(
                         session, strategy, start, segment.end, mode
                     ),
+                    account_entries=_account_entries(
+                        session, strategy, start, segment.end, mode
+                    ),
+                    account_realized=_account_realized(
+                        session, strategy, start, segment.end, mode
+                    ),
+                    nonfill_events=_nonfill_events(session, start, segment.end, mode),
                     timeframe=_timeframe_for(
                         config["params"], (segment.end - start).total_seconds() / 3600
                     ),
@@ -1482,6 +1614,23 @@ async def compare(
                 account_positions=_account_positions(
                     session, strategy, replay_from, until, body.mode
                 ),
+                # The other two daily rails, and the non-fill breaker. Gated on
+                # `seed_rails` for the same reason `prior_loss_at` is: imported
+                # trades came from another instance, so THIS machine's journal is
+                # not the account that produced them and seeding from it would
+                # manufacture a trade budget and a loss the exporter never had.
+                account_entries=(
+                    _account_entries(session, strategy, replay_from, until, body.mode)
+                    if seed_rails else []
+                ),
+                account_realized=(
+                    _account_realized(session, strategy, replay_from, until, body.mode)
+                    if seed_rails else []
+                ),
+                nonfill_events=(
+                    _nonfill_events(session, replay_from, until, body.mode)
+                    if seed_rails else []
+                ),
                 timeframe=_timeframe_for(
                     json.loads(strategy.params), (until - replay_from).total_seconds() / 3600
                 ),
@@ -1631,33 +1780,36 @@ async def compare(
         # only part that carries information, and the rows were the noise.
         "seeded_losses_outside_universe": len(claimed) - len(relevant),
         "cooldown_hours_after_loss": cooldown_h,
-        # WHAT IS STILL NOT SEEDED. Each is a way the replay can still look freer
-        # than the engine was, and naming them is cheaper than being asked later
-        # why a mismatch survived.
-        #
-        # The last four are not "not seeded" so much as NOT SEEDABLE: live
-        # evaluates them across the whole account and the replay only ever sees
-        # one strategy, so there is no single number that could be handed over.
-        # Read off engine.check_rails against qt.services.backtest's RailContext,
-        # field by field; every one of them pushes the same way, which is that the
-        # replay had room the live account did not.
-        # Kept scrupulously in step with what _account_positions actually seeds.
-        # A stale entry here is worse than none: it tells the reader to discount
-        # a difference that has already been removed, and the next person to
-        # investigate spends their evening on it.
+        # WHAT THE REPLAY WAS TOLD, AND WHAT IT STILL IS NOT. Read off
+        # engine.check_rails against qt.services.backtest's RailContext, field by
+        # field. Kept scrupulously in step with what the seeding functions above
+        # actually send: a stale entry here is worse than none, because it tells
+        # the reader to discount a difference that has already been removed, and
+        # the next person to investigate spends their evening on it.
         "seeded": [
             "positions the engine already held when the window opened, and positions OTHER "
             "strategies held: the 'already open for this symbol' rail is account-wide, and the "
             "replay is now told about both",
             f"the account-wide open-position cap ({risk.get('max_total_positions')}) and the "
             "exposure cap: other strategies' holdings count toward both, as they do live",
+            f"the account-wide daily trade limit ({risk.get('max_trades_per_day')}/day): the rest "
+            "of the account's entries are counted against the replay's budget, as they are live",
+            "the daily-loss kill switch: the rest of the account's realised P&L for the day counts "
+            "toward it, signed — so another strategy's winner buys headroom exactly as it does live",
+            "the non-fill cooldown: the symbols live had benched after repeated 'did not fill' "
+            "attempts are benched for the replay too, on the same escalating schedule",
+            "both daily rails now reset at MIDNIGHT NEW YORK, which is when live resets them for "
+            "every asset class — the replay used to roll a crypto book over at midnight UTC, "
+            "4–5 hours out of step",
         ],
+        # What is left. Each is a way the replay can still look freer (or
+        # stricter) than the engine was, and naming them is cheaper than being
+        # asked later why a mismatch survived.
         "not_seeded": [
-            "the non-fill cooldown, which the replay does not simulate at all",
-            f"the account-wide daily trade limit ({risk.get('max_trades_per_day')}/day): live "
-            "counts entries by every strategy, the replay counts only its own",
-            "the daily-loss kill switch: live measures the whole account's realised loss for the "
-            "day, the replay only this strategy's",
+            "the replay fills every order at the bar's close, so it never MISSES a fill of its own "
+            "— it inherits live's non-fill history but cannot add to it inside the window",
+            "slippage and fees are modelled, not replayed: price differences are reported "
+            "separately as execution cost and are not signal disagreements",
         ],
     }
 

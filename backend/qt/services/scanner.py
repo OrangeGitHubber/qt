@@ -135,6 +135,36 @@ def is_stablecoin(symbol: str) -> bool:
     return bool(sep) and base in STABLECOIN_BASES
 
 
+# The quote legs Alpaca prices crypto in, longest first so "BTCUSDT" strips
+# "USDT" rather than stopping at "USDC"/"USD". Only used to read a base off the
+# SLASH-LESS spelling — see is_stablecoin_pair.
+_CRYPTO_QUOTES = ("USDT", "USDC", "USD", "BTC")
+
+
+def is_stablecoin_pair(symbol: str) -> bool:
+    """`is_stablecoin` for a symbol that may be spelled EITHER way.
+
+    The live scanner sees Alpaca's slashed form ("USDC/USD"); the bar cache
+    stores whatever the bars endpoint returned, which for crypto is slash-less
+    ("USDCUSD"). `is_stablecoin` deliberately requires the slash so a stock
+    ticker can never be caught by the list — which meant the cache's own
+    spelling never matched, and the movers reconstruction (i.e. every replay and
+    every optimizer run) went on trading USDC and USDT after the live engine
+    stopped.
+
+    ONLY EVER CALLED ON A SYMBOL ALREADY KNOWN TO BE CRYPTO — the callers select
+    the crypto mover tables — so stripping a quote leg here cannot reach a stock
+    ticker, and the safety `is_stablecoin` gets from the slash is preserved by
+    the caller instead of by the string."""
+    s = symbol.strip().upper()
+    if "/" in s:
+        return is_stablecoin(s)
+    for quote in _CRYPTO_QUOTES:
+        if s.endswith(quote) and len(s) > len(quote):
+            return s[: -len(quote)] in STABLECOIN_BASES
+    return s in STABLECOIN_BASES
+
+
 def _reject_reason(
     f: dict, exclude_symbols: list, price: float, change_pct: float, dollar_volume: float, symbol: str
 ) -> str | None:
