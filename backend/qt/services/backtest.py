@@ -504,6 +504,38 @@ def _price(v: float | None) -> float | None:
     return round(v, 5 - floor(log10(abs(v))))
 
 
+def _rotation_reason(strategy: dict) -> str:
+    """The sentence live writes, word for word — see engine._rotation_exits.
+
+    Not cosmetic. `qt.services.fidelity._same_rule` compares the first few words
+    of an exit reason to decide whether the SAME RULE fired on both sides, so a
+    replayed rotation phrased any other way reads as a different rule and the
+    fidelity report calls a perfect agreement a disagreement."""
+    return (
+        f"rotated out of the top {int(strategy.get('top_n') or 10)} "
+        f"by {str(strategy.get('rank_by') or 'momentum_today').replace('_', ' ')}"
+    )
+
+
+def _rotation_top(params: dict, ranker, order: list) -> set[str] | None:
+    """The symbols a rotation strategy may keep holding on this bar, or None when
+    rotation does not apply.
+
+    None — never an empty set — when the rule is off, when the strategy is not
+    ranked, or when the ranking came back EMPTY. That last one is live's own
+    guard, and it is the important one: `_rotation_exits` logs "couldn't rank
+    right now — don't rotate blindly" and holds. An empty ranking means missing
+    data, and reading it as "nothing belongs in the top N" would liquidate the
+    entire book on a gap in the metric's history — which for relative_strength,
+    a 200-day average, is an ordinary occurrence near the start of a window."""
+    if not (params.get("exit") or {}).get("rotate_on_rank_dropout"):
+        return None
+    if ranker is None or not ranker.applied:
+        return None
+    top = {symbol for symbol, _pos, _of in order}
+    return top or None
+
+
 def _fill_price(trigger: dict, bar: dict) -> float:
     """Where a price-triggered exit actually filled.
 
@@ -1734,25 +1766,57 @@ def run_backtest(
         for symbol, bar in bars.items():
             last_price[symbol] = bar["close"]
 
+        # THE RANKING FOR THIS BAR, computed once and read by both halves below.
+        # Entries have always used it to take only the top-N; EXITS need the same
+        # answer at the same instant, and ranking twice would double every
+        # counter in `ranker.report()`.
+        if ranker is not None and ranker.applied:
+            order = ranker.rank(bars, ts)
+        else:
+            order = [(symbol, None, None) for symbol in bars]
+        # Empty means the pool could not be ranked at all on this bar — see
+        # `_rotation_top`, which holds rather than liquidating on that.
+        rotation_top = _rotation_top(params, ranker, order)
+
         # ---- exits first ----
         for symbol, trade in list(state.open_trades.items()):
             bar = bars.get(symbol)
             if not bar:
                 continue
+            # ROTATED OUT OF THE TOP N, copied from engine._rotation_exits rather
+            # than reinvented: a ranked strategy with `rotate_on_rank_dropout`
+            # sells anything that is no longer in the top N, and this simulator
+            # could not do it at all. Measured on strategy 25, which rotated SPY
+            # three times in thirty-five minutes live while the replay bought
+            # once and held — so the entries were the strategy's and the exits
+            # were somebody else's, in every backtest and every optimizer run on
+            # a rotation strategy, not just in the fidelity report.
+            #
+            # Checked BEFORE the price rules because live checks it first too
+            # (_manage_exits runs the rotation pass ahead of its own), and a stop
+            # that would also have fired must not take the credit for the exit.
+            #
+            # It supplies no trigger level, so `_fill_price` fills at the bar's
+            # close — which is right: a rotation is a market sell on a ranking
+            # decision, not a level being breached.
+            rotated = rotation_top is not None and symbol not in rotation_top
             price = bar["close"]
             # The peak is the bar's HIGH, not its close — a trailing stop trails
             # the actual high-water mark, not the close-to-close one.
             trade.high_water = max(trade.high_water, bar["high"])
             trigger: dict = {}
-            should_exit, reason = evaluate_exit(
-                params, swing, trade.entry_price, trade.entry_at,
-                trade.high_water, price, bar["vwap"], ts, bar.get("last_of_day", False),
-                macd_bullish=bar.get("macd_bullish"),
-                atr_pct=bar.get("atr_pct"),
-                rsi=bar.get("rsi"),
-                is_crypto=strategy["asset_class"] == "crypto",
-                bar_high=bar["high"], bar_low=bar["low"], out=trigger,
-            )
+            if rotated:
+                should_exit, reason = True, _rotation_reason(strategy)
+            else:
+                should_exit, reason = evaluate_exit(
+                    params, swing, trade.entry_price, trade.entry_at,
+                    trade.high_water, price, bar["vwap"], ts, bar.get("last_of_day", False),
+                    macd_bullish=bar.get("macd_bullish"),
+                    atr_pct=bar.get("atr_pct"),
+                    rsi=bar.get("rsi"),
+                    is_crypto=strategy["asset_class"] == "crypto",
+                    bar_high=bar["high"], bar_low=bar["low"], out=trigger,
+                )
             if not should_exit:
                 continue
             fill = _fill_price(trigger, bar) * (1 - slip)
@@ -1794,10 +1858,7 @@ def run_backtest(
         # looked at them, and counting fourteen of a twenty-four-name basket on
         # every bar would bury the real blocker under "outside the top 10" in
         # every no-trade-day summary.
-        if ranker is not None and ranker.applied:
-            order = ranker.rank(bars, ts)
-        else:
-            order = [(symbol, None, None) for symbol in bars]
+        # `order` was computed above the exits — see the note there.
         for symbol, rank_pos, rank_of in order:
             bar = bars[symbol]
             if eligible is not None and symbol not in eligible:
@@ -2401,8 +2462,12 @@ def run_portfolio_backtest(
         tick = events[ts]
         # index this tick's bars for exit lookup + refresh last-seen prices
         bar_at: dict[tuple[int, str], dict] = {}
+        # Indexed per strategy here rather than in the entry pass below, because
+        # the rotation check in the EXIT pass ranks against it too.
+        tick_by_sid: dict[int, dict[str, dict]] = {}
         for sid, symbol, bar in tick:
             bar_at[(sid, symbol)] = bar
+            tick_by_sid.setdefault(sid, {})[symbol] = bar
             last_price[symbol] = bar["close"]
         day = day_of(ts)
         if sim_start is not None and ts < sim_start:
@@ -2417,15 +2482,35 @@ def run_portfolio_backtest(
             price = bar["close"]
             trade.high_water = max(trade.high_water, bar["high"])
             trigger = {}
-            should_exit, reason = evaluate_exit(
-                strat["params"], strat["swing_mode"], trade.entry_price, trade.entry_at,
-                trade.high_water, price, bar["vwap"], ts, bar.get("last_of_day", False),
-                macd_bullish=bar.get("macd_bullish"),
-                atr_pct=bar.get("atr_pct"),
-                rsi=bar.get("rsi"),
-                is_crypto=strat["asset_class"] == "crypto",
-                bar_high=bar["high"], bar_low=bar["low"], out=trigger,
+            # ROTATED OUT OF THE TOP N — the same rule as run_backtest's, ranked
+            # against THIS trade's own strategy pool. Restated here rather than
+            # shared because these are two independent bar loops, and a fix that
+            # lands on one of them is the shape of most of the bugs this file has
+            # had. Ranked here rather than hoisted: the portfolio loop ranks per
+            # strategy inside the entry pass, and calling it early for every
+            # strategy on every bar would rank pools with nothing held.
+            own_ranker = rankers.get(trade.strategy_id)
+            rotation_top = (
+                _rotation_top(
+                    strat["params"], own_ranker,
+                    own_ranker.rank(tick_by_sid.get(trade.strategy_id) or {}, ts),
+                )
+                if own_ranker is not None and own_ranker.applied
+                and (strat["params"].get("exit") or {}).get("rotate_on_rank_dropout")
+                else None
             )
+            if rotation_top is not None and symbol not in rotation_top:
+                should_exit, reason = True, _rotation_reason(strat)
+            else:
+                should_exit, reason = evaluate_exit(
+                    strat["params"], strat["swing_mode"], trade.entry_price, trade.entry_at,
+                    trade.high_water, price, bar["vwap"], ts, bar.get("last_of_day", False),
+                    macd_bullish=bar.get("macd_bullish"),
+                    atr_pct=bar.get("atr_pct"),
+                    rsi=bar.get("rsi"),
+                    is_crypto=strat["asset_class"] == "crypto",
+                    bar_high=bar["high"], bar_low=bar["low"], out=trigger,
+                )
             if not should_exit:
                 continue
             fill = _fill_price(trigger, bar) * (1 - slip)
@@ -2455,9 +2540,6 @@ def run_portfolio_backtest(
         # only its top-N are offered at all — the account's cash and the global
         # rails are shared, so which name a strategy puts forward first decides
         # what the strategy after it can still afford.
-        tick_by_sid: dict[int, dict[str, dict]] = {}
-        for sid, symbol, bar in tick:
-            tick_by_sid.setdefault(sid, {})[symbol] = bar
         candidates: list[tuple[int, str, dict, int | None, int | None]] = []
         for sid in sorted(tick_by_sid, key=lambda s: order[s]):
             ranker = rankers.get(sid)

@@ -3,6 +3,30 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## The backtester never rotated a position out (2026-08-04)
+
+The biggest one, and it reaches well past the fidelity page.
+
+"Basic FAANGs and friends" sells a holding when it drops out of the top 5 by
+relative strength — that is the whole idea of a rotation strategy, and on 4
+August it rotated SPY three times in thirty-five minutes. The backtester bought
+SPY once and held it to the end, because **it has no rotation rule at all**. The
+setting existed in the strategy form and in the live engine and nowhere in the
+simulator.
+
+So every backtest and every optimizer run on a rotation strategy has been
+simulating something that takes your entries and then holds until a stop or a
+target — which is a different strategy from the one you are running. If you have
+tuned a rotation strategy against backtest results, those results were answering
+the wrong question, and re-running them now is worth the time.
+
+The replay now rotates exactly as the engine does: rank the pool, sell anything
+no longer in the top N, and — importantly — hold everything if the ranking cannot
+be produced at all, because an empty ranking means missing data and selling the
+whole book on a data gap is the worst possible reading of it.
+
+Strategies without the rotation setting are completely unaffected.
+
 ## Two minutes is not a finding (2026-08-04)
 
 Yesterday's timing check drew its line at two minutes, and real trades landed on
