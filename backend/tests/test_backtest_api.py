@@ -173,6 +173,38 @@ def test_a_scanner_plus_watchlist_strategy_replays_both(client, configured, seed
     assert {p["symbol"] for p in body["open_positions"]} == {"MOVER", "OTHER"}
 
 
+def test_the_debug_flag_reaches_the_replay_and_comes_back_on_the_response(
+    client, configured, watched_other
+):
+    """The WIRE, not the two ends of it.
+
+    `debug` had a field on the request model and a sink in the simulator, each
+    testable on its own while nothing exercised the path between — the exact
+    shape that let `last_trade_at` be constructed as None in every call site with
+    a green suite. Asserting the lines arrive proves the parameter is threaded."""
+    sid = client.post("/api/strategies", json={**_strategy("stock"), "universe": "both"}).json()["id"]
+    fetch = AsyncMock(side_effect=[{"NVDA": BARS}, {"SPY": BARS}])
+    with patch.object(AlpacaClient, "historical_bars", new=fetch):
+        body = client.post("/api/backtest", json={
+            "strategy_id": sid, "symbols": ["NVDA"], "days": 30, "timeframe": "1Hour",
+            "starting_cash": 5000, "spread_pct": 0, "debug": True}).json()
+    assert body["debug_log"], body.get("diagnosis")
+    assert any("BTDBG" in line for line in body["debug_log"])
+    assert body["debug_log_truncated"] is False
+
+
+def test_an_ordinary_backtest_carries_no_debug_log(client, configured, watched_other):
+    """Anti-vacuity for the test above: the lines appear because they were asked
+    for, not because every response has them."""
+    sid = client.post("/api/strategies", json={**_strategy("stock"), "universe": "both"}).json()["id"]
+    fetch = AsyncMock(side_effect=[{"NVDA": BARS}, {"SPY": BARS}])
+    with patch.object(AlpacaClient, "historical_bars", new=fetch):
+        body = client.post("/api/backtest", json={
+            "strategy_id": sid, "symbols": ["NVDA"], "days": 30, "timeframe": "1Hour",
+            "starting_cash": 5000, "spread_pct": 0}).json()
+    assert "debug_log" not in body
+
+
 def test_a_scanner_plus_watchlist_strategy_still_honours_an_explicit_list(
     client, configured, seeded_cache, watched_other
 ):

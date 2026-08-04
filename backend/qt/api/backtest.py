@@ -637,6 +637,14 @@ class BacktestBody(BaseModel):
     # separate implementation of a backtest to get it — and the length guard is
     # what stops it becoming an accidental way to download ten million bars.
     timeframe: str = Field(default="1Hour", pattern="^(1Min|15Min|1Hour|1Day)$")
+    # Return the replay's PER-BAR verdict for every candidate it judged, on the
+    # response. Off by default and never set by the UI: it is a diagnostic for
+    # answering "the engine bought this at 14:01 and the replay waited until
+    # 14:26 — what did the replay see in between", which the aggregate counters
+    # in `diagnosis` structurally cannot answer, because they total a session
+    # into single integers. Capped at DEBUG_LOG_MAX_LINES with the pre-truncation
+    # count reported alongside.
+    debug: bool = False
     starting_cash: float = Field(default=5000, ge=100, le=10_000_000)
     spread_pct: float = Field(default=0.1, ge=0, le=2)
     # None = use the asset class's real-world rate (see DEFAULT_FEE_PCT). An
@@ -1781,6 +1789,7 @@ async def replay(
         progress=_replay_progress,
         # Empty for every ordinary backtest — see BacktestBody.prior_loss_at.
         prior_loss_at=body.prior_loss_at or None,
+        debug_log=body.debug,
     )
     if "error" in result:
         raise HTTPException(status_code=422, detail=result["error"])
@@ -1979,6 +1988,7 @@ async def _scanner_replay(
             progress=_replay_progress,
             # Empty for every ordinary backtest — see BacktestBody.prior_loss_at.
             prior_loss_at=body.prior_loss_at or None,
+            debug_log=body.debug,
         )
 
     replay_daily = ds.daily if _needs_warmup(strategy_dict["params"]) else None

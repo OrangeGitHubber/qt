@@ -62,11 +62,26 @@ def _day_fn(market: str):
     return _utc_day if market == "crypto" else _et_day
 
 
-def _btlog(day: str, symbol: str, bar: dict, params: dict, decision: str) -> None:
-    """One compact per-candidate diagnostic line (QT_BACKTEST_DEBUG only): the
-    day-gain, the MACD state (bull/bear/none + raw line vs signal), RSI, and the
-    exact accept/reject/rail decision — so a 'why didn't this day trade' question
-    is answerable from the container logs."""
+def _btlog(
+    day: str,
+    symbol: str,
+    bar: dict,
+    params: dict,
+    decision: str,
+    sink: list[str] | None = None,
+) -> None:
+    """One compact per-candidate diagnostic line: the day-gain, the MACD state
+    (bull/bear/none + raw line vs signal), RSI, and the exact accept/reject/rail
+    decision — so a 'why didn't this bar trade' question is answerable.
+
+    Two destinations, because they answer different questions. QT_BACKTEST_DEBUG
+    prints to the container log, which is where you look when a scheduled run
+    misbehaves and nobody was watching. `sink` collects the same lines onto the
+    response, which is where you look when you are holding a specific
+    disagreement and need the per-bar verdict for one symbol between two
+    timestamps — the case this was added for: AMZN qualified live at 14:01 and
+    the replay did not enter until 14:26, with every named entry condition
+    apparently satisfied at both instants."""
     chg = bar.get("change_pct")
     chg_txt = "  n/a" if chg is None else f"{chg:+.2f}%"
     macd = bar.get("macd_raw")
@@ -78,11 +93,21 @@ def _btlog(day: str, symbol: str, bar: dict, params: dict, decision: str) -> Non
         macd_txt = f"{'BULL' if bar.get('macd_bullish') else 'BEAR'}(l={macd[0]:+.4f} s={macd[1]:+.4f})"
     rsi = bar.get("rsi")
     rsi_txt = "" if rsi is None else f" rsi={rsi:.1f}"
-    print(
-        f"BTDBG {day} {symbol:<6} close={bar['close']:.2f} chg={chg_txt} "
-        f"macd={macd_txt}{rsi_txt} -> {decision}",
-        flush=True,
+    # `ts` is what _prepare puts on a prepared bar (a real datetime); `t` is the
+    # raw Alpaca key, accepted so this can be called on either shape.
+    at = bar.get("ts") or bar.get("t")
+    # The bar's own instant, not just the day. A per-bar log keyed only by day is
+    # useless on a 1-minute replay, where one day is 390 lines per symbol and the
+    # whole question is WHICH minute the verdict changed on.
+    stamp = at.isoformat() if hasattr(at, "isoformat") else (str(at) if at else day)
+    line = (
+        f"BTDBG {stamp} {symbol:<6} close={bar['close']:.2f} chg={chg_txt} "
+        f"macd={macd_txt}{rsi_txt} -> {decision}"
     )
+    if sink is not None:
+        sink.append(line)
+    else:
+        print(line, flush=True)
 
 
 # How often the LIVE engine looks at a price. The scheduler runs the engine tick
@@ -91,6 +116,12 @@ def _btlog(day: str, symbol: str, bar: dict, params: dict, decision: str) -> Non
 # resting stop or limit orders. So the live engine's view of the tape is a
 # sequence of 60-second samples, not the continuous tape.
 LIVE_POLL_SECONDS = 60
+
+# Ceiling on the per-bar debug log returned to a caller. A 1-minute replay of a
+# ten-name universe over one session is ~20,000 lines; this keeps a diagnostic
+# response from becoming a download while staying far above the few hundred
+# lines any single question actually needs.
+DEBUG_LOG_MAX_LINES = 5000
 
 
 def _bar_seconds(timeline: list[datetime]) -> float | None:
@@ -1136,6 +1167,7 @@ def run_backtest(
     rank_daily_bars_by_symbol: dict[str, list[dict]] | None = None,
     progress: Callable[[int, int], None] | None = None,
     prior_loss_at: dict[str, datetime] | None = None,
+    debug_log: bool = False,
 ) -> dict:
     """Pure simulation: strategy dict (same shape as the DB row), raw bars per
     symbol, global risk config. Returns metrics + equity curve + trades.
@@ -1316,20 +1348,27 @@ def run_backtest(
         day_reject.setdefault(day, Counter())[category] += 1
         day_reject_syms.setdefault(day, {}).setdefault(category, set()).add(symbol)
 
-    debug = bool(os.getenv("QT_BACKTEST_DEBUG"))
+    # `debug_log` is the caller asking for the lines BACK; the env var is the
+    # operator asking for them in the container log. Either turns the logging on.
+    debug_lines: list[str] | None = [] if debug_log else None
+    debug = bool(os.getenv("QT_BACKTEST_DEBUG")) or bool(debug_log)
+    def emit(line: str) -> None:
+        if debug_lines is not None:
+            debug_lines.append(line)
+        else:
+            print(line, flush=True)
+
     if debug:
-        print(
+        emit(
             f"BTDBG === run_backtest symbols={sorted(prepared)} "
             f"min_gain={params.get('entry', {}).get('min_day_gain_pct')} macd_on={_macd_on(params)} "
-            f"require_macd={params.get('entry', {}).get('require_macd_bullish')} sim_start={sim_start} ===",
-            flush=True,
+            f"require_macd={params.get('entry', {}).get('require_macd_bullish')} sim_start={sim_start} ==="
         )
         for sym, ser in prepared.items():
             defined = [b["day"] for b in ser if b.get("macd_bullish") is not None]
-            print(
+            emit(
                 f"BTDBG   {sym}: {len(ser)} bars [{ser[0]['day']}..{ser[-1]['day']}] "
-                f"macd_defined_from={defined[0] if defined else 'never'}",
-                flush=True,
+                f"macd_defined_from={defined[0] if defined else 'never'}"
             )
 
     # Per-day P&L attribution: for every simulated day, which positions were held
@@ -1419,7 +1458,7 @@ def run_backtest(
             state.closed.append(trade)
             del state.open_trades[symbol]
             if debug:
-                _btlog(day, symbol, bar, params, f"EXIT {reason} @ {fill:.2f} pnl={trade.pnl}")
+                _btlog(day, symbol, bar, params, f"EXIT {reason} @ {fill:.2f} pnl={trade.pnl}", debug_lines)
 
         # ---- entries ----
         eligible = eligible_by_day.get(day) if eligible_by_day is not None else None
@@ -1481,7 +1520,7 @@ def run_backtest(
                     diag["rejected_entry_window"] += 1
                 reject(day, symbol, _reject_category(entry_reason))
                 if debug:
-                    _btlog(day, symbol, bar, params, f"reject-entry: {entry_reason}")
+                    _btlog(day, symbol, bar, params, f"reject-entry: {entry_reason}", debug_lines)
                 continue
             # ATR sizing (opt-in): size so a stop-out loses ~risk_usd, capped at
             # the sleeve; falls back to the fixed `sizing` when off or atr_pct is
@@ -1525,7 +1564,7 @@ def run_backtest(
                 diag["entry_ok_but_rail_blocked"] += 1
                 reject(day, symbol, _rail_category(rails_reason))
                 if debug:
-                    _btlog(day, symbol, bar, params, f"reject-rail: {rails_reason}")
+                    _btlog(day, symbol, bar, params, f"reject-rail: {rails_reason}", debug_lines)
                 continue
             fill = bar["close"] * (1 + slip)
             qty = _entry_qty(strategy["asset_class"], entry_sizing, fill, _fractional(params))
@@ -1535,14 +1574,14 @@ def run_backtest(
                 diag["too_small_or_no_cash"] += 1
                 reject(day, symbol, "sizing")
                 if debug:
-                    _btlog(day, symbol, bar, params, f"reject-sizing: qty={qty} cost={fill * qty:.2f} cash={state.cash:.2f}")
+                    _btlog(day, symbol, bar, params, f"reject-sizing: qty={qty} cost={fill * qty:.2f} cash={state.cash:.2f}", debug_lines)
                 continue
             state.cash -= fill * qty * (1 + fee_rate)
             fees_paid += fill * qty * fee_rate  # counted when it is paid, not when it closes
             day_flows[symbol] = day_flows.get(symbol, 0.0) - fill * qty * (1 + fee_rate)
             state.entries_by_day[day] = state.entries_by_day.get(day, 0) + 1
             if debug:
-                _btlog(day, symbol, bar, params, f"ENTER @ {fill:.2f} x{qty} ({entry_reason})")
+                _btlog(day, symbol, bar, params, f"ENTER @ {fill:.2f} x{qty} ({entry_reason})", debug_lines)
             state.open_trades[symbol] = SimTrade(
                 symbol=symbol, qty=qty, entry_price=fill, entry_at=ts,
                 entry_reason=entry_reason, high_water=fill,
@@ -1709,6 +1748,20 @@ def run_backtest(
         "pct_capital_deployed": pct_deployed,
         "return_on_deployed_pct": return_on_deployed,
         "time_in_market_pct": time_in_market,
+        # Only when the caller asked. Truncated rather than streamed: a 1-minute
+        # replay of eleven symbols is ~20,000 lines, and the point of asking is
+        # always a narrow window, so the caller filters. `debug_log_total` is the
+        # count BEFORE truncation, because a log that silently stops is worse
+        # than no log — you would read the last line as the last decision.
+        **(
+            {
+                "debug_log": debug_lines[:DEBUG_LOG_MAX_LINES],
+                "debug_log_total": len(debug_lines),
+                "debug_log_truncated": len(debug_lines) > DEBUG_LOG_MAX_LINES,
+            }
+            if debug_lines is not None
+            else {}
+        ),
         "diagnosis": diag,
         # {day -> plain-English reason} for every day that evaluated candidates but
         # opened nothing — the chart shows it when you land on a no-trade day.

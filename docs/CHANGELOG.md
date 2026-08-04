@@ -3,6 +3,30 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## The replay can now show its working, bar by bar (2026-08-04)
+
+Chasing why the engine bought AMZN at 14:01 while the replay waited until 14:26,
+every named entry condition checked out at both instants — the day-gain was
+4.99% against a 1.3% minimum, and the two sides' VWAPs agreed to within four
+cents. The backtest's own diagnosis said `entry_ok_but_rail_blocked: 438`: a
+safety rail refused 438 candidates across the session, and named neither the rail
+nor the bars.
+
+That number cannot answer the question by construction. It totals a whole session
+into one integer, and the question is *which minute the verdict changed on*.
+
+The backtester has always been able to log its per-candidate reasoning, but only
+to the container log, behind an environment variable — useful when a scheduled
+run misbehaves overnight, useless when you are holding a specific disagreement.
+A backtest can now be asked to return that reasoning on the response instead: one
+line per candidate per bar, carrying the bar's own timestamp, the day-gain, the
+MACD state and the exact verdict, including the name of any rail that refused it.
+
+Nothing in the app switches this on and no ordinary backtest carries it — it is
+off unless asked for. Long runs are capped, and the response says how many lines
+there were before the cap, because a log that silently stops reads as though the
+last line were the last decision.
+
 ## A split comparison was showing you the quiet half's arithmetic (2026-08-04)
 
 Chasing a number that did not add up: your FAANG comparison reported that the
