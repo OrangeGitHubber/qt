@@ -1142,74 +1142,43 @@ tr.log-gap td {
  * which is what widening was for. */
 .card-form,
 form.card.editor {
-  /* Was 62rem, which left roughly a third of a wide screen empty beside the
-     form. That cap existed only because the field grid stretched; with the
-     track cap above it no longer does, so the card can take the room and the
-     fields pack into more columns instead of spreading. */
-  max-width: 90rem;
+  /* No cap. It was 62rem, then 90rem, and both left a gutter down the right of
+     a wide screen while the card stopped short of it.
+     The cap only ever existed because the field grid stretched — `1fr` tracks
+     absorbed the extra width and pushed related fields apart. The track cap on
+     .filter-grid above fixed that at the source, so bounding the card is no
+     longer buying anything: extra width becomes more columns and gutter INSIDE
+     the card, where it belongs, instead of dead space beside it. */
+  max-width: none;
 }
 
-/* Prose inside a FORM card gets a wider measure than prose in a result card.
+/* PROSE RUNS THE FULL WIDTH OF ITS CARD.
  *
- * A form's paragraphs are captions to the controls beside them — the note about
- * sleeve size, the one about combination counts — read once, in place, while
- * you set a field. At 36rem in a 90rem card they wrapped into a narrow ribbon
- * with most of the row empty, which reads as unfinished rather than as
- * carefully set. Teaching prose in a result card keeps the tighter measure,
- * where you really are reading top-to-bottom. */
-.card-form p.hint,
-.card-form ul.hint,
-.card-form ol.hint,
-.card-form > p,
-form.card.editor p.hint {
-  max-width: 64rem;
-}
-
-/* THE PROSE MEASURE — one width, one right edge, everywhere inside a card.
+ * This rule has now been wrong in both directions, so the history is worth
+ * keeping. It began as `75ch` on direct children: `ch` scales with font-size,
+ * so one rule rendered a 0.85rem `.hint` at 550px and a bold 1rem `.verdict` at
+ * 666px — two stacked paragraphs ending on two different pixels — and "direct
+ * children only" let anything nested one level deeper escape entirely. Replacing
+ * it with a fixed 36rem fixed the inconsistency and made the real problem
+ * obvious: a capped paragraph alone in a 1500px card is a grey ribbon with
+ * framed emptiness beside it, which reads as unfinished however comfortable the
+ * line length is.
  *
- * Output cards deliberately keep the shell's full width (see above) so tables,
- * charts and stat rows can use it. That is right for those and wrong for the
- * sentences between them: at 1600px a paragraph runs past 200 characters a
- * line and the eye loses its place tracking back to the next one. So prose in
- * a full-width card gets a measure. The question is only which one, and the
- * previous answer — `75ch` on direct children — was wrong twice over.
+ * The owner's call, twice, looking at the rendered page: fill the width. Long
+ * lines are the lesser evil against a third of the card sitting empty, and the
+ * genuinely long teaching passages are behind `.prose-fold` anyway, so what
+ * remains inline is short.
  *
- * `ch` is the width of the "0" glyph, so it scales with font-size. The SAME
- * 75ch rendered a 0.85rem `.hint` at 550px and a bold 1rem `.verdict` at 666px:
- * two paragraphs stacked in one card, ending on two different pixels. Character
- * parity is what `ch` buys and edge alignment is what a stacked layout needs,
- * and it bought the wrong one.
- *
- * Direct children only meant every <p class="hint"> nested one level deeper —
- * inside the <form>, inside a <details>, inside a .verdicts wrapper — escaped
- * the rule entirely and ran the full 1526px right beside a capped sibling.
- *
- * Hence: a fixed rem measure, on block-level prose, wherever it sits.
- *
- * 36rem = 576px. At 0.85rem (.hint) that is ~92 characters and at 1rem bold
- * (.verdict) ~77 — both inside the comfortable band, both ending on the same
- * pixel, which is the part you can actually see. It is also within 26px of what
- * `.hint` already rendered at, so the pages that were already capped do not move.
- *
- * BLOCK-LEVEL ONLY, deliberately: `.hint` is also worn by <span> (chart
- * readouts, picker rows) and by <td> (the Optimizer sweep table). max-width does
- * nothing to an inline box but WOULD lean on table column sizing, so the
- * selectors name the elements rather than trusting the class.
- *
- * A descendant selector is safe against narrow containers, because a cap only
- * bites when the container is wider than it: prose in a grid cell or a form
- * field keeps whatever width its own layout gives it, exactly as before.
- *
- * The measure is half the answer. A capped paragraph alone in a 1526px card is
- * a grey ribbon with framed emptiness beside it — the failure mode named in the
- * comment above. The measure keeps lines readable; `.prose-fold` stops the long
- * teaching prose from forming a tall column for it to be narrow about. */
+ * Kept as an explicit rule rather than deleted: `.hint` is also worn by <span>
+ * and by <td> in the Optimizer sweep table, and a future measure must name
+ * block elements rather than trusting the class — max-width does nothing to an
+ * inline box but WOULD lean on table column sizing. */
 .card p.hint,
 .card ul.hint,
 .card ol.hint,
 .card p.verdict,
 .card > p {
-  max-width: 36rem;
+  max-width: none;
 }
 
 /* Long teaching prose, folded away — the same job `.cache-help` does in
@@ -3086,5 +3055,7 @@ tbody tr:hover > td {
  * Still bounded — a fee note running the full 1600px would be worse than either.
  */
 .card p.hint.table-footnote {
-  max-width: 64rem;
+  /* Nothing to widen any more — prose fills its card. Kept as the hook for a
+     footnote that ever needs different treatment from the table above it. */
+  max-width: none;
 }
