@@ -3,6 +3,29 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## A split comparison was showing you the quiet half's arithmetic (2026-08-04)
+
+Chasing a number that did not add up: your FAANG comparison reported that the
+replay had ranked 261 symbol-bars, cut 116 and found 29 unrankable. Replaying the
+same window straight through the Backtest page evaluated **5,106** — twelve times
+as many.
+
+When you edit a strategy mid-window, the comparison splits into stretches and
+replays each one under the configuration that was live at the time. The ranking
+counters were being taken from the **first** stretch and printed as though they
+described the whole comparison. In your case the first stretch was the quiet
+overnight one, so the report showed you the arithmetic of the half where nothing
+happened, while the half that took all five trades had its counters thrown away.
+
+They are now added up across every stretch. Where the stretches genuinely
+disagree — a different shortlist size either side of your edit, say — the report
+says nothing rather than picking one, and it flags that a symbol listed as never
+rankable may have ranked perfectly well in the other stretch.
+
+This is the same fault as the one fixed earlier tonight, where a "why nothing
+traded" explanation was taken from one stretch and stamped across the report. It
+survived that pass because it was spelled differently.
+
 ## The optimizer was searching fee-free, and a crypto portfolio could see tomorrow (2026-08-04)
 
 **An all-crypto portfolio backtest was reading the future.** Its MACD, RSI and

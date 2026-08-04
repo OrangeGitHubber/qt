@@ -1033,6 +1033,70 @@ def _exit_model(results: list[dict]) -> dict:
     }
 
 
+def _merge_ranking(rankings: list[dict]) -> dict | None:
+    """Every replayed stretch's ranking counters, added up.
+
+    This used to be `next(r["ranking"] for r in results ...)` — the FIRST stretch's
+    counters, presented as the whole comparison's. On a split comparison that is
+    not a rounding error, it is a different stretch's arithmetic: strategy 25 on
+    2026-08-03 reported 261 ranked / 116 cut / 29 unrankable, all of it from the
+    silent overnight stretch, while the stretch that actually took the five
+    trades contributed its trades and had its counters discarded. Replaying that
+    second stretch directly through /api/backtest evaluates 5,106 symbol-bars —
+    twelve times what the report showed, for the window the reader is looking at.
+
+    Exactly the fault already fixed for `backtest_no_trade_reason` (see the
+    comment at the report level): a PER-SEGMENT value handed out as report-wide.
+    The counters were the same bug wearing a `next()` instead of an index, which
+    is why the earlier pass walked past them.
+
+    The counts are counts of symbol-bars, so they add. The DESCRIPTORS may not:
+    a config edit is what splits a comparison in the first place, so `top_n`,
+    `rank_by` and `pool_size` can genuinely differ between stretches. Where they
+    do, the merged answer is None rather than one stretch's value — the same
+    choice `_exit_model` makes with "mixed", and for the same reason.
+
+    `applied` is contagious in the false direction, matching the universe rule in
+    _merge_segment_results: one stretch that could not rank makes the merged
+    claim untrue, because some of the trades below were chosen without ranking."""
+    if not rankings:
+        return None
+    if len(rankings) == 1:
+        return dict(rankings[0])
+
+    def agreed(key: str):
+        values = {json.dumps(r.get(key), sort_keys=True, default=str) for r in rankings}
+        return rankings[0].get(key) if len(values) == 1 else None
+
+    merged = {
+        **rankings[0],
+        "applied": all(r.get("applied") for r in rankings),
+        "benchmark_missing": any(r.get("benchmark_missing") for r in rankings),
+        "rank_by": agreed("rank_by"),
+        "top_n": agreed("top_n"),
+        "pool_size": agreed("pool_size"),
+        "metric_source": agreed("metric_source"),
+        "symbols_never_rankable": sorted(
+            {s for r in rankings for s in (r.get("symbols_never_rankable") or [])}
+        ),
+        "stretches_counted": len(rankings),
+    }
+    for key in ("symbol_bars_ranked", "symbol_bars_cut", "symbol_bars_unrankable"):
+        merged[key] = sum(r.get(key) or 0 for r in rankings)
+    warnings = [r.get("warning") for r in rankings if r.get("warning")]
+    if len(rankings) > 1:
+        # Said out loud because a merged "never rankable" is a weaker claim than a
+        # single stretch's: a name unrankable in one stretch may have ranked fine
+        # in another, and the union cannot tell the reader which.
+        warnings.append(
+            f"Counted across {len(rankings)} stretches of a split comparison."
+            " Symbols listed as never rankable were never rankable in at least one"
+            " stretch, not necessarily in all of them."
+        )
+    merged["warning"] = " ".join(dict.fromkeys(warnings)) or None
+    return merged
+
+
 def _ranking_report(results: list[dict]) -> dict | None:
     """The replay's own ranking counters, plus what an UNRANKABLE symbol-bar
     actually cost — which the counters alone do not say.
@@ -1059,7 +1123,7 @@ def _ranking_report(results: list[dict]) -> dict | None:
     Said in the report because 29 of 261 is 11% of the sample, and a tenth of the
     pool going missing on the days it went missing is a coverage caveat on every
     "the replay missed this trade" verdict below."""
-    ranking = next((r["ranking"] for r in results if r.get("ranking")), None)
+    ranking = _merge_ranking([r["ranking"] for r in results if r.get("ranking")])
     if not ranking:
         return None
     offered = ranking.get("symbol_bars_ranked") or 0
