@@ -3,6 +3,29 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Two minutes is not a finding (2026-08-04)
+
+Yesterday's timing check drew its line at two minutes, and real trades landed on
+both sides of it: an XRP pair 118 seconds apart read "match" while an ADA pair
+129 seconds apart read "timing differs". Two rows nobody could tell apart, given
+opposite verdicts by three seconds.
+
+The line is now five minutes. The reason the short gaps are noisy is that your
+`entry_at` is the moment an order FILLED while the replay's is a bar CLOSE — with
+a sixty-second polling cycle at an unrecorded phase and an order delay in
+between, none of which the replay models. Below five minutes the two are
+describing the same decision; the gaps worth reading were eighteen minutes,
+fifty-one minutes, two hours and thirteen hours, and crying wolf at two minutes
+buries them.
+
+**And a repeat buy is no longer called a missed signal.** Strategy 25 bought SPY,
+rotated out on ranking, bought straight back in, three times in thirty-five
+minutes — while the replay bought once and held throughout. Each of those
+re-entries was reported as "the replay was watching this symbol and passed — this
+is the kind that points at a real bug", at moments when the replay was holding
+SPY and could not buy it again by construction. Those now say what they are: a
+difference in when the two SOLD, not in what they saw.
+
 ## Two trades in a day were being compared against the wrong one (2026-08-04)
 
 The crypto report's most alarming row said you stopped out of AVAX at a 1.13%

@@ -198,6 +198,19 @@ def compare(
                     # And whether it was only there because this comparison put
                     # it there. See `seeded_symbols`.
                     "universe_seeded": live.get("symbol", "").upper() in seeded,
+                    # WAS THE REPLAY ALREADY HOLDING IT at that moment? Then it
+                    # did not pass on the signal — `run_backtest` refuses the
+                    # candidate outright ("this strategy already holds this
+                    # symbol") before any entry rule is read. Measured on SPY:
+                    # live rotated in and out three times in thirty-five minutes
+                    # on relative-strength ranking while the replay held one
+                    # position through, and every re-entry came back "the replay
+                    # was watching this symbol and passed — the kind that points
+                    # at a real bug". It is the replay's EXIT that differed; the
+                    # entry could not have happened either way.
+                    "replay_held_it": _held_at(
+                        sim_trades + sim_open, live.get("symbol"), live.get("entry_at")
+                    ),
                     # Why there is nothing to compare this against: the stretch
                     # it falls in did not replay. Set by the API layer, which is
                     # the half that knows a window was split at all.
@@ -258,7 +271,7 @@ def compare(
                 "entry_timing_differs": (
                     gap is not None
                     and timing_tolerance_seconds is not None
-                    and gap > timing_tolerance_seconds
+                    and gap > max(timing_tolerance_seconds, ENTRY_TIMING_FLOOR_SECONDS)
                 ),
             }
         )
@@ -349,6 +362,24 @@ def _same_rule(live_reason: str | None, sim_reason: str | None) -> bool | None:
     return head(live_reason) == head(sim_reason)
 
 
+# BELOW THIS, TWO ENTRIES ARE THE SAME EVENT — a judgement about noise, not a
+# physical constant, and the only number in this file that is neither measured
+# nor derived.
+#
+# The derived tolerance (one bar + one poll) is 120 seconds on a 1-minute replay,
+# and real gaps land right on top of it: XRP at 118s read "match" while ADA at
+# 129s read "timing differs", two rows a reader cannot tell apart given opposite
+# verdicts by three seconds. The band is noisy for a reason nothing models —
+# live's `entry_at` is a FILL and the replay's is a BAR CLOSE, with a 60-second
+# poll at an unrecorded phase and an order-to-fill delay in between, all of which
+# pushes live later than the replay without either side disagreeing.
+#
+# Five minutes is chosen to sit clear of that band while staying far below the
+# smallest gap worth reading — the measured ones were 18 minutes, 51 minutes, 2
+# hours and 13 hours. Crying wolf at 2 minutes is what buries those.
+ENTRY_TIMING_FLOOR_SECONDS = 300.0
+
+
 def _pair_by_nearest(
     live_by_key: dict[tuple[str, str], list[dict]],
     sim_by_key: dict[tuple[str, str], list[dict]],
@@ -403,6 +434,39 @@ def _pair_by_nearest(
         left_over_live += [(key, t) for t in rest_live[len(rest_sim):]]
         left_over_sim += [(key, t) for t in rest_sim[len(rest_live):]]
     return pairs, left_over_live, left_over_sim
+
+
+def _held_at(sim_rows: list[dict], symbol: str | None, when: str | None) -> bool:
+    """Was the replay holding `symbol` at `when`?
+
+    A position it opened earlier and had not closed yet, which for an unclosed
+    one means all the way to the window's end. Interval is half-open at the
+    close, matching the simulator: an exit frees the symbol on the bar it
+    happens, and the engine may re-enter on the next."""
+    if not symbol or not _has_clock(when):
+        return False
+    for row in sim_rows:
+        if (row.get("symbol") or "").upper() != symbol.upper():
+            continue
+        opened = _entry_gap_seconds(when, row.get("entry_at"))
+        if opened is None or _is_after(row.get("entry_at"), when):
+            continue  # opened after this moment, so it was not held yet
+        if row.get("exit_at") is None or _is_after(row.get("exit_at"), when):
+            return True
+    return False
+
+
+def _is_after(iso: str | None, other: str | None) -> bool:
+    """`iso` strictly later than `other`; False when either cannot be read."""
+    gap = _entry_gap_seconds(iso, other)
+    if gap is None or gap == 0:
+        return False
+    try:
+        a = datetime.fromisoformat(str(iso).replace("Z", "+00:00"))
+        b = datetime.fromisoformat(str(other).replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    return a > b
 
 
 def _entry_gap_seconds(live_at: str | None, sim_at: str | None) -> float | None:
@@ -580,6 +644,25 @@ def _trade_log(matched: list[dict], live_only: list[dict], backtest_only: list[d
                       f"You sold {r['symbol']} "
                       f"({r.get('exit_reason') or 'no reason recorded'}). The stretch it was "
                       "held in never replayed, so there is no exit to judge this against.")
+            continue
+        if r.get("replay_held_it"):
+            # NOT a missed signal. The replay could not buy what it had never
+            # sold — the entry was refused before any rule was consulted — so the
+            # difference is in the EXIT, and pointing at the entry sends someone
+            # after a bug in the wrong half of the strategy.
+            event(
+                r.get("entry_at") or r["day"], r["day"], r["symbol"], "bought",
+                "replay still held it",
+                f"You bought {r['symbol']} again. The replay was already holding it from an "
+                "earlier entry and could not buy twice, so this is a difference in when the "
+                "two SOLD, not in what they saw.",
+            )
+            if r.get("exit_day"):
+                event(r.get("exit_at") or r["exit_day"], r["exit_day"], r["symbol"], "sold",
+                      "nothing to compare",
+                      f"You sold {r['symbol']} "
+                      f"({r.get('exit_reason') or 'no reason recorded'}). The replay was still "
+                      "holding its own earlier position, so there is no matching exit.")
             continue
         if covered and r.get("universe_seeded"):
             # A FOURTH state, and the most informative one. This name is in the
