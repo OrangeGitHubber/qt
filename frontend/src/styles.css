@@ -949,6 +949,20 @@ tr:last-child td {
   grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
 }
 
+/* ...and the fidelity form wants a middle track, for the same reason in reverse.
+ *
+ * It is two fields, and the second carries a paragraph of help text. At the
+ * 17rem cap that paragraph becomes a ten-line ribbon; at `1fr` the two
+ * dropdowns stretch to 1500px on a wide screen. A capped 24rem track gives the
+ * help a readable measure AND keeps the spare width as gutter.
+ *
+ * Before this rule the markup asked for a `.grid-2` that no stylesheet ever
+ * defined, so the div fell back to `display: block` and both selects rendered
+ * the full width of the card. */
+.filter-grid.fidelity-fields {
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 18rem), 24rem));
+}
+
 .filter-grid label,
 .filter-grid .field {
   margin: 0.4rem 0 0;
@@ -1012,11 +1026,18 @@ tr:last-child td {
      that fix, at a 1280px viewport in Compare mode with the 50 symbols
      resolveUniverse() caps a universe at: column 587px, content 161px, clipped
      to 120px — the scrollbox is back.
-     11rem clears 50 chips at every column width the two-up compare layout
-     produces (587px and wider). It is still a ceiling, and a narrow enough
-     column will still reach it; what it must never do is appear on an ordinary
-     screen for an ordinary basket. */
-  max-height: 11rem;
+     11rem was measured on a 1280px viewport only, and 1280px is not the narrow
+     end: at a 966px viewport the compare grid makes 428px columns, where the
+     same 50 chips need 188px and 11rem clips them to 176px. A scrollbar for
+     twelve pixels of content, on a laptop, is exactly the case this was
+     supposed to stop.
+     Measured across the whole range instead of at one width: 50 chips need
+     299px at a 250px column, 188px at 400px, 133px at 587px and 106px beyond
+     650px. 19rem (304px) clears them all — and `.backtest-strats` floors its
+     tracks at 280px, so no narrower column exists for this to bite in. Still a
+     ceiling, because `resolveUniverse` caps a universe at 50 names and nothing
+     guarantees the next caller does. */
+  max-height: 19rem;
   overflow-y: auto;
 }
 .chip-ro {
@@ -2915,6 +2936,38 @@ details.fold > summary > .cache-head {
 .compare-table .cmp-win {
   font-weight: 700;
   color: var(--ok);
+}
+
+/* THE SAME MARK ON A ROW, NOT A CELL.
+ *
+ * The optimizer's best result and its winning basket both set `cmp-win` on a
+ * <tr>, and neither table lives inside `.compare-table` — so the rule above
+ * never matched them and the row you are meant to read came out identical to
+ * the twenty below it.
+ *
+ * Weight and an accent edge rather than green text: these rows colour their own
+ * P&L cells up/down, and recolouring the row would overrule the very figure
+ * that decides the ranking. No background either — the app-wide row-hover tint
+ * is a background-image, so a second one here would simply be replaced under
+ * the cursor. */
+tbody tr.cmp-win > td {
+  font-weight: 600;
+}
+tbody tr.cmp-win > td:first-child {
+  box-shadow: inset 0.2rem 0 0 var(--ok);
+}
+
+/* Timeline markers: the config edits and the activation moment interleaved with
+ * the trades in the fidelity report. Not trades and not winners — annotations
+ * that explain the rows after them — so they read quieter, not louder. (They
+ * asked for `cmp-win` until now, which is both the wrong meaning and, outside
+ * `.compare-table`, no styling at all.) */
+tbody tr.tl-mark > td {
+  color: var(--muted);
+  font-style: italic;
+}
+tbody tr.tl-mark > td:first-child {
+  box-shadow: inset 0.2rem 0 0 var(--accent);
 }
 
 /* Slack message-category opt-in list. */

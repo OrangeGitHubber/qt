@@ -3,6 +3,51 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Seven things the fidelity screen was showing wrong (2026-08-04)
+
+Rendered, not read. Six defects plus one found by deliberately looking at a
+report where nothing had happened.
+
+**The fidelity form's two dropdowns were each 1526px wide, stacked.** The panel
+asked for a layout class that no stylesheet has ever defined, so the browser fell
+back to plain blocks and the selects stretched the full width of the card. This
+arrived with the move to its own tab, and typechecked perfectly — a class name
+that does not exist is not an error, just silence.
+
+**Every row of a daily-bar comparison was dated a day early.** On daily bars the
+server has no clock to send, so it sends a bare date. The page treated that as an
+instant, which means UTC midnight, which in New York is the previous evening —
+so 29 July displayed as 28 July. The file already had a function written to
+prevent exactly this; the new row simply used the wrong one.
+
+**A trade and its replay falling on different days read backwards.** A row where
+you traded at 03:40 and the replay at 22:50 the same UTC day printed *"the replay
+was 23:40 vs 18:50"* — which reads as five hours earlier when it was nineteen
+hours later, and disagreed with the date in its own row. Two bare clock times
+cannot express a day boundary. The timeline now says the day when the days
+differ.
+
+**A report where neither side traded warned you twice that it was meaningless,
+directly above its own conclusion that the two sides agreed.** Both warnings were
+written for the case where the backtest stayed silent while you traded; neither
+applies when nothing happened on either side.
+
+**The best row in an optimizer result was never actually marked.** The highlight
+was scoped to a table the optimizer does not use, so the winning result, the
+winning basket, and the edits in a fidelity timeline all asked to be marked and
+got nothing.
+
+**Filtering the journal down to nothing claimed the engine had never done
+anything.** The new filters run on the server, so no matches is a real answer —
+but the empty card still read "Nothing yet", which looks like a broken install.
+It now says the filters are hiding everything, and offers to clear them.
+
+**And the universe scrollbar you flagged was only fixed above about 1280px.** The
+height limit had been measured at one window size. Fifty symbols need 188px of
+room at laptop width and were being clipped to 176px — a scrollbar for twelve
+pixels, which is precisely what that fix was supposed to remove. Measured across
+the range this time.
+
 ## The fidelity report was overstating what it had actually checked (2026-08-04)
 
 The comparison exists to tell you whether the backtester can be trusted, so it

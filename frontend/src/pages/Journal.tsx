@@ -76,6 +76,24 @@ export default function Journal() {
       .catch(() => setFeeSummary(null));
   }, [mode, status, assetClass, account, symbol, strategyId]);
 
+  // HAS THE READER NARROWED ANYTHING? The symbol and strategy filters run on the
+  // SERVER, so an empty result is a real state and not a rendering accident —
+  // and "nothing matched what you asked for" is a different sentence from
+  // "nothing has ever happened". Only the controls that ADD a restriction count:
+  // "Trades" is the page's own default and "All" is the widest view, so neither
+  // should make a fresh install accuse itself of having a filter on.
+  const narrowed =
+    !!symbol.trim() || strategyId !== "" || !!mode || !!assetClass || !!account || status === "rejected";
+
+  const clearFilters = useCallback(() => {
+    setMode("");
+    setStatus("");
+    setAssetClass("");
+    setAccount("");
+    setSymbol("");
+    setStrategyId("");
+  }, []);
+
   // The strategy list is small and static enough to fetch once; a name is far
   // more useful in the picker than the id the API filters on.
   useEffect(() => {
@@ -169,10 +187,20 @@ export default function Journal() {
         {!rows ? (
           <p>Loading…</p>
         ) : events.length === 0 ? (
-          <p className="hint">
-            Nothing yet. Every decision the engine makes — including trades it wanted to make but a safety rail
-            blocked — will appear here with its full reasoning.
-          </p>
+          narrowed ? (
+            <p className="hint">
+              No journal entry matches these filters — and because the symbol and strategy filters are applied by
+              the server, that is the whole journal's answer, not just this page of it.{" "}
+              <button type="button" className="small btn-ghost" onClick={clearFilters}>
+                Clear filters
+              </button>
+            </p>
+          ) : (
+            <p className="hint">
+              Nothing yet. Every decision the engine makes — including trades it wanted to make but a safety rail
+              blocked — will appear here with its full reasoning.
+            </p>
+          )
         ) : (
           <div className="table-scroll">
           <table>

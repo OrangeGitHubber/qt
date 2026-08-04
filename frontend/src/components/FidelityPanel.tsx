@@ -18,6 +18,29 @@ import { fmtHm, fmtIsoDate, zoneAbbr } from "../lib/datetime";
  *  your symbols and your order sizes — and the number it produces is meant to go
  *  straight into the spread setting on the form above.
  */
+/** Does this server value carry a time of day, or is it a bucketed calendar day?
+ *
+ *  The timeline's `at` is an INSTANT when the replay ran on intraday bars and a
+ *  bare "YYYY-MM-DD" when it ran on daily ones — the server has no clock to send
+ *  in that case and will not invent one. The two must be rendered differently:
+ *  converting a bare day into a zone moves it, and for every reader west of UTC
+ *  it moves it BACKWARDS, which dated a Wednesday trade Tuesday. */
+function isTimed(iso: string | null | undefined): iso is string {
+  return !!iso && /\d{1,2}:\d{2}/.test(iso);
+}
+
+/** One side of the "live vs replay" pair in a timeline row's detail.
+ *
+ *  Bare HH:MM while both instants land on the same day in the reader's zone, and
+ *  the date as well when they don't. Two crypto fills either side of midnight
+ *  read "23:40 vs 18:50" — five hours EARLIER — when the replay was in fact
+ *  nineteen hours LATER, on the next day. The When column beside it already
+ *  shows the date, so a bare clock there is not just vague, it contradicts. */
+function pairStamp(iso: string, other: string): string {
+  const day = fmtIsoDate(iso);
+  return day === fmtIsoDate(other) ? fmtHm(iso) : `${day} ${fmtHm(iso)}`;
+}
+
 /** Bar sizes as a human says them. "1Min" is a wire value, not a sentence. */
 const BAR_SIZE: Record<string, string> = {
   "1Min": "1-minute",
@@ -93,7 +116,7 @@ export default function FidelityPanel() {
         about the backtester.
       </p>
 
-      <div className="grid-2">
+      <div className="filter-grid fidelity-fields">
         <label>
           <span className="field-cap">Strategy</span>
           <select
@@ -280,7 +303,13 @@ export default function FidelityPanel() {
             </p>
           )}
 
-          {d.backtest_trades === 0 && (
+          {/* NOT when the report is quiet. "The backtest took no trades" is
+              true of a quiet report too — and every clause after it is false
+              there: no real trade is listed as missed, because no real trade
+              was made. A warning triangle saying the report means nothing,
+              sitting directly above the paragraph explaining that the two sides
+              agreed perfectly, is the report arguing with itself. */}
+          {d.backtest_trades === 0 && !report.quiet && (
             <p className="hint warn">
               <IconWarn className="icon-inline" /> <strong>The backtest took no trades at all</strong> over this
               window, so nothing below is a comparison — every real trade is listed as "missed" because there was
@@ -399,10 +428,15 @@ export default function FidelityPanel() {
               <div className="stat-label">not a backtest error</div>
             </div>
           </div>
-          <p className="hint">
-            <InfoTip k="fidelity_buckets" /> Of the trades both sides took, {pct(d.same_exit_rule_pct)} left for the
-            same reason and {pct(d.same_exit_day_pct)} left on the same day.
-          </p>
+          {/* And again: "Of the trades both sides took, — left for the same
+              reason" is a sentence with holes in it when neither side took
+              any. */}
+          {!report.quiet && (
+            <p className="hint">
+              <InfoTip k="fidelity_buckets" /> Of the trades both sides took, {pct(d.same_exit_rule_pct)} left for the
+              same reason and {pct(d.same_exit_day_pct)} left on the same day.
+            </p>
+          )}
           {d.manual_exits > 0 && (
             <p className="hint">
               <strong>
@@ -414,7 +448,9 @@ export default function FidelityPanel() {
               rule would measure the gap between two different decisions and call it slippage.
             </p>
           )}
-          {!d.enough_to_judge && (
+          {/* Same exclusion: "only 0 matched trades, too small to measure" is a
+              complaint about the sample when there is nothing to sample. */}
+          {!d.enough_to_judge && !report.quiet && (
             <p className="hint warn">
               <IconWarn className="icon-inline" /> <strong>Only {d.matched} matched trades.</strong> Below about 30
               these are anecdotes rather than a measurement — one unusual trade moves everything.{" "}
@@ -498,14 +534,19 @@ export default function FidelityPanel() {
                     {report.timeline.map((r, i) => (
                       <tr
                         key={`${r.at ?? r.day}-${r.symbol}-${i}`}
-                        className={r.kind === "edit" || r.kind === "activated" ? "cmp-win" : ""}
+                        className={r.kind === "edit" || r.kind === "activated" ? "tl-mark" : ""}
                       >
-                        {/* `at` is an instant and moves with the display zone;
-                            `day` is already a bucketed calendar day and must
-                            not be converted, so it is printed as it came. */}
+                        {/* A TIMED `at` is an instant and moves with the display
+                            zone. An untimed one is already a bucketed calendar
+                            day — as is `day`, the fallback — and must not be
+                            converted, so it is printed as it came. Testing for
+                            a clock rather than for `at` being present: the old
+                            check ran every value through the instant formatter
+                            and only decided afterwards whether to print a time,
+                            so a daily replay's rows were dated a day early. */}
                         <td className="tabular">
-                          {r.at ? fmtIsoDate(r.at) : r.day}
-                          {r.at && r.at.includes("T") ? <span className="hint"> {fmtHm(r.at)}</span> : null}
+                          {isTimed(r.at) ? fmtIsoDate(r.at) : (r.at ?? r.day ?? "").slice(0, 10) || "—"}
+                          {isTimed(r.at) ? <span className="hint"> {fmtHm(r.at)}</span> : null}
                         </td>
                         <td>{r.symbol || "—"}</td>
                         <td>{r.action}</td>
@@ -521,9 +562,16 @@ export default function FidelityPanel() {
                           {r.detail}
                           {/* Formatted HERE and not on the server: fmtHm uses the
                               same display zone as the When column, so the two
-                              clocks in one row can no longer disagree. */}
+                              clocks in one row can no longer disagree — and
+                              pairStamp adds the date on the rows where the two
+                              instants fall on different days, where a bare
+                              clock reverses which side came first. */}
                           {r.live_at && r.sim_at ? (
-                            <> — the replay was {fmtHm(r.live_at)} vs {fmtHm(r.sim_at)}</>
+                            <>
+                              {" "}
+                              — the replay was {pairStamp(r.live_at, r.sim_at)} vs{" "}
+                              {pairStamp(r.sim_at, r.live_at)}
+                            </>
                           ) : null}
                         </td>
                       </tr>
