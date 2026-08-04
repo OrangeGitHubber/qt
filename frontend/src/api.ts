@@ -1446,6 +1446,11 @@ export interface FidelityReport {
     // against the match rate — the comparison genuinely failed to reproduce
     // them — but they are a gap in the comparison, not a disagreement with it.
     missed_replay_failed?: number;
+    // Matched trades the two sides opened further apart than the replay's own
+    // resolution can account for. Still matches — same decision, same day — but
+    // a match rate built partly on fills hours apart reads better than it is.
+    // Trades pair by (symbol, day), and for crypto a day is 24 hours.
+    entries_timing_differs?: number;
     enough_to_judge: boolean;
   };
   execution: {

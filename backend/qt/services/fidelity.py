@@ -31,6 +31,7 @@ demanding equal timestamps would report every single trade as a mismatch.
 
 from __future__ import annotations
 
+from datetime import datetime
 from statistics import median
 
 # Below this many observations a difference is an anecdote, not a measurement.
@@ -99,6 +100,7 @@ def compare(
     assumed_fee_pct: float = 0.0,
     replayed_symbols: list[str] | None = None,
     seeded_symbols: list[str] | None = None,
+    timing_tolerance_seconds: float | None = None,
 ) -> dict:
     """Diff what really happened against what the replay says would have.
 
@@ -223,6 +225,19 @@ def compare(
                 "exit_reason_matches": _same_rule(
                     live.get("exit_reason"), sim.get("exit_reason")
                 ),
+                # HOW FAR APART THE TWO SIDES OPENED IT, and whether that is more
+                # than the sampling difference can account for. `entry_day` is
+                # what pairs them and a crypto day is 24 hours long, so this is
+                # the only thing standing between "same trade" and "same trade,
+                # most of a day later". See `timing_tolerance_seconds`.
+                "entry_gap_seconds": (gap := _entry_gap_seconds(
+                    live.get("entry_at"), sim.get("entry_at")
+                )),
+                "entry_timing_differs": (
+                    gap is not None
+                    and timing_tolerance_seconds is not None
+                    and gap > timing_tolerance_seconds
+                ),
             }
         )
 
@@ -309,6 +324,36 @@ def _same_rule(live_reason: str | None, sim_reason: str | None) -> bool | None:
     return head(live_reason) == head(sim_reason)
 
 
+def _entry_gap_seconds(live_at: str | None, sim_at: str | None) -> float | None:
+    """How far apart the two sides opened the same trade, in seconds, or None
+    when either lacks a usable instant."""
+    if not (_has_clock(live_at) and _has_clock(sim_at)):
+        return None
+    try:
+        a = datetime.fromisoformat(str(live_at).replace("Z", "+00:00"))
+        b = datetime.fromisoformat(str(sim_at).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if (a.tzinfo is None) != (b.tzinfo is None):
+        # One naive, one aware: subtracting raises, and guessing a zone for the
+        # naive one would invent an offset. Unknown is the honest answer.
+        return None
+    return abs((a - b).total_seconds())
+
+
+def _gap_words(seconds: float) -> str:
+    """The gap in the coarsest unit that still says something, for a sentence
+    the reader can act on. Never a clock — see _has_clock for why the server
+    must not format one."""
+    if seconds < 90:
+        return f"{round(seconds)} seconds"
+    if seconds < 5400:
+        minutes = round(seconds / 60)
+        return f"{minutes} minute{'' if minutes == 1 else 's'}"
+    hours = round(seconds / 3600)
+    return f"{hours} hour{'' if hours == 1 else 's'}"
+
+
 def _has_clock(iso: str | None) -> bool:
     """Whether this timestamp carries a time of day at all.
 
@@ -354,10 +399,21 @@ def _trade_log(matched: list[dict], live_only: list[dict], backtest_only: list[d
     for m in matched:
         live_in, sim_in = m.get("live_entry_at"), m.get("sim_entry_at")
         both_timed = _has_clock(live_in) and _has_clock(sim_in)
+        # SAME TRADE, POSSIBLY NOT THE SAME MOMENT. Pairing is by (symbol, day)
+        # and a crypto day is 24 hours, so "match" was being printed over gaps of
+        # thirteen and fifteen hours in exactly the same green as a two-minute
+        # one. Both instants were on the row the whole time; the verdict simply
+        # did not read them. See `timing_tolerance_seconds`.
+        late = m.get("entry_timing_differs")
+        detail = (
+            f"Both bought {m['symbol']}, but {_gap_words(m['entry_gap_seconds'])} apart."
+            if late
+            else f"Both bought {m['symbol']}." if both_timed
+            else f"Both bought {m['symbol']} at the same point."
+        )
         event(
-            live_in or m["day"], m["day"], m["symbol"], "bought", "match",
-            f"Both bought {m['symbol']}." if both_timed else
-            f"Both bought {m['symbol']} at the same point.",
+            live_in or m["day"], m["day"], m["symbol"], "bought",
+            "timing differs" if late else "match", detail,
             live_at=live_in if both_timed else None,
             sim_at=sim_in if both_timed else None,
         )
@@ -536,6 +592,12 @@ def _decision_stats(matched: list[dict], live_only: list[dict], backtest_only: l
         # reader deciding whether to go hunting needs to know how much of the
         # gap is a failed replay rather than a disagreement.
         "missed_replay_failed": sum(1 for r in live_only if r.get("replay_error")),
+        # Matched trades the two sides opened FURTHER APART than sampling can
+        # explain. They are still matches — the same decision on the same day —
+        # but a match rate is the number people read, and one built partly on
+        # fills thirteen hours apart says more than it knows. Counted here so the
+        # figure above it can be read with that in mind.
+        "entries_timing_differs": sum(1 for m in matched if m.get("entry_timing_differs")),
         "match_rate_pct": round(len(matched) / total * 100, 1) if total else None,
         "same_exit_rule_pct": round(len(same_rule) / len(exits) * 100, 1) if exits else None,
         "same_exit_day_pct": round(len(same_day) / len(ended) * 100, 1) if ended else None,

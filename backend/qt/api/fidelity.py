@@ -2038,6 +2038,19 @@ async def compare(
     # and passed" means something quite different when the only reason it was
     # watching is that we told it to.
     seeded_symbols = sorted({s for r in results for s in (r.get("universe_seeded") or [])})
+    # HOW FAR APART TWO SIDES MAY OPEN THE SAME TRADE before it stops being the
+    # same moment. Derived, not chosen: the replay acts when a bar CLOSES and the
+    # live engine looks every LIVE_POLL_SECONDS from an offset nothing records,
+    # so one bar plus one poll is the gap that exists for reasons which are not
+    # disagreements — the same residual `exit_model.poll_phase_floor_pct`
+    # reports. Past it, something genuinely differed.
+    #
+    # The COARSEST stretch sets it, matching _exit_model's rule: a mixed-
+    # resolution comparison must not have its finest piece licensing complaints
+    # about its coarsest. And an unknown resolution disables the check entirely —
+    # "unknown" must not become the condemning answer any more than the
+    # flattering one.
+    bar_seconds = [r.get("bar_seconds") for r in results if r.get("bar_seconds") is not None]
     report = fidelity.compare(
         live_rows,
         result,
@@ -2045,6 +2058,9 @@ async def compare(
         assumed_fee_pct=fee_assumed or 0.0,
         replayed_symbols=replayed_symbols,
         seeded_symbols=seeded_symbols,
+        timing_tolerance_seconds=(
+            max(bar_seconds) + backtest.LIVE_POLL_SECONDS if bar_seconds else None
+        ),
     )
     # When the replay traded NOTHING, the backtester already knows why — it
     # counts every rejection reason as it goes. Passing that through turns a

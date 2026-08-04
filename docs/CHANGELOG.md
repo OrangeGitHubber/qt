@@ -3,6 +3,33 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## A "match" thirteen hours apart is no longer called a match (2026-08-04)
+
+With the crypto comparison finally running, "Crypto - many movements" showed
+thirteen matches — and three of them were the same trade taken most of a day
+apart. SOL bought live at 00:57 and by the replay at 13:55; AAVE bought by the
+replay fifteen hours BEFORE you did. Each read as the same green "match" as an
+XRP fill the two sides made two minutes apart.
+
+Trades are paired by symbol and DAY, deliberately: a fill at 14:03 and a 14:00
+bar are the same decision, and demanding identical timestamps would report every
+trade as a mismatch. But a crypto day is twenty-four hours long, so that pairing
+was quietly covering gaps of half a day — and the match rate at the top of the
+page is the number people read.
+
+A matched buy now reads "timing differs" and says how far apart the two were,
+when the gap is larger than the replay's own resolution can explain. The
+allowance is worked out rather than picked: the replay acts when a bar closes and
+the live engine looks every sixty seconds from an offset nothing records, so one
+bar plus one poll is the difference that exists for reasons which are not
+disagreements. On daily bars that allowance is a whole day, so a daily entry —
+which carries a bar stamp rather than a fill time — is never flagged. If the
+resolution is unknown, nothing is flagged at all.
+
+They still count as matches, because they are the same decision. The count is
+reported alongside the match rate so you can see how much of it is built on
+trades that happened hours apart.
+
 ## The scanner cache was built for settings nobody was running (2026-08-04)
 
 "Crypto - many movements" could not be compared at all — every stretch after
