@@ -14,16 +14,35 @@ replay missed it — this is the kind that points at a real bug".
 from datetime import datetime, timedelta, timezone
 
 from qt.api.backtest import MAX_HOURS_FOR_MINUTE_REPLAY
-from qt.api.fidelity import _chunk_for_minute_replay, _config_stretches, _Segment
+from qt.api.fidelity import (
+    MAX_MINUTE_CHUNKS,
+    _chunk_for_minute_replay,
+    _config_stretches,
+    _Segment,
+)
 
 T0 = datetime(2026, 8, 1, 0, 0, tzinfo=timezone.utc)
 CAP = timedelta(hours=MAX_HOURS_FOR_MINUTE_REPLAY)
 
 
-def _seg(start_h: float, end_h: float, version: int = 1) -> _Segment:
+# The VWAP rule needs intraday bars at any window length, so this is a config a
+# cut can actually buy minute bars for. Cutting is refused for anything replayed
+# on DAILY bars (see _cutting_buys_minute_bars and the test at the bottom), so a
+# fixture without it would exercise the refusal rather than the chunking.
+INTRADAY = {
+    "entry": {"min_day_gain_pct": 3.0, "require_above_vwap": True},
+    "exit": {"stop_loss_pct": 4, "trailing_stop_pct": 5, "take_profit_pct": 0},
+}
+DAILY = {
+    "entry": {"min_day_gain_pct": 3.0, "require_above_vwap": False},
+    "exit": {"stop_loss_pct": 4, "trailing_stop_pct": 5, "take_profit_pct": 0},
+}
+
+
+def _seg(start_h: float, end_h: float, version: int = 1, params: dict = INTRADAY) -> _Segment:
     return _Segment(
         start=T0 + timedelta(hours=start_h), end=T0 + timedelta(hours=end_h),
-        config={"name": f"v{version}"}, version_no=version,
+        config={"name": f"v{version}", "params": params}, version_no=version,
         symbols=["AAA"], scanner_replay=False,
     )
 
@@ -84,6 +103,62 @@ def test_only_the_first_piece_counts_as_a_configuration_stretch():
     assert out[0].resolution_chunk is False
     assert all(s.resolution_chunk for s in out[1:])
     assert len(_config_stretches(out)) == 1
+
+
+def test_a_stretch_replayed_on_daily_bars_is_not_cut_at_all():
+    """Cutting a daily replay into 24-hour pieces does not refine it, it CONVERTS
+    it: `_timeframe_for` puts a window shorter than MIN_HOURS_FOR_DAILY_REPLAY on
+    intraday bars, because a daily bar is stamped at the start of its day and a
+    window of hours contains none. So every piece would ask for intraday bars
+    that a MACD/RSI strategy has no signals for — measured when chunking first
+    reached the replay: four segment comparisons went from matching their trades
+    to matching none of them."""
+    month = _seg(0, 24 * 30, params=DAILY)
+    assert _chunk_for_minute_replay([month], [_trade(24 * d + 5) for d in range(30)]) == [month]
+    # The guard is about the RESOLUTION, not about the length: the same window
+    # under a strategy that replays intraday is cut.
+    assert len(_chunk_for_minute_replay([_seg(0, 24 * 30)], [_trade(5)])) > 1
+
+
+def test_the_number_of_minute_sized_pieces_is_capped():
+    """Each piece is a separate replay — its own dataset, its own fetch, its own
+    day of 1,440 bars per symbol. A strategy that has traded every day since May
+    would set off ninety of them on one click, which is a quarter of an hour of
+    waiting for resolution nobody asked about that far back."""
+    days = MAX_MINUTE_CHUNKS * 3
+    out = _chunk_for_minute_replay(
+        [_seg(0, 24 * days)], [_trade(24 * d + 5) for d in range(days)]
+    )
+    small = [s for s in out if s.end - s.start <= CAP]
+    assert len(small) == MAX_MINUTE_CHUNKS, [(s.start, s.end) for s in out]
+
+
+def test_the_pieces_kept_small_are_the_most_recent_ones():
+    """A comparison is nearly always read about a strategy running NOW, so the
+    resolution goes where the reader is looking. The older trades are still
+    compared — on the coarser bars their coalesced stretch gets."""
+    days = MAX_MINUTE_CHUNKS + 4
+    out = _chunk_for_minute_replay(
+        [_seg(0, 24 * days)], [_trade(24 * d + 5) for d in range(days)]
+    )
+    small = [s for s in out if s.end - s.start <= CAP]
+    assert small[-1].end == T0 + timedelta(hours=24 * days)
+    assert small[0].start >= T0 + timedelta(hours=24 * 4), \
+        "the oldest days were kept small and the newest coalesced — backwards"
+
+
+def test_every_piece_gets_its_own_journal_rather_than_the_stretch_s():
+    """`dataclasses.replace` copies field VALUES. Every piece cut from one
+    stretch was handed the SAME list, so filing a trade under one chunk filed it
+    under all of them — each chunk was seeded with the whole window's trades,
+    every stretch reported the window's trade count as its own, and a replay
+    failure recorded on one chunk reached its neighbours' trades."""
+    out = _chunk_for_minute_replay([_seg(0, 40)], [_trade(1), _trade(30)])
+    assert len(out) > 1
+    out[0].live.append({"symbol": "AAA"})
+    assert [len(s.live) for s in out[1:]] == [0] * len(out[1:])
+    out[0].rails_seed["AAA"] = T0
+    assert [s.rails_seed for s in out[1:]] == [{}] * len(out[1:])
 
 
 def test_two_real_configurations_stay_two_after_chunking():

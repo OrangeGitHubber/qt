@@ -1403,7 +1403,23 @@ export interface FidelityReport {
     // Set when the window COULD have been split and deliberately wasn't.
     not_segmented_reason?: string | null;
     segments_with_unknown_universe?: number;
+    // WHICH BARS GRADED WHAT. A long window is cut so the stretches holding
+    // trades keep 1-minute bars while the trade-free remainder stays coarse, so
+    // one report can hold both and `timeframe` above is a single string. A
+    // "missed" verdict on a coarsely-graded trade is a resolution artefact until
+    // proven otherwise — the live engine decides every 60 seconds.
+    resolution?: {
+      minute_stretches: number;
+      coarser_stretches: number;
+      live_trades_graded_coarse: number;
+    };
   };
+  // Stretches whose replay did not run. A split comparison records the failure
+  // and carries on — one stretch with no bars either side of a weekend must not
+  // cost the whole report — which leaves the report covering less than it says.
+  // Named here so a failed stretch that happened to hold no trades cannot pass
+  // for agreement.
+  replay_failures?: { from: string; to: string; error: string | null }[];
   backtest_only: { symbol: string; day: string; sim_entry: number | null; sim_exit_reason: string }[];
   rails_blocked: { symbol: string; day: string; blocked_by: string | null }[];
   decision: {
@@ -1426,6 +1442,10 @@ export interface FidelityReport {
     // Of the trades the replay didn't find, how many it could never have found
     // because the symbol wasn't in the universe it replayed at all.
     missed_outside_universe: number;
+    // …and how many fell in a stretch whose replay never ran. They still count
+    // against the match rate — the comparison genuinely failed to reproduce
+    // them — but they are a gap in the comparison, not a disagreement with it.
+    missed_replay_failed?: number;
     enough_to_judge: boolean;
   };
   execution: {

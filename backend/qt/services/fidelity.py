@@ -160,12 +160,24 @@ def compare(
                     # replay for being pointed somewhere else — usually because
                     # the strategy's universe was edited after these trades, or
                     # the comparison resolved a different one.
+                    # A stretch whose replay ERRORED reported no universe at all,
+                    # so nothing is known about this symbol's coverage there —
+                    # and the merged universe below belongs to the stretches that
+                    # DID run. Letting those answer for this one is how "the
+                    # replay was watching this symbol and passed" came to be said
+                    # about a window no replay ever covered.
                     "in_replayed_universe": (
-                        None if universe is None else live.get("symbol", "").upper() in universe
+                        None
+                        if universe is None or live.get("replay_error")
+                        else live.get("symbol", "").upper() in universe
                     ),
                     # And whether it was only there because this comparison put
                     # it there. See `seeded_symbols`.
                     "universe_seeded": live.get("symbol", "").upper() in seeded,
+                    # Why there is nothing to compare this against: the stretch
+                    # it falls in did not replay. Set by the API layer, which is
+                    # the half that knows a window was split at all.
+                    "replay_error": live.get("replay_error"),
                 }
             )
             continue
@@ -411,6 +423,27 @@ def _trade_log(matched: list[dict], live_only: list[dict], backtest_only: list[d
         # something nobody checked. That wording sent a real investigation after
         # a signal difference that did not exist.
         covered = r.get("in_replayed_universe")
+        if r.get("replay_error"):
+            # NOT a miss at all: the stretch this trade falls in never replayed,
+            # so there was nothing to miss it with. Said before the coverage
+            # question because coverage does not arise — and the verdict says
+            # "not compared" rather than "replay missed it", which is both the
+            # truth and what the UI reads to stop colouring the row as a
+            # disagreement.
+            event(
+                r.get("entry_at") or r["day"], r["day"], r["symbol"], "bought",
+                "not compared",
+                f"You bought {r['symbol']}. The replay of the stretch this falls in did not "
+                f"run — {r['replay_error']} — so nothing was watching this symbol here. "
+                "That is a gap in the comparison, not a disagreement with it.",
+            )
+            if r.get("exit_day"):
+                event(r.get("exit_at") or r["exit_day"], r["exit_day"], r["symbol"], "sold",
+                      "not compared",
+                      f"You sold {r['symbol']} "
+                      f"({r.get('exit_reason') or 'no reason recorded'}). The stretch it was "
+                      "held in never replayed, so there is no exit to judge this against.")
+            continue
         if covered and r.get("universe_seeded"):
             # A FOURTH state, and the most informative one. This name is in the
             # replay's universe only because your own trade put it there — the
@@ -496,6 +529,13 @@ def _decision_stats(matched: list[dict], live_only: list[dict], backtest_only: l
             for r in live_only
             if r.get("universe_seeded") and r.get("in_replayed_universe")
         ),
+        # And how many were not missed by anything: the stretch they fall in
+        # never replayed. They still count against the match rate — the
+        # comparison genuinely failed to reproduce them, and quietly excusing
+        # them would flatter a run that covered less than it claimed — but a
+        # reader deciding whether to go hunting needs to know how much of the
+        # gap is a failed replay rather than a disagreement.
+        "missed_replay_failed": sum(1 for r in live_only if r.get("replay_error")),
         "match_rate_pct": round(len(matched) / total * 100, 1) if total else None,
         "same_exit_rule_pct": round(len(same_rule) / len(exits) * 100, 1) if exits else None,
         "same_exit_day_pct": round(len(same_day) / len(ended) * 100, 1) if ended else None,

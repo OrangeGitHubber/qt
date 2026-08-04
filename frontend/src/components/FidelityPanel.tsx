@@ -330,6 +330,44 @@ export default function FidelityPanel() {
             </p>
           )}
 
+          {/* A STRETCH THAT NEVER RAN. Shown whether or not the window was
+              segmented: a comparison cut only so it could keep minute bars has
+              no segment table on screen to carry the error, and that is now the
+              ordinary case for any window older than a day. Without this, the
+              replay's silence over the failed stretch reads as agreement. */}
+          {(report.replay_failures?.length ?? 0) > 0 && (
+            <p className="hint warn">
+              <IconWarn className="icon-inline" />{" "}
+              <strong>
+                {report.replay_failures!.length} stretch
+                {report.replay_failures!.length === 1 ? "" : "es"} of this window did not replay,
+              </strong>{" "}
+              so nothing was compared over{" "}
+              {report.replay_failures!.length === 1 ? "it" : "them"} —{" "}
+              {report.replay_failures!
+                .slice(0, 3)
+                .map((f) => `${fmtIsoDate(f.from)} to ${fmtIsoDate(f.to)}${f.error ? ` (${f.error})` : ""}`)
+                .join("; ")}
+              {report.replay_failures!.length > 3 ? "; …" : ""}. Trades made in{" "}
+              {report.replay_failures!.length === 1 ? "that stretch" : "those stretches"} are marked{" "}
+              <em>not compared</em> below rather than missed: there was nothing there to miss them.
+            </p>
+          )}
+
+          {(report.config?.resolution?.live_trades_graded_coarse ?? 0) > 0 &&
+            (report.config?.resolution?.minute_stretches ?? 0) > 0 && (
+              <p className="hint">
+                <strong>
+                  {report.config!.resolution!.live_trades_graded_coarse} of these trades were graded on bars coarser
+                  than a minute.
+                </strong>{" "}
+                The window is long enough that only the most recent stretches keep 1-minute bars — the rest are
+                replayed at 15 minutes, which is fifteen times coarser than the 60-second cycle that made the trades.
+                A "the replay missed it" on one of those is a resolution difference until something rules it out.
+                Narrow the window to look at them properly.
+              </p>
+            )}
+
           {report.config?.stable_window && (
             <p className="hint">
               <strong>

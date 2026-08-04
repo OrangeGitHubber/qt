@@ -3,6 +3,44 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## The overnight comparison keeps its minute bars (2026-08-04)
+
+Yesterday's fix cut a long comparison into day-sized pieces so the stretches
+holding your trades could keep 1-minute bars. It worked, and then the comparison
+threw the pieces away and replayed the whole window in one go — because the
+decision to replay piece by piece was tied to whether the *strategy* had been
+edited during the window, and "Basic FAANGs and friends" had not been. So the
+same three trades came back as "the replay missed it" the next morning, and it
+came back fast, because nothing extra ever ran. The pieces are now replayed.
+
+Three things came out of testing that against the real endpoint for the first
+time:
+
+**Every piece was sharing one list of trades.** Filing a trade under one piece
+filed it under all of them, so each piece was handed the whole window's trades
+and each reported the window's total as its own.
+
+**A daily-bar strategy is no longer cut up.** Cutting a month-long comparison
+into 24-hour pieces does not sharpen a strategy that trades on daily bars, it
+converts it onto intraday bars it has no signals for — and every one of its
+trades then comes back missed.
+
+**And the cutting stops after a fortnight of trading days.** Each piece is a
+separate replay with its own download, so a strategy that has traded every day
+since May would have set off ninety of them on one click. The most recent
+fourteen keep their minute bars; the older trades are still compared, on coarser
+bars, and the report now says how many — a "missed" verdict over there is a
+resolution difference until something rules it out.
+
+**A stretch that failed to replay no longer masquerades as one that passed.**
+When a stretch cannot be replayed, the comparison records the failure and
+carries on, which is right. But the trades made inside it were still being
+reported as "the replay was watching this symbol and passed — this is the kind
+that points at a real bug", which is the strongest thing this page can say and
+was being said about a window nothing had run over. Those now read *not
+compared*, and any stretch that failed is named at the top of the report even if
+no trade was made in it.
+
 ## The replay now hits every safety rail the engine hits (2026-08-04)
 
 The last few gaps between "what the backtester was allowed to do" and "what the

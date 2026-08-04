@@ -582,20 +582,32 @@ def test_the_replay_uses_the_bar_size_the_strategy_needs(client, configured, mon
             exit_at=datetime.now(timezone.utc) - timedelta(days=2),
         ))
 
-    seen: dict = {}
-    real_run = backtest_api.run
+    # BOTH replay paths are watched. A comparison this long is now cut into
+    # day-sized pieces so the stretch holding the trade can keep minute bars
+    # (_chunk_for_minute_replay), and those go through `replay` rather than
+    # `run` — a spy on one of them came back with nothing to assert on and the
+    # test passed a KeyError off as a failure.
+    seen: list[str] = []
+    real_run, real_replay = backtest_api.run, backtest_api.replay
 
-    async def spy(body, **kw):
-        seen["timeframe"] = body.timeframe
+    async def run_spy(body, **kw):
+        seen.append(body.timeframe)
         return await real_run(body, **kw)
+
+    async def replay_spy(body, *a, **kw):
+        seen.append(body.timeframe)
+        return await real_replay(body, *a, **kw)
 
     bars = [{"t": (datetime.now(timezone.utc) - timedelta(days=n)).strftime("%Y-%m-%dT%H:%M:%SZ"),
              "o": 100, "h": 100, "l": 100, "c": 100, "v": 1e6, "vw": 100} for n in (10, 9, 8)]
-    monkeypatch.setattr("qt.api.fidelity.run", spy)
+    monkeypatch.setattr("qt.api.fidelity.run", run_spy)
+    monkeypatch.setattr("qt.api.fidelity.replay", replay_spy)
     with patch.object(AlpacaClient, "historical_bars", new=AsyncMock(return_value={"NVDA": bars})):
         r = client.post("/api/fidelity/compare", json={"strategy_id": sid, "days": 30})
     assert r.status_code == 200, r.text
-    assert seen["timeframe"] == "15Min", "a VWAP strategy must not be replayed on daily bars"
+    assert seen, "nothing was replayed at all"
+    assert all(tf in ("15Min", "1Min") for tf in seen), \
+        f"a VWAP strategy must not be replayed on daily bars — got {seen}"
 
 
 # --- the config that produced the trades ------------------------------------
