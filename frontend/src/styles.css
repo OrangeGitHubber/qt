@@ -883,7 +883,15 @@ tr:last-child td {
 
 .filter-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  /* auto-FILL with a capped track, not auto-fit with 1fr.
+   *
+   * `1fr` tracks absorb every spare pixel, so a wider card pushed related
+   * fields apart — "Spread cost" ended up a screen away from "History", which
+   * is why the card was bounded to 62rem in the first place. Capping the track
+   * makes extra width create MORE columns at a readable size and leave the
+   * remainder as gutter, so the card can now be wide without the form
+   * scattering. */
+  grid-template-columns: repeat(auto-fill, minmax(200px, 17rem));
   gap: 0.5rem 1.25rem;
 }
 
@@ -1134,7 +1142,27 @@ tr.log-gap td {
  * which is what widening was for. */
 .card-form,
 form.card.editor {
-  max-width: 62rem;
+  /* Was 62rem, which left roughly a third of a wide screen empty beside the
+     form. That cap existed only because the field grid stretched; with the
+     track cap above it no longer does, so the card can take the room and the
+     fields pack into more columns instead of spreading. */
+  max-width: 90rem;
+}
+
+/* Prose inside a FORM card gets a wider measure than prose in a result card.
+ *
+ * A form's paragraphs are captions to the controls beside them — the note about
+ * sleeve size, the one about combination counts — read once, in place, while
+ * you set a field. At 36rem in a 90rem card they wrapped into a narrow ribbon
+ * with most of the row empty, which reads as unfinished rather than as
+ * carefully set. Teaching prose in a result card keeps the tighter measure,
+ * where you really are reading top-to-bottom. */
+.card-form p.hint,
+.card-form ul.hint,
+.card-form ol.hint,
+.card-form > p,
+form.card.editor p.hint {
+  max-width: 64rem;
 }
 
 /* THE PROSE MEASURE — one width, one right edge, everywhere inside a card.

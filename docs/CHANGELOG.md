@@ -3,6 +3,25 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## The Optimizer and Backtest forms use the width they have (2026-08-03)
+
+The form sat in a card bounded to about 990px, leaving roughly a third of a wide
+screen empty beside it, with the explanatory paragraphs wrapped into a narrower
+ribbon inside that.
+
+The cap was there for a reason: the field grid used stretching tracks, so a
+wider card pushed related fields apart — "Spread cost per side" ended up most of
+a screen away from "History (days)". Fixing the grid first is what makes the
+width safe. Extra room now creates **more columns** at a readable size rather
+than wider ones, so the fields pack rather than scatter, and the card can take
+the space it was denied.
+
+The paragraphs inside a form also read wider now. They are captions to the
+controls beside them — the note about sleeve size, the one about why more
+combinations make a good in-sample score easier to hit by luck — read once, in
+place, while you set a field. Teaching prose in a result card keeps its tighter
+measure, because there you really are reading top to bottom.
+
 ## Journal layout: a filter bar that fits, a footnote that doesn't hide (2026-08-03)
 
 The strategy filter added earlier today stretched the journal's toolbar across
