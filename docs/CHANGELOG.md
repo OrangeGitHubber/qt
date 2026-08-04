@@ -3,6 +3,31 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## The scanner cache was built for settings nobody was running (2026-08-04)
+
+"Crypto - many movements" could not be compared at all — every stretch after
+2 August came back "the replay of the stretch this falls in did not run: no
+cached crypto movers yet". That message was true and the cache was not empty:
+1,125 rows across 315 days.
+
+What was missing was the recent days themselves. A scanner strategy's replay
+rebuilds each day's eligible coins from a cached list of that day's movers, and
+the nightly sweep was writing that list using the built-in DEFAULT scanner
+thresholds rather than yours. Your scanner accepts a coin that moved 0% on
+$3,000 of volume; the sweep only recorded one that moved at least 1% on $25,000.
+On a quiet day nothing qualified, so nothing was written, and a comparison
+covering that day had no universe to work from.
+
+The sweep now writes with your configured thresholds. This mattered more than it
+looks: the replay re-applies your current settings when it READS the cache — on
+purpose, so a name you have since excluded can't sneak into a backtest — and
+that only works while the cache holds at least everything your scanner would
+accept. Anything filtered out on the way in is gone for good.
+
+Days already written keep whatever thresholds were in force at the time. The
+sweep re-ranks the last five days each run, so recent history repairs itself;
+older days need a rebuild from Settings → Historical bar cache.
+
 ## The replay could trade at the closing bell; the engine cannot (2026-08-04)
 
 With the position-cap fault fixed, the comparison on "Basic FAANGs and friends"

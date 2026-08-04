@@ -158,7 +158,11 @@ async def daily_movers_sweep() -> None:
 
             sess = barcache.session()
             try:
-                f = scanner.STOCK_DEFAULTS
+                # THE CONFIGURED FLOORS, not the defaults — see the note on the
+                # crypto twin below. Both had this and fixing one of a pair is
+                # the shape of the last several bugs in this codebase.
+                with session_scope() as s2:
+                    f = scanner.get_config(s2)["stocks"]
                 summary = await barsweep.daily_movers_update(
                     client, sess,
                     min_change_pct=f["min_change_pct"], min_price=f["min_price"],
@@ -210,7 +214,28 @@ async def crypto_movers_sweep() -> None:
 
             sess = barcache.session()
             try:
-                cf = scanner.CRYPTO_DEFAULTS
+                # THE CONFIGURED FLOORS, NOT THE DEFAULTS, and the asymmetry is
+                # the reason. `load_scanner_replay_dataset` re-applies the live
+                # scanner settings on the way OUT, deliberately — "Read them now
+                # rather than trusting whatever was in force when the sweep ran".
+                # That is only sound while the sweep stored a SUPERSET of what
+                # the scanner accepts. Filtering harder on the way IN cannot be
+                # undone by any amount of re-reading: the rows were never
+                # written, and a day where nothing cleared the floor is absent
+                # entirely.
+                #
+                # Measured: an owner running min_change_pct 0.0 and
+                # min_dollar_volume 3,000 had a cache built at the defaults' 1.0
+                # and 25,000. Quiet days were never stored, so every fidelity
+                # comparison of a scanner strategy over one refused the stretch —
+                # "No cached crypto movers yet" against a cache holding 1,125
+                # rows.
+                #
+                # Older days keep whatever floors were in force when they were
+                # written; the 5-day overlap re-ranks recent ones from cached
+                # daily bars, and rebuilding further back needs a bootstrap.
+                with session_scope() as s2:
+                    cf = scanner.get_config(s2)["crypto"]
                 summary = await barsweep.crypto_daily_movers_update(
                     client, sess,
                     min_change_pct=cf["min_change_pct"], min_price=cf["min_price"],
