@@ -37,18 +37,22 @@ log = logging.getLogger("qt.services.barfetch")
 # Only these two are cached. 1Hour is a legacy backtest option that nothing
 # fetches by default; an uncached timeframe simply passes straight through.
 #
-# 1Min IS DELIBERATELY ABSENT, and adding it here would be a data-corrupting
-# "improvement". Everything below that is not 1Day writes to the INTRADAY table,
-# whose key is (symbol, timestamp) with no record of the bar's size — so a
-# 1-minute bar and a 15-minute bar collide four times an hour, the write is
-# insert-or-ignore, and the survivor gets served back inside whichever series
-# asks next, carrying the wrong high and low. Minute bars have their own tables
-# (barcache.MinuteBar) and their own reader (qt.api.backtest.intraday_model_for);
-# caching them here means teaching _plan and _closed_intraday about a second slot
-# size first. Until then a 1-minute fetch passes straight through to Alpaca,
-# which is correct, merely not thrifty — and it is only ever asked for over a
-# window of hours.
-CACHEABLE = ("1Day", "15Min")
+# 1Min IS CACHED, but NOT in the intraday table. That table's key is
+# (symbol, timestamp) with no record of the bar's SIZE, so a 1-minute bar and a
+# 15-minute bar stamped on the same quarter-hour collide four times an hour; the
+# write is insert-or-ignore, so whichever landed first is served back inside
+# whichever series asks next, carrying the wrong high and low. Minute bars
+# therefore have their own tables (barcache.MinuteBar / CryptoMinuteBar) and
+# _intraday_model routes to them, which is what makes caching them safe.
+#
+# The slot size is threaded through _plan and _closed_intraday rather than
+# hardcoded at 15: both answer "has this bar definitively closed", and asking
+# that question with the wrong slot size caches a bar that is still moving.
+#
+# Worth the storage because the fidelity comparison replays on minute bars by
+# design, and an 11-symbol day is ~16,000 of them re-downloaded on every run.
+# prune_intraday already ages them out on their own shorter window.
+CACHEABLE = ("1Day", "15Min", "1Min")
 
 # Daily bars are stored keyed by DAY, so their time-of-day is not preserved and a
 # cached bar has to be re-stamped on read. The stamp is chosen to match Alpaca's
@@ -78,14 +82,25 @@ def _iso(dt: datetime) -> str:
     return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def _models(asset_class: str):
-    """(daily model, intraday model) for this asset class — stocks and crypto
-    live in separate tables because their 'day' means different things."""
+def _slot_minutes(timeframe: str) -> int:
+    """How long one bar of this timeframe covers. Only intraday sizes appear
+    here; 1Day never reaches the callers that ask."""
+    return 1 if timeframe == "1Min" else 15
+
+
+def _daily_model(asset_class: str):
+    """Stocks and crypto live in separate tables because their 'day' means
+    different things."""
+    return barcache.CryptoDailyBar if asset_class == "crypto" else barcache.DailyBar
+
+
+def _intraday_model(asset_class: str, timeframe: str):
+    """The table for this resolution. Minute bars are kept apart from coarser
+    ones because the shared key has no size column — see the note at the top."""
     crypto = asset_class == "crypto"
-    return (
-        barcache.CryptoDailyBar if crypto else barcache.DailyBar,
-        barcache.CryptoIntradayBar if crypto else barcache.IntradayBar,
-    )
+    if timeframe == "1Min":
+        return barcache.CryptoMinuteBar if crypto else barcache.MinuteBar
+    return barcache.CryptoIntradayBar if crypto else barcache.IntradayBar
 
 
 def _closed_daily(bars: list[dict], now: datetime | None = None) -> list[dict]:
@@ -98,13 +113,17 @@ def _closed_daily(bars: list[dict], now: datetime | None = None) -> list[dict]:
     return [b for b in bars if (b.get("t") or "")[:10] < today]
 
 
-def _closed_intraday(bars: list[dict], now: datetime | None = None) -> list[dict]:
-    """Only the 15-minute bars whose slot has DEFINITIVELY closed: strictly before
+def _closed_intraday(
+    bars: list[dict], slot_minutes: int = 15, now: datetime | None = None
+) -> list[dict]:
+    """Only the bars whose slot has DEFINITIVELY closed: strictly before
     the slot currently in progress. A bar is timestamped at the START of its slot,
     so the bar stamped one slot back finished exactly as the current slot began —
     that one is closed and safe; the current slot's is not."""
     now = now or datetime.now(timezone.utc)
-    slot = now.replace(minute=(now.minute // 15) * 15, second=0, microsecond=0)
+    slot = now.replace(
+        minute=(now.minute // slot_minutes) * slot_minutes, second=0, microsecond=0
+    )
     out = []
     for b in bars:
         ts = b.get("t")
@@ -163,8 +182,9 @@ def _plan(
             fetch_from[symbol] = f"{next_day}T00:00:00Z"
         else:
             last = _parse(bars[-1]["t"])
-            slot = now.replace(minute=(now.minute // 15) * 15, second=0, microsecond=0)
-            if last + timedelta(minutes=15) >= slot:
+            step = _slot_minutes(timeframe)
+            slot = now.replace(minute=(now.minute // step) * step, second=0, microsecond=0)
+            if last + timedelta(minutes=step) >= slot:
                 continue  # nothing but the in-progress slot is missing
             fetch_from[symbol] = _iso(last + timedelta(seconds=1))
     return keep, fetch_from
@@ -175,16 +195,17 @@ def _read_cache(
 ) -> dict[str, list[dict]]:
     """Everything the cache holds for these symbols from start_iso's day onward."""
     barcache.init_cache()
-    daily_model, intraday_model = _models(asset_class)
     start_day = start_iso[:10]
     sess = barcache.session()
     try:
         if timeframe == "1Day":
             return barcache.cached_daily_bars(
-                sess, symbols, start_day, model=daily_model,
+                sess, symbols, start_day, model=_daily_model(asset_class),
                 stamp=DAILY_STAMP.get(asset_class, DAILY_STAMP["stock"]),
             )
-        return barcache.cached_intraday_bars(sess, symbols, start_day, model=intraday_model)
+        return barcache.cached_intraday_bars(
+            sess, symbols, start_day, model=_intraday_model(asset_class, timeframe)
+        )
     finally:
         sess.close()
 
@@ -192,16 +213,20 @@ def _read_cache(
 def _save(fetched: dict[str, list[dict]], asset_class: str, timeframe: str) -> None:
     """Persist the CLOSED bars from a fetch. Idempotent (insert-or-ignore), so a
     re-run over the same window writes nothing new."""
-    daily_model, intraday_model = _models(asset_class)
     sess = barcache.session()
     try:
         for symbol, bars in fetched.items():
             if not bars:
                 continue
             if timeframe == "1Day":
-                barcache.save_daily_bars(sess, symbol, _closed_daily(bars), model=daily_model)
+                barcache.save_daily_bars(
+                    sess, symbol, _closed_daily(bars), model=_daily_model(asset_class)
+                )
             else:
-                barcache.save_intraday_bars(sess, symbol, _closed_intraday(bars), model=intraday_model)
+                barcache.save_intraday_bars(
+                    sess, symbol, _closed_intraday(bars, _slot_minutes(timeframe)),
+                    model=_intraday_model(asset_class, timeframe),
+                )
         sess.commit()
     finally:
         sess.close()
