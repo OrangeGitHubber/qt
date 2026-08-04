@@ -3,6 +3,47 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## A crypto strategy could stop the engine trading, once a minute, silently (2026-08-04)
+
+Found while building something else, and much more urgent than what it was found
+during.
+
+**If you had a crypto strategy ranked by 30-day return, relative strength or RSI
+enabled, the engine's entire entry cycle crashed every minute** — not just that
+strategy's. One variable inside the ranking code was quietly reusing the name of
+the statistics library it needed a moment later, so the code ended up calling a
+function on a piece of data instead. The resulting error was not the kind the
+engine catches, so it escaped and took the whole evaluation with it: every
+strategy, every symbol, that minute. Then again the next minute.
+
+Nothing in the app would have shown you this. No trade is journalled by a cycle
+that dies before it decides anything, so the symptom is simply that the engine
+stops buying — with a full, healthy-looking watchlist and no error anywhere you
+would look. Stock strategies never touched the path, which is why it survived.
+
+Renamed, along with the two sibling routines carrying the same trap, and pinned
+with a regression test.
+
+## The engine now writes down when it looked (2026-08-04)
+
+Working towards a fidelity comparison that matches on positions rather than
+prices, one gap turned out to be pure missing information rather than physics.
+
+The engine evaluates on a 60-second timer that starts whenever it last restarted,
+so its looks land at some arbitrary second past the minute. A replay evaluates on
+the minute. Nothing had ever recorded which second live was actually sampling, so
+the comparison had to quote that gap as an irreducible floor. It isn't one.
+
+Every decision the engine journals — a buy, a rail rejection, an order that never
+filled, an exit — now records the instant the market data it acted on arrived,
+and the price it saw at that instant. That price is deliberately not the fill
+price: the fill carries slippage and the fill is not what the decision was made
+on. For a rejected candidate no price was recorded at all before, which was
+precisely the case hardest to argue about.
+
+Older trades honestly show "unknown" rather than being handed a made-up time, and
+so do the few rows written by paths that genuinely do not know.
+
 ## The replay now knows what the rest of the account was holding (2026-08-04)
 
 Towards a comparison that matches on **positions**, not prices.

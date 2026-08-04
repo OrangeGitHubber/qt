@@ -93,6 +93,25 @@ class Candidate:
     # CRYPTO_QUIET_TRADE_MINUTES): reported in the entry reason so a later
     # non-fill has its explanation beside it. It decides nothing.
     last_trade_at: datetime | None = None
+    # WHEN THE ENGINE LOOKED: the instant the snapshot that produced `price` came
+    # back from the broker. Decides nothing — it is recorded onto whatever journal
+    # row this candidate produces (see _stamp_entry_eval) so a later comparison
+    # knows which second live was sampling.
+    #
+    # Per SNAPSHOT CALL, not per tick. A tick evaluates every enabled strategy in
+    # sequence and each one issues its own snapshot fetch, so the first symbol of
+    # the tick and the last can be many seconds apart; stamping one per-tick
+    # instant on all of them would be precise-looking and wrong, which is exactly
+    # the ambiguity this is meant to remove. Per (symbol, decision) would be
+    # finer still but would be a lie in the other direction: symbols in one batch
+    # genuinely were read by ONE call, and inventing distinct instants for them
+    # would imply a resolution the fetch does not have.
+    #
+    # None = we do not know. The scanner path can fall back to a price carried
+    # over from the (up to 30s cached) scan when a snapshot returns none, and the
+    # instant that price was read is not recorded anywhere — so it stays None
+    # rather than borrowing the fresher call's timestamp.
+    observed_at: datetime | None = None
 
 
 @dataclass
@@ -495,15 +514,33 @@ def _daily_loss(session: Session, mode: str, day_start: datetime) -> float:
     return max(0.0, -float(realized))
 
 
-async def _quotes_for(client: AlpacaClient, trades: list[Trade]) -> dict[str, dict]:
+async def _quotes_for(
+    client: AlpacaClient, trades: list[Trade]
+) -> tuple[dict[str, dict], dict[str, datetime]]:
+    """Returns (snapshot per symbol, WHEN that snapshot came back per symbol).
+
+    The second map is the exit side of "which second was the engine looking at".
+    It is keyed per symbol because the two legs are two separate fetches issued
+    one after the other — one instant for both would be wrong for whichever leg
+    it wasn't measured on, and the whole point of recording this is that seconds
+    matter. Within a leg the symbols really were read by one call, so they
+    honestly share an instant."""
     stocks = sorted({t.symbol for t in trades if t.asset_class == "stock"})
     cryptos = sorted({t.symbol for t in trades if t.asset_class == "crypto"})
     quotes: dict[str, dict] = {}
+    observed_at: dict[str, datetime] = {}
     if stocks:
         quotes.update(await client.stock_snapshots(stocks))
+        # Taken AFTER the await: this is the moment the engine held that view of
+        # the tape and could act on it. The broker sampled it somewhere inside
+        # the call, so this is the tight upper bound, not a guess.
+        at = datetime.now(timezone.utc)
+        observed_at.update(dict.fromkeys(stocks, at))
     if cryptos:
         quotes.update(await client.crypto_snapshots(cryptos))
-    return quotes
+        at = datetime.now(timezone.utc)
+        observed_at.update(dict.fromkeys(cryptos, at))
+    return quotes, observed_at
 
 
 def _price_from_snapshot(snap: dict) -> tuple[float | None, float | None]:
@@ -849,7 +886,7 @@ async def _manage_exits(
     if not open_trades:
         return
     try:
-        quotes = await _quotes_for(client, open_trades)
+        quotes, observed_at = await _quotes_for(client, open_trades)
     except AlpacaError as exc:
         log.warning("exit check: quote fetch failed: %s", exc)
         return
@@ -929,6 +966,20 @@ async def _manage_exits(
             slip_max_pct=exit_cfg.get("exit_slippage_max_pct"),
             market=execution.market_mode(params),
         )
+        # WHICH SECOND this exit was decided on, and the price it was decided on.
+        # The residual the fidelity report calls a "poll phase floor" is an EXIT
+        # residual — the replay checks the stop at bar close, the engine checked
+        # it at :17 — so this is the column that closes it. exit_price is the
+        # FILL, which has slippage and a limit in it; this is what was seen.
+        #
+        # Stamped only when an exit was actually decided, not on every look at
+        # every open position: that would dirty every open row every minute for
+        # no new information. Stamped even if close_trade could not complete —
+        # the LOOK happened, and the next attempt overwrites it, so the value
+        # always describes the look that produced the exit finally recorded.
+        # After the await and attribute-only, so it cannot affect the order.
+        trade.exit_eval_at = observed_at.get(trade.symbol)
+        trade.exit_eval_price = price
 
 
 # One-time log guard so the persistence-freeze warning doesn't repeat every tick.
@@ -982,6 +1033,52 @@ def _universe_summary(session: Session, strategy: Strategy) -> str:
     if strategy.universe == "both":
         return "Today's scanner movers plus your watchlist."
     return "Today's scanner movers (the day's top risers)."
+
+
+def _stamp_entry_eval(
+    session: Session, strategy_id: int, cand: Candidate, trade: Trade | None
+) -> None:
+    """Record WHICH SECOND the engine was looking at, and the price it saw, onto
+    whatever journal row this entry decision produced.
+
+    Two shapes of row need it and only one of them comes back to the caller. A
+    fill is returned by execution.open_trade; a decline is NOT — open_trade
+    journals a "rejected" Trade into this session and returns None, on all five
+    of its failure paths. So when there is no trade we stamp the rejected rows it
+    left behind, matched on this strategy and symbol.
+
+    Rejections matter here at least as much as fills: "live passed on this, the
+    replay bought it" is the argument the fidelity comparison exists to settle,
+    and it cannot be settled without knowing which second live was looking.
+
+    Wrapped so it can never abort a trade. The order is already placed and the
+    row is already correct without these two fields — a bookkeeping detail must
+    not be able to raise past a real position.
+    """
+    try:
+        rows = (
+            [trade]
+            if trade is not None
+            else [
+                o
+                for o in session.new
+                if isinstance(o, Trade)
+                and o.strategy_id == strategy_id
+                and o.symbol == cand.symbol
+                and o.entry_eval_at is None
+            ]
+        )
+        for row in rows:
+            # May be None — a candidate whose price came from somewhere with no
+            # recorded observation instant. Left as NULL rather than filled in
+            # with "now", because "we do not know when the engine looked" has to
+            # stay distinguishable from a recorded time.
+            row.entry_eval_at = cand.observed_at
+            row.entry_eval_price = cand.price
+    except Exception:  # noqa: BLE001 — never let bookkeeping break a trade
+        log.warning(
+            "could not record the evaluation instant for %s", cand.symbol, exc_info=True
+        )
 
 
 async def _consider_entries(
@@ -1141,6 +1238,11 @@ async def _consider_entries(
                                 account_id=get_setting(session, "current_account_id"),
                                 qty=0, notional=0, status="rejected",
                                 entry_reason=f"wanted to buy ({entry_reason}{rank_note}) but {rails_reason}",
+                                # Which second the engine was looking at, and at
+                                # what price, when it declined. Nothing else on a
+                                # rejected row records a price at all.
+                                entry_eval_at=cand.observed_at,
+                                entry_eval_price=cand.price,
                             )
                         )
                     continue
@@ -1164,6 +1266,10 @@ async def _consider_entries(
                     bought_reason,
                     sizing_usd=entry_sizing,
                 )
+                # Whichever row that produced — the fill, or the "rejected" row
+                # open_trade journals when the order never happened — carries the
+                # instant the engine looked and the price it saw.
+                _stamp_entry_eval(session, strategy.id, cand, trade)
                 if trade is None:
                     # open_trade wrote the real reason onto a rejected Trade it
                     # added to this session; prefer that over a generic line, so
@@ -1286,16 +1392,19 @@ async def _consider_dca_entries(
                         account_id=get_setting(session, "current_account_id"),
                         qty=0, notional=0, status="rejected",
                         entry_reason=f"wanted to buy ({reason}) but {rails_reason}",
+                        entry_eval_at=cand.observed_at,
+                        entry_eval_price=cand.price,
                     )
                 )
             continue
 
         from qt.services import execution
 
-        await execution.open_trade(
+        trade = await execution.open_trade(
             session, client, strategy, version_id, mode, cand,
             f"{reason}; {rails_reason}",
         )
+        _stamp_entry_eval(session, strategy.id, cand, trade)
 
 
 async def _candidates_for(
@@ -1357,6 +1466,7 @@ async def _candidates_for(
                 if strategy.asset_class == "stock"
                 else await client.crypto_snapshots(symbols)
             )
+            snapped_at = datetime.now(timezone.utc)  # when this view of the tape landed
             for row in rows:
                 snap = snaps.get(row["symbol"]) or {}
                 price, vwap = _price_from_snapshot(snap)
@@ -1365,6 +1475,11 @@ async def _candidates_for(
                         symbol=row["symbol"], asset_class=row["asset_class"],
                         price=price or row["price"], change_pct=row["change_pct"], vwap=vwap,
                         last_trade_at=last_trade_at_from_snapshot(snap),
+                        # Only when the price came from THIS call. The fallback is
+                        # the scan's own price, read at an instant nothing records
+                        # (the scan is cached for up to 30s), and stamping it with
+                        # this timestamp would claim a freshness it does not have.
+                        observed_at=snapped_at if price else None,
                     )
                 )
         if strategy.universe in ("watchlist", "both"):
@@ -1382,6 +1497,10 @@ async def _candidates_for(
                     if strategy.asset_class == "stock"
                     else await client.crypto_snapshots(symbols)
                 )
+                # Measured HERE, not after the rolling-stats fetch below: the
+                # price these candidates carry comes from `snaps`, and a second
+                # round-trip's worth of latency does not belong in it.
+                snapped_at = datetime.now(timezone.utc)
                 # Crypto day-gain is the ROLLING 24h change, not the 00:00-UTC
                 # calendar-day one. This branch was the last consumer still using
                 # the calendar day, and it is reached by every "watchlist" and
@@ -1406,14 +1525,15 @@ async def _candidates_for(
                         prev = (snap.get("prevDailyBar") or {}).get("c")
                         change = ((daily / prev - 1) * 100) if daily and prev else 0.0
                     else:
-                        stats = crypto_stats.get(sym)
-                        change = stats[1] if stats else 0.0
+                        roll = crypto_stats.get(sym)  # not `stats` — see _pool_metrics
+                        change = roll[1] if roll else 0.0
                     if price:
                         candidates.append(
                             Candidate(
                                 symbol=sym, asset_class=strategy.asset_class,
                                 price=price, change_pct=round(change, 2), vwap=vwap,
                                 last_trade_at=last_trade_at_from_snapshot(snap),
+                                observed_at=snapped_at,
                             )
                         )
     except AlpacaError as exc:
@@ -1430,6 +1550,7 @@ async def _symbol_candidates(
     is the candidate set, not an auto-buy list."""
     is_stock = asset_class == "stock"
     snaps = await (client.stock_snapshots(symbols) if is_stock else client.crypto_snapshots(symbols))
+    snapped_at = datetime.now(timezone.utc)  # when this view of the tape landed
     # Crypto "day gain" is the ROLLING 24h change (the scanner's definition —
     # crypto has no session day), NOT the 00:00-UTC calendar bar. The snapshot
     # still supplies price/vwap (freshest for sizing); only the change baseline
@@ -1444,14 +1565,15 @@ async def _symbol_candidates(
             prev = (snap.get("prevDailyBar") or {}).get("c")
             change = ((daily / prev - 1) * 100) if daily and prev else 0.0
         else:
-            stats = crypto_stats.get(sym)
-            change = stats[1] if stats else 0.0
+            roll = crypto_stats.get(sym)  # not `stats` — see _pool_metrics
+            change = roll[1] if roll else 0.0
         if price:
             out.append(
                 Candidate(
                     symbol=sym, asset_class=asset_class,
                     price=price, change_pct=round(change, 2), vwap=vwap,
                     last_trade_at=last_trade_at_from_snapshot(snap),
+                    observed_at=snapped_at,
                 )
             )
     return out
@@ -1459,12 +1581,18 @@ async def _symbol_candidates(
 
 async def _pool_metrics(
     client: AlpacaClient, asset_class: str, symbols: list[str], rank_by: str
-) -> tuple[dict, dict, dict, dict]:
+) -> tuple[dict, dict, dict, dict, datetime | None]:
     """Snapshot a pool and compute the ranking metric for each symbol. Returns
-    (metrics, price_map, vwap_map, trade_at_map). Shared by live candidate
-    selection and the 'current ranking' view so both rank identically. Only
-    fetches the daily bars a bar-based metric needs; momentum_today rides on the
-    snapshot alone."""
+    (metrics, price_map, vwap_map, trade_at_map, snapped_at). Shared by live
+    candidate selection and the 'current ranking' view so both rank identically.
+    Only fetches the daily bars a bar-based metric needs; momentum_today rides on
+    the snapshot alone.
+
+    `snapped_at` is when the PRICE snapshot landed — the instant the engine saw
+    this pool. It is measured before the daily-bars fetch below, which on a
+    bar-based ranking is a second round trip over 320 days of history: timing the
+    look after that would add the latency of a call the prices did not come from.
+    None when there was nothing to snapshot."""
     from qt.services import stats
 
     price_map: dict[str, float] = {}
@@ -1472,10 +1600,11 @@ async def _pool_metrics(
     trade_at_map: dict[str, datetime | None] = {}
     metrics: dict[str, dict[str, float | None]] = {}
     if not symbols:
-        return metrics, price_map, vwap_map, trade_at_map
+        return metrics, price_map, vwap_map, trade_at_map, None
 
     is_stock = asset_class == "stock"
     snaps = await (client.stock_snapshots(symbols) if is_stock else client.crypto_snapshots(symbols))
+    snapped_at = datetime.now(timezone.utc)
     # Crypto momentum_today = rolling 24h change (one definition everywhere —
     # see scanner.rolling_24h); stocks use the snapshot's session-day change.
     crypto_stats = {} if is_stock else await scanner.crypto_rolling_stats(client, symbols)
@@ -1487,8 +1616,15 @@ async def _pool_metrics(
             prev = (snap.get("prevDailyBar") or {}).get("c")
             change = ((daily / prev - 1) * 100) if daily and prev else None
         else:
-            stats = crypto_stats.get(sym)
-            change = stats[1] if stats else None
+            # NOT named `stats`: this function also uses the qt.services.stats
+            # MODULE below, and binding that name here made it a local for the
+            # whole function — so a CRYPTO pool ranked by return_30d /
+            # relative_strength / rsi reached `stats.pct_change_over` holding a
+            # rolling-stats tuple and raised AttributeError. That propagates out
+            # of _candidates_for (which only catches AlpacaError) and kills the
+            # entire tick, for every strategy, every 60 seconds.
+            roll = crypto_stats.get(sym)
+            change = roll[1] if roll else None
         if price:
             price_map[sym] = price
         vwap_map[sym] = vwap
@@ -1528,7 +1664,7 @@ async def _pool_metrics(
                     if member_return is not None:
                         metrics[sym]["rs_vs_spy"] = round(member_return - spy_return, 2)
 
-    return metrics, price_map, vwap_map, trade_at_map
+    return metrics, price_map, vwap_map, trade_at_map, snapped_at
 
 
 def _rank_note(rank_by: str | None, cand: Candidate) -> str:
@@ -1564,7 +1700,7 @@ async def _ranked_candidates(
     symbols = sorted(set(symbols))
     if not symbols:
         return []
-    metrics, price_map, vwap_map, trade_at_map = await _pool_metrics(
+    metrics, price_map, vwap_map, trade_at_map, snapped_at = await _pool_metrics(
         client, asset_class, symbols, rank_by
     )
     ranked = ranking.rank_symbols(metrics, rank_by, top_n)
@@ -1585,6 +1721,7 @@ async def _ranked_candidates(
                 change_pct=metrics[sym]["momentum_today"] or 0.0,
                 vwap=vwap_map.get(sym),
                 last_trade_at=trade_at_map.get(sym),
+                observed_at=snapped_at,
                 rank=position,
                 rank_of=len(ranked),
             )
@@ -1661,7 +1798,7 @@ async def rank_pool(session: Session, client: AlpacaClient, strategy: Strategy) 
     pool = sorted(set(_strategy_pool(session, strategy)))
     if not pool:
         return []
-    metrics, price_map, _vwap, _trade_at = await _pool_metrics(
+    metrics, price_map, _vwap, _trade_at, _snapped_at = await _pool_metrics(
         client, strategy.asset_class, pool, strategy.rank_by
     )
 

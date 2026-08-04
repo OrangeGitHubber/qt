@@ -162,6 +162,38 @@ class Trade(Base):
     # attaches an order id — or we move to a broker that does — attribution has
     # somewhere honest to land without another migration.
     fees: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # WHEN THE ENGINE ACTUALLY LOOKED AT THE TAPE, and the price it saw.
+    #
+    # The live engine evaluates every 60 seconds counted from whenever the
+    # scheduler last started, so its looks land at an arbitrary second past the
+    # minute (:17, :18 and :44 have all been observed). A replay evaluates at bar
+    # close, on the minute. Nothing recorded the engine's phase, so the two were
+    # sampling the tape up to a bar apart and the fidelity report had to quote an
+    # irreducible "poll phase floor" for a difference that was really just an
+    # unrecorded fact. These four columns are that fact.
+    #
+    # `*_eval_at` is the instant the SNAPSHOT this decision read came back — not
+    # the instant the tick started. One tick evaluates ~17 strategies in
+    # sequence, each with its own snapshot call, so a single per-tick instant
+    # would be seconds wrong for the later ones and would re-create the very
+    # ambiguity being removed. See engine._quotes_for / engine._pool_metrics.
+    #
+    # `*_eval_price` is what the engine saw at that instant, which is NOT
+    # entry_price/exit_price: those are FILL prices (slippage, limit, partial).
+    # On a rejected row nothing else records a price at all, and a rejection is
+    # exactly the case a comparison argues about ("live passed on this, the
+    # replay bought it"). Live reads a consolidated snapshot trade and the replay
+    # reads an IEX bar close; having both makes that a measured number.
+    #
+    # NULL means "we do not know when the engine looked" — every row written
+    # before 0015, plus any row whose price came from somewhere with no recorded
+    # observation instant. It is never back-filled from created_at: a confident
+    # wrong timestamp under the one feature whose job is measuring accuracy is
+    # worse than an honest blank.
+    entry_eval_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    entry_eval_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    exit_eval_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    exit_eval_price: Mapped[float | None] = mapped_column(Float, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
 
 

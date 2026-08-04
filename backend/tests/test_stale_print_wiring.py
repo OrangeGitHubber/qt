@@ -63,7 +63,7 @@ async def test_ranked_candidates_carry_the_print_time():
 async def test_pool_metrics_returns_the_print_time_map():
     with patch.object(AlpacaClient, "crypto_snapshots", new=AsyncMock(return_value={SYMBOL: _snap(STALE_AT)})):
         with patch.object(engine.scanner, "crypto_rolling_stats", new=AsyncMock(return_value={SYMBOL: (1.3749, 5.0, 9_000.0)})):
-            _metrics, _prices, _vwaps, trade_at = await engine._pool_metrics(
+            _metrics, _prices, _vwaps, trade_at, _snapped_at = await engine._pool_metrics(
                 _client(), "crypto", [SYMBOL], "momentum_today"
             )
     assert trade_at.get(SYMBOL) is not None
