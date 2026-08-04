@@ -3,6 +3,37 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## The replay opened after the trade it was grading (2026-08-04)
+
+Strategy 25 kept reporting three real trades as "the replay missed it", and the
+reason was not resolution at all. Two separate faults, both about *when* the
+replay was allowed to start.
+
+**A settings change cut the window mid-bar.** The comparison splits the window at
+each edit so every stretch is replayed with the settings that were live at the
+time. That edit landed at 13:58:05 and MSFT filled at 13:58:58 — the same minute.
+The stretch after the edit began at 13:58:05, five seconds *inside* that minute's
+bar, and a replay can only act on a bar that begins at or after its start. The
+bar both MSFT and AMZN entered on was out of reach before the bar size was even
+chosen, so no amount of finer resolution could have found them. Stretches now
+open at the start of the bar their edit fell in — except on daily bars, where
+that correction would hand the replay a whole morning under settings that were
+not yet in force, which is worse than the problem.
+
+**And the replay started at the first trade rather than at go-live.** The rule is
+meant to be "the engine could not act before it was switched on" — a backtest
+must not run from the morning when the strategy went live at 3pm. It was
+anchored to the first *fill* instead, which is the same idea taken much too far:
+a strategy switched on at 23:06 that first traded at 09:58 the next morning had
+its replay opened eleven hours late, on the very bar of the trade it was being
+judged against, with none of the run-up the engine had. It now opens where the
+engine went live, falling back to the first trade only when the switch-on moment
+was never recorded.
+
+Neither fault shows up in a unit test — both live in the wiring between splitting
+the window and running the replay — so the tests for them go through the
+comparison endpoint end to end.
+
 ## The overnight comparison keeps its minute bars (2026-08-04)
 
 Yesterday's fix cut a long comparison into day-sized pieces so the stretches

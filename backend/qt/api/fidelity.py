@@ -506,6 +506,67 @@ def _cutting_buys_minute_bars(segment: _Segment) -> bool:
     )
 
 
+def _floor_boundaries_to_bars(segments: list[_Segment]) -> list[_Segment]:
+    """Open each stretch at the START OF A BAR, not at the instant the
+    configuration changed.
+
+    MEASURED ON STRATEGY 25, and it cost three real trades. Config version 2 was
+    written at 13:58:05.173; MSFT filled at 13:58:58.131, fifty-three seconds
+    later on the same minute bar. The window is cut at every config change, so
+    the second stretch replayed from 13:58:05 — five seconds INTO that bar. A
+    replay grades a bar when it CLOSES and can only act on bars beginning at or
+    after its start, so the 13:58 bar was unreachable. Both MSFT and AMZN enter
+    on it (measured directly at 1Min: both at 13:59:00, which is that bar
+    closing). No resolution could have saved those trades; they were outside the
+    replay's reach before the bar size was ever chosen.
+
+    `_replay_floor` has always said this about go-live — "gating at 14:30:07
+    skips the bar that CAUSED that first trade" — and was only ever applied
+    there. A configuration changes at a wall-clock instant; bars do not.
+
+    The bar size is the one the stretch will REALLY be replayed at, which for a
+    stretch about to be chunked is the chunk's, not the whole stretch's. Getting
+    that wrong the generous way is worse than not flooring at all: a 28-hour
+    stretch floored as if it were 15-minute bars opens thirteen minutes before
+    the edit, and anything the replay buys there is bought under a configuration
+    that was not yet in force.
+
+    The previous stretch keeps its END, so the two overlap by seconds. That is
+    deliberate and it is where trades in those seconds belong: `_place_trades`
+    files a trade under the FIRST stretch that contains it, so the seconds
+    before the edit still count against the config that was actually live. And
+    the earlier stretch cannot double-count the shared bar — it ends before that
+    bar closes.
+
+    NOT for a stretch replayed on DAILY bars, and that exclusion is the whole
+    reason this is bounded rather than general. A daily bar is stamped at the
+    start of its day, so flooring an afternoon edit to that bar hands the replay
+    the entire morning — up to 24 hours under a configuration that was not yet in
+    force, to spare it a fraction of one decision. Caught by the rail-seed test:
+    a boundary floored back over a loss that had happened three hours before it
+    stopped being a loss the stretch had to carry. The correction is worth making
+    only while it is smaller than the thing being corrected — at most one
+    intraday bar, never a day."""
+    out = [segments[0]] if segments else []
+    for previous, segment in zip(segments, segments[1:]):
+        params = replay_strategy(segment.config).get("params") or {}
+        span = (segment.end - segment.start).total_seconds() / 3600
+        hours = (
+            min(span, MAX_HOURS_FOR_MINUTE_REPLAY)
+            if _cutting_buys_minute_bars(segment)
+            else span
+        )
+        timeframe = _timeframe_for(params, hours)
+        if timeframe == "1Day":
+            out.append(segment)
+            continue
+        # Never back past the previous stretch's own start: two edits inside one
+        # bar would otherwise reorder the boundaries they came from.
+        floored = max(previous.start, _bar_floor(segment.start, timeframe))
+        out.append(replace(segment, start=floored))
+    return out
+
+
 def _chunk_for_minute_replay(
     segments: list[_Segment], live_rows: list[dict]
 ) -> list[_Segment]:
@@ -1752,9 +1813,11 @@ async def compare(
     # longer than a day cannot have minute bars, and the live engine decides
     # every 60 seconds. See _chunk_for_minute_replay.
     segments = _chunk_for_minute_replay(
-        _build_segments(session, strategy, since, until)
-        if body.imported_trades is None
-        else [],
+        _floor_boundaries_to_bars(
+            _build_segments(session, strategy, since, until)
+            if body.imported_trades is None
+            else []
+        ),
         live_rows,
     )
 
@@ -1766,11 +1829,30 @@ async def compare(
     # replay opens up to fourteen minutes before the engine did, in bars fine
     # enough to trade in. Whatever it buys there is reported as a trade it
     # invented, which is the exact false verdict the hold-back exists to prevent.
+    #
+    # ANCHORED TO GO-LIVE, not to the first fill. The rule the hold-back exists
+    # for is "the engine could not act before it was switched on" — a strategy
+    # enabled at 3pm must not be replayed from that morning. Anchoring to the
+    # first TRADE is the same idea taken far past its warrant: a strategy switched
+    # on at 23:06 that first traded at 09:58 the next morning had its replay
+    # opened eleven hours late, on the very bar that produced the trade it was
+    # being judged against — and the run-up the engine really had (the session's
+    # VWAP, the day's range, what it had already passed on) went with it.
+    #
+    # Falls back to the first trade only when go-live is genuinely unknown:
+    # strategies switched on before `enabled_at` existed and whose audit line has
+    # not survived. A guess there would shift every verdict in a report whose
+    # whole job is measuring accuracy, so the conservative anchor is right.
+    #
+    # No clamp needed for a strategy enabled long BEFORE the window: _replay_floor
+    # never returns earlier than `since`, and the engine was live across the whole
+    # window anyway, so there is nothing to hold back from.
+    anchor = switched_on or began
     replay_from = _replay_floor(
-        json.loads(strategy.params), began, since, until,
+        json.loads(strategy.params), anchor, since, until,
         stretch=next(
-            ((s.start, s.end) for s in segments if s.start <= began < s.end), None
-        ) if began else None,
+            ((s.start, s.end) for s in segments if s.start <= anchor < s.end), None
+        ) if anchor else None,
     )
     if segments and replay_from > segments[0].start:
         # The hold-back lands wherever go-live falls, which is NOT necessarily

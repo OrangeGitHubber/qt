@@ -143,6 +143,35 @@ def _strategy(client, name: str) -> int:
     }).json()["id"]
 
 
+def _edit(client, sid: int, *, min_gain: float, at: datetime) -> None:
+    """Save a real config change, then backdate the version it minted — which is
+    what cuts the window. `created_at` is the boundary."""
+    body = client.get("/api/strategies").json()
+    current = next(s for s in body if s["id"] == sid)
+    params = current["params"]
+    params["entry"]["min_day_gain_pct"] = min_gain
+    payload = {
+        "name": current["name"], "asset_class": "crypto", "universe": "custom",
+        "symbols": [SYMBOL], "preset": "custom", "params": params,
+        "sizing_usd": 100, "sleeve_usd": 1000, "max_positions": 3,
+        "swing_mode": True, "ignore_regime": True,
+    }
+    assert client.put(f"/api/strategies/{sid}", json=payload).status_code == 200
+    with session_scope() as s:
+        rows = (
+            s.query(StrategyConfigVersion)
+            .filter_by(strategy_id=sid)
+            .order_by(StrategyConfigVersion.version_no)
+            .all()
+        )
+        # The version the strategy was CREATED with has to predate the window,
+        # or `_config_timeline` reads it as the newest and finds no change at
+        # all — which is a fixture that quietly tests nothing.
+        for row in rows[:-1]:
+            row.created_at = at - timedelta(days=1)
+        rows[-1].created_at = at
+
+
 def _trade(sid: int, at: datetime, *, symbol: str = SYMBOL, closed_at=None) -> None:
     with session_scope() as s:
         s.add(Trade(
@@ -254,6 +283,101 @@ def test_the_hold_back_is_floored_to_the_bar_the_stretch_will_really_use(
         f"the replay opened at {opening.start}, the engine at {bought_at} — "
         f"{(bought_at - opening.start).total_seconds() / 60:.0f} free minutes. "
         f"Replays: {replays}"
+    )
+
+
+def test_the_replay_opens_where_the_engine_WENT_LIVE_not_at_the_first_fill(
+    client, configured, cache
+):
+    """THE HOLD-BACK IS ABOUT GO-LIVE, and it was anchored to the first TRADE.
+
+    The rule the comparison is built on is "the engine could not act before it
+    was switched on" — so a replay must not open at the start of the day when
+    the strategy went live at 3pm, or it buys a morning the engine never saw.
+    `began` was the first FILL rather than the switch-on, which is the same idea
+    taken far too far: strategy 25 went live at 23:06 and first traded at 09:58
+    the next morning, so the replay opened eleven hours late, on the very bar
+    that produced the trade it was being judged against.
+
+    At 15-minute bars that is fatal and not subtle. The floor lands on 09:45,
+    the first close the replay can act on is 10:00, and the fill it is grading
+    happened at 09:58:58 — between them. The replay cannot make that trade at
+    any resolution, and the report calls it "the kind that points at a real
+    bug".
+
+    Go-live is also the only anchor that gives the replay the run-up the engine
+    had. Eleven hours of session context — VWAP, the day's range, what the
+    account was already holding — is the difference between grading a decision
+    and grading a cold start."""
+    start, end = _window(30)
+    sid = _strategy(client, "chunk go-live anchor")
+    # Go-live sits after the trade day's own midnight, which is strategy 25's
+    # shape (switched on 03:06 UTC, first fill 13:58 UTC) and is what makes
+    # go-live — rather than the window's opening — the binding edge.
+    live_at = (start + timedelta(hours=10)).replace(minute=6, second=57, microsecond=0)
+    with session_scope() as s:
+        s.get(Strategy, sid).enabled_at = live_at
+    # Nearly two hours live before it did anything.
+    bought_at = (start + timedelta(hours=11)).replace(minute=58, second=58, microsecond=0)
+    _trade(sid, bought_at)
+
+    _, replays = _compare(client, sid, start, end)
+
+    opening = min(replays, key=lambda r: r.start)
+    # Go-live to the second. The window itself opens there (`since` is clamped to
+    # the switch-on), so the bar floor has nothing left to give — the replay
+    # cannot act on the bar go-live fell inside, where the engine's next poll
+    # could. That is one bar at the very start of the live period and it is left
+    # alone deliberately: closing it means floating `since` below the moment the
+    # engine existed, which is a claim about trade MATCHING, not about bars.
+    assert opening.start == live_at, (
+        f"the replay opened at {opening.start}; the engine went live at {live_at} and "
+        f"first traded at {bought_at}. Replays: {replays}"
+    )
+    assert bought_at - opening.start > timedelta(hours=1), \
+        "the replay must have the run-up the engine had, not start on the fill's own bar"
+
+
+def test_a_config_boundary_does_not_swallow_the_bar_the_trade_was_made_on(
+    client, configured, cache
+):
+    """MEASURED ON STRATEGY 25, and the reason three real trades were reported
+    as "the kind that points at a real bug".
+
+    Config version 2 was written at 13:58:05.173. MSFT filled at 13:58:58.131 —
+    fifty-three seconds later, on the same minute bar. The comparison cuts the
+    window at every config change, so the second stretch's replay opened at
+    13:58:05: five seconds INTO the 13:58 bar. A replay grades a bar when it
+    closes, so it can only act on bars that begin at or after its start, and the
+    13:58 bar was the one both MSFT and AMZN entered on (measured directly at
+    1Min: both enter at 13:59:00, which is that bar closing). The boundary put
+    the entry out of reach at every resolution — chunking could not have saved
+    it, and did not.
+
+    `_replay_floor` exists for exactly this and was only ever applied to
+    go-live: "gating at 14:30:07 skips the bar that CAUSED that first trade".
+    A configuration changes at a wall-clock instant; bars do not.
+
+    The stretch BEFORE the boundary cannot double-count it — it stops at
+    13:58:05, and the 13:58 bar does not close until 13:59:00, after its end."""
+    start, end = _window(30)
+    sid = _strategy(client, "chunk boundary bar")
+    with session_scope() as s:
+        s.get(Strategy, sid).enabled_at = start
+    # The edit, five seconds into a minute — strategy 25's 13:58:05.173.
+    edited_at = (start + timedelta(hours=11)).replace(minute=58, second=5, microsecond=173441)
+    bought_at = edited_at.replace(second=58, microsecond=131905)
+    _edit(client, sid, min_gain=1.3, at=edited_at)
+    _trade(sid, bought_at)
+
+    _, replays = _compare(client, sid, start, end)
+
+    covering = [r for r in replays if r.covers(bought_at)]
+    assert covering, f"no replay covered the fill at all: {replays}"
+    assert min(r.start for r in covering) == edited_at.replace(second=0, microsecond=0), (
+        f"the stretch holding the fill opened at {min(r.start for r in covering)}, which is "
+        f"inside the {edited_at:%H:%M} bar the trade was made on — that bar closes at "
+        f"{edited_at.minute + 1:02d}:00 and the replay can never act on it. Replays: {replays}"
     )
 
 
