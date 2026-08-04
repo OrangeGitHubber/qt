@@ -425,7 +425,10 @@ function OpenPositionsCard() {
             ? [
                 { label: "Held by", value: pending.strategy_name },
                 { label: "Quantity", value: String(pending.qty) },
-                { label: "Entry", value: `$${pending.entry_price.toFixed(4)}` },
+                {
+                  label: "Entry",
+                  value: pending.entry_price != null ? `$${pending.entry_price.toFixed(4)}` : "—",
+                },
                 {
                   label: "Now",
                   value: pending.current_price != null ? `$${pending.current_price.toFixed(4)}` : "—",
@@ -488,7 +491,9 @@ function OpenPositionsCard() {
                   <td className="sym">{p.symbol}</td>
                   {cols.has("mode") && <td>{p.mode}</td>}
                   {cols.has("qty") && <td>{p.qty}</td>}
-                  {cols.has("entry") && <td>${p.entry_price.toFixed(4)}</td>}
+                  {cols.has("entry") && (
+                    <td>{p.entry_price != null ? `$${p.entry_price.toFixed(4)}` : "—"}</td>
+                  )}
                   {cols.has("now") && (
                     <td>{p.current_price != null ? `$${p.current_price.toFixed(4)}` : "—"}</td>
                   )}

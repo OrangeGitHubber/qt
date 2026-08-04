@@ -3,6 +3,41 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## A blank Dashboard, and five other things you should not have had to find (2026-08-03)
+
+An audit that could actually render the app — rather than read the stylesheet and
+hope — turned up six defects. The first one matters far more than the rest.
+
+**The Dashboard went completely blank whenever a position had no entry price
+yet.** A position that has been ordered but not filled has a size and no price,
+and the table called `.toFixed()` on it without checking. That throws, React
+unmounts the page, and you get white. It type-checked cleanly because the
+frontend declared the field as always-present while the server has always
+allowed it to be empty — the type was wrong, so the compiler was checking a
+fiction. Both places that printed it now show a dash instead.
+
+**The Journal toolbar pushed the page sideways on a narrow window.** Below about
+1165px the filter row could not fit — it does not wrap — so the page grew a
+horizontal scrollbar and the "Trade journal" heading was crushed to three
+letters wide. Adding the symbol and strategy filters this morning is what made
+it reachable. Toolbars wrap now.
+
+**Loss figures failed the contrast standard exactly while you hovered them.**
+The new row highlight lightened the background just enough to push red P&L below
+the legibility threshold — while you were pointing at the row to read it. Losses
+now use a lighter red that passes both at rest and hovered. Borders, badges and
+danger buttons keep the original colour.
+
+**The strategy notes box had become the widest control in the app** — 1528px on
+a wide screen, against 272px for everything else — after form cards lost their
+width cap earlier today. It is bounded again.
+
+Also: the three new "how this works" toggles on the Optimizer were wearing
+Chrome's default grey triangle instead of the app's own arrow, the basket chip
+list could still turn into a scrollbox at ordinary widths, and two dead style
+rules were removed along with three stacked comments that argued for rules which
+no longer existed.
+
 ## The backtest universe list stops scrolling in a little box (2026-08-03)
 
 Capping the width of grid columns — which stopped form fields spreading across a

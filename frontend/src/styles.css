@@ -9,6 +9,20 @@
   --ok: #2ecc71;
   --warn: #f39c12;
   --err: #e74c3c;
+  /* --err as BODY TEXT, lightened.
+   *
+   * #e74c3c reads 4.52:1 against --panel — a hair over the 4.5 AA floor, and
+   * only while the row is at rest. The row-hover tint added today lifts the
+   * backdrop to rgb(37,41,50), which drops it to 3.81:1: every loss figure in
+   * every table fails AA at exactly the moment you hover the row to read it.
+   * No tint alpha fixes that (4% still measures 4.13) — the base colour was
+   * always the problem, the tint only exposed it.
+   *
+   * #ff6b5b measures 6.17:1 at rest and 5.21:1 hovered. Same hue family, so it
+   * still reads as the app's red beside an --err border or button. Kept
+   * separate from --err so borders, the LIVE badge and the danger button keep
+   * the saturated colour, where contrast is not the constraint. */
+  --err-text: #ff6b5b;
   --icon-sm: 16px;
   --icon-md: 20px;
 }
@@ -561,6 +575,16 @@ textarea:focus {
   margin-top: 1.25rem;
 }
 
+/* The notes box is the ONE place in the editor you type sentences, and
+   `textarea { width: 100% }` was bounded only by the card. When the editor card
+   lost its 62rem cap today it went to 1528px measured — five and a half times
+   the next-widest control in the form (272px), and a line length nobody types
+   comfortably into. Uncapping the card was right for the field grid; a prose
+   box is the exception, so it keeps a measure of its own. */
+.notes-field textarea {
+  max-width: 60rem;
+}
+
 /* The editor's primary button holds its width while the label changes to
    "Saving…". Without a floor the row re-flows mid-click and every button beside
    it slides left — the motion reads as a glitch, right when you're watching to
@@ -685,11 +709,27 @@ footer {
   align-items: center;
   gap: 0.75rem;
   margin-bottom: 1rem;
+  /* WRAPS. A nowrap toolbar has exactly one shock absorber — the h2's `flex: 1`
+     — and once that is spent the row simply runs off the page.
+     Measured on the journal at a 1100px viewport, with a strategy name long
+     enough to hit the 14rem select cap: the controls need 1117px, the shell
+     offers 1053, and the document grows 128px of horizontal scroll while the
+     title is crushed to 80px and stacks three lines high. Journal filtering
+     added two more controls to that row today, which is what spent the slack.
+     Wrapping costs one extra row at narrow widths and changes nothing at 1280+
+     (verified identical at 1680). */
+  flex-wrap: wrap;
+  row-gap: 0.5rem;
 }
 
 .toolbar h2 {
   margin: 0;
-  flex: 1;
+  /* `flex: 1` (basis 0) still grows to push trailing controls to the right
+     edge, but a 0 basis also lets the title be squeezed below its own text.
+     `auto` basis keeps the growth and refuses the squeeze — the controls wrap
+     instead, which is the outcome you want. */
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
 button.small {
@@ -867,8 +907,10 @@ tr:last-child td {
   color: var(--ok);
 }
 
+/* Loss figures are read against a HOVERED row as often as a resting one — see
+   --err-text for the measured contrast either way. */
 .down {
-  color: var(--err);
+  color: var(--err-text);
 }
 
 .note {
@@ -963,7 +1005,18 @@ tr:last-child td {
   flex-wrap: wrap;
   gap: 0.3rem;
   margin-top: 0.3rem;
-  max-height: 7.5rem;
+  /* A hard ceiling on a WRAPPING list is width-dependent by construction: the
+     same symbols need more rows in a narrower column, so the scrollbox appears
+     and disappears with the window. Widening the column (a618584) raised the
+     width at which it bites; it did not remove the condition. Measured after
+     that fix, at a 1280px viewport in Compare mode with the 50 symbols
+     resolveUniverse() caps a universe at: column 587px, content 161px, clipped
+     to 120px — the scrollbox is back.
+     11rem clears 50 chips at every column width the two-up compare layout
+     produces (587px and wider). It is still a ceiling, and a narrow enough
+     column will still reach it; what it must never do is appear on an ordinary
+     screen for an ordinary basket. */
+  max-height: 11rem;
   overflow-y: auto;
 }
 .chip-ro {
@@ -1135,23 +1188,17 @@ tr.log-gap td {
   color: var(--text);
 }
 
-/* INPUT areas keep a comfortable column; OUTPUT gets the width.
-   That's the split the wider shell needs. A two-field .filter-grid stretched
-   across 1600px puts "Spread cost" 800px from "History" — auto-fit hands the
-   leftover space to the tracks — so widening made the forms HARDER to scan
-   while leaving a void beside the text. Tables, charts and result panels still
-   run the full width, which is what the extra room was for. */
-/* An INPUT card holds a comfortable column; its content fills it.
+/* A FORM CARD IS NOT BOUNDED.
  *
- * Two earlier attempts got this wrong and are worth naming. Letting the form
- * stretch to the full 1600px put "Spread cost" 800px from "History" — auto-fit
- * hands leftover space to the tracks. Capping the TEXT instead left a narrow
- * column of prose inside a full-width bordered card, with half the card empty:
- * worse again, because now the emptiness was framed.
+ * Two superseded comment blocks used to stand here, both arguing for a cap —
+ * they described rules that no longer exist and contradicted the declaration
+ * they introduced, which is worse than no comment. The surviving history is in
+ * the note on the declaration below and in .filter-grid above.
  *
- * The card is the thing that should be bounded. Everything inside then fills it
- * naturally, and OUTPUT — tables, charts, results — keeps the full shell width,
- * which is what widening was for. */
+ * One live consequence to keep in mind when adding to these cards: nothing
+ * inside them has a width ceiling any more except what it sets itself. That is
+ * right for a grid of fields (the track cap on .filter-grid bounds those) and
+ * wrong for anything that holds prose — see .notes-field textarea. */
 .card-form,
 form.card.editor {
   /* No cap. It was 62rem, then 90rem, and both left a gutter down the right of
@@ -1210,6 +1257,22 @@ form.card.editor {
   color: var(--accent);
   font-weight: 600;
   font-size: 0.85rem;
+  /* Every other collapsible in this file (details.adv, details.fold,
+     details.cols-menu, .strat-row) drops the native marker and draws its own.
+     This one didn't, so it rendered with Chrome's grey disclosure-closed
+     triangle — the only fold in the app that doesn't match the rest. Nothing in
+     the rule was wrong; the defect was the declaration that wasn't there. */
+  list-style: none;
+  user-select: none;
+}
+.prose-fold > summary::-webkit-details-marker {
+  display: none;
+}
+.prose-fold > summary::before {
+  content: "▸ ";
+}
+.prose-fold[open] > summary::before {
+  content: "▾ ";
 }
 .prose-fold > summary:hover {
   text-decoration: underline;
@@ -1637,18 +1700,6 @@ td.detail p {
 
 .knob-diff-note {
   margin-top: 0.35rem;
-}
-
-/* A derived value shown where an input used to be — same box and rhythm as the
-   controls beside it, but plainly not editable. Dashed rather than solid so it
-   reads as "worked out for you" instead of "disabled", which invites a hunt for
-   the thing that would re-enable it. */
-.field-static {
-  padding: 0.45rem 0.6rem;
-  border: 1px dashed var(--border);
-  border-radius: 8px;
-  color: var(--muted);
-  background: var(--bg);
 }
 
 /* Symbol picker */
@@ -2520,7 +2571,7 @@ details.fold > summary > .cache-head {
 }
 
 .chart-trade-detail .td-kind.down {
-  color: var(--err);
+  color: var(--err-text);
 }
 
 .chart-trade-detail .td-from {
@@ -2543,7 +2594,7 @@ details.fold > summary > .cache-head {
 }
 
 .chart-trade-detail .td-item.down {
-  color: var(--err);
+  color: var(--err-text);
 }
 
 .cr-trade-empty {
@@ -2592,7 +2643,7 @@ details.fold > summary > .cache-head {
 }
 
 .chart-readout .down {
-  color: var(--err);
+  color: var(--err-text);
 }
 
 .marker-key {
@@ -2748,12 +2799,6 @@ details.fold > summary > .cache-head {
 
 .markdown :first-child {
   margin-top: 0;
-}
-
-/* Baskets */
-.load-basket {
-  margin-top: 6px;
-  width: 100%;
 }
 
 .chip.chip-warn {

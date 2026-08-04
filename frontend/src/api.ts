@@ -335,7 +335,11 @@ export interface OpenPositionRow {
   asset_class: string;
   mode: string;
   qty: number;
-  entry_price: number;
+  /** Nullable: `Trade.entry_price` is `float | None` server-side (a notional
+   *  order that has not filled yet has a size but no price). It was typed
+   *  `number` here, so `entry_price.toFixed()` type-checked and then threw at
+   *  runtime, blanking the whole Dashboard. */
+  entry_price: number | null;
   notional: number | null;
   entry_at: string | null;
   entry_reason: string;
