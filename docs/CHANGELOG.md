@@ -3,6 +3,33 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Why a missed buy might just be the bar size (2026-08-04)
+
+Two changes, both about not making you guess which mismatches are real.
+
+**An exit is only judged when the two sides opened the same trade.** Six rows on
+the crypto report compared your exit against a replay position bought at a
+completely different moment — SOL's against one the replay didn't buy until five
+hours *after* you had already sold. A trailing stop trails from the entry price,
+so positions opened hours apart carry different stop levels and are simply
+different trades. Those now say so instead of reporting "the replay never sold",
+which was the entry difference showing up a second time wearing an exit's
+clothes. Exits on trades that DID line up are untouched.
+
+**And a missed buy now names the bar size.** The simulator is asymmetric on
+purpose: exits are checked against each bar's high and low, so a stop breached
+mid-bar fires — but entries are judged on the bar's CLOSE alone. A move that
+appeared and vanished inside a single bar is therefore invisible to a replayed
+entry, while your engine, looking every sixty seconds, could act on it. That
+reads as "the replay was watching and passed", which sends you hunting for an
+entry-rule bug that isn't there.
+
+The verdict is unchanged — the trade really wasn't reproduced — but the row now
+tells you the replay's bars were 15 minutes (or one) and that this can only
+affect entries, never exits. Judging entries on the bar's high instead would make
+the replay invent trades on wicks, which is a worse error than the one being
+explained.
+
 ## The backtester never rotated a position out (2026-08-04)
 
 The biggest one, and it reaches well past the fidelity page.

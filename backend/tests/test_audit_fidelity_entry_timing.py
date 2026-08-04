@@ -219,3 +219,9 @@ def test_the_endpoint_hands_the_comparison_a_real_tolerance(client, configured, 
     # other route — a constant nudged, a fudge factor added — fails here.
     poll = backtest_service.LIVE_POLL_SECONDS
     assert tolerance in {60 + poll, 900 + poll, 3600 + poll, 86_400 + poll}, tolerance
+
+    # The bar size travels SEPARATELY, for the close-only entry caveat, and a
+    # mutation that stopped sending it survived until this line existed: nothing
+    # else asserted the endpoint passed it at all. Same wiring gap as every other
+    # fault found on 2026-08-04.
+    assert seen.get("bar_seconds") == tolerance - poll, seen.get("bar_seconds")

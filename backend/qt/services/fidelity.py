@@ -101,6 +101,7 @@ def compare(
     replayed_symbols: list[str] | None = None,
     seeded_symbols: list[str] | None = None,
     timing_tolerance_seconds: float | None = None,
+    bar_seconds: float | None = None,
 ) -> dict:
     """Diff what really happened against what the replay says would have.
 
@@ -218,6 +219,17 @@ def compare(
                 }
             )
             continue
+        # HOW FAR APART THE TWO SIDES OPENED IT, and whether that is more than
+        # the sampling difference can account for. Computed before the row rather
+        # than inside it because BOTH the entry verdict and `exit_comparable`
+        # turn on it — an exit is only judgeable when the trade under it is the
+        # same trade. See `timing_tolerance_seconds`.
+        gap = _entry_gap_seconds(live.get("entry_at"), sim.get("entry_at"))
+        timing_differs = (
+            gap is not None
+            and timing_tolerance_seconds is not None
+            and gap > max(timing_tolerance_seconds, ENTRY_TIMING_FLOOR_SECONDS)
+        )
         matched.append(
             {
                 "symbol": live.get("symbol"),
@@ -243,10 +255,23 @@ def compare(
                 "sim_exit_at": sim.get("exit_at"),
                 "live_exit_reason": live.get("exit_reason"),
                 "sim_exit_reason": sim.get("exit_reason"),
-                # False when a human or the broker ended this trade, not a rule.
-                # The entry still counts; every exit-side comparison skips it.
+                # False when a human or the broker ended this trade, not a rule —
+                # and false when the two sides did not open the SAME trade. A
+                # trailing stop trails from the entry price, so two positions
+                # opened hours apart carry different stop levels and are simply
+                # different trades; judging one exit against the other reports
+                # the entry difference a second time, dressed as an exit fault.
+                #
+                # Measured: SOL's live trade ran 00:57→08:27 while its paired
+                # replay position was not bought until 13:55, five hours after
+                # live had already sold. "The replay was still holding it when
+                # the window ended" was true and told nobody anything.
+                #
+                # The entry still counts either way; every exit-side comparison
+                # skips it.
                 "exit_comparable": _is_strategy_exit(live.get("exit_reason"))
-                and not live.get("spans_segment_boundary"),
+                and not live.get("spans_segment_boundary")
+                and not timing_differs,
                 # Set when the comparison was SEGMENTED (the strategy was edited
                 # mid-window, so each stretch is replayed with its own config) and
                 # this trade opened in one stretch and closed in another. No
@@ -265,14 +290,8 @@ def compare(
                 # what pairs them and a crypto day is 24 hours long, so this is
                 # the only thing standing between "same trade" and "same trade,
                 # most of a day later". See `timing_tolerance_seconds`.
-                "entry_gap_seconds": (gap := _entry_gap_seconds(
-                    live.get("entry_at"), sim.get("entry_at")
-                )),
-                "entry_timing_differs": (
-                    gap is not None
-                    and timing_tolerance_seconds is not None
-                    and gap > max(timing_tolerance_seconds, ENTRY_TIMING_FLOOR_SECONDS)
-                ),
+                "entry_gap_seconds": gap,
+                "entry_timing_differs": timing_differs,
             }
         )
 
@@ -330,7 +349,7 @@ def compare(
         # plain words. The buckets above summarise; this is the thing you can
         # actually read and act on — "the replay bought it a day late" is a bug
         # report, "48 invented" is a number.
-        "log": _trade_log(matched, live_only, backtest_only),
+        "log": _trade_log(matched, live_only, backtest_only, bar_seconds),
         "matched": sorted(matched, key=lambda r: (r["day"], r["symbol"])),
         "live_only": sorted(live_only, key=lambda r: (r["day"], r["symbol"])),
         "backtest_only": sorted(backtest_only, key=lambda r: (r["day"], r["symbol"])),
@@ -518,7 +537,57 @@ def _has_clock(iso: str | None) -> bool:
     return bool(iso and "T" in iso)
 
 
-def _trade_log(matched: list[dict], live_only: list[dict], backtest_only: list[dict]) -> list[dict]:
+def _bar_words(seconds: float | None) -> str | None:
+    """The replay's bar length in words, or None when it is not known."""
+    if not seconds:
+        return None
+    if seconds < 3600:
+        minutes = int(round(seconds / 60))
+        return f"{minutes} minute{'' if minutes == 1 else 's'}"
+    if seconds < 86_400:
+        hours = int(round(seconds / 3600))
+        return f"{hours} hour{'' if hours == 1 else 's'}"
+    return "a day"
+
+
+# WHY A MISSED ENTRY MIGHT NOT BE A SIGNAL DIFFERENCE AT ALL, said on the row
+# rather than left for the reader to deduce.
+#
+# The simulator is asymmetric, and deliberately so. `evaluate_exit` is handed
+# `bar_high` and `bar_low` and `_fill_price` clamps into the bar's range, so a
+# stop breached mid-bar fires — an exit cannot hide inside a bar. `evaluate_entry`
+# gets `price=bar["close"]` and a `change_pct` computed from that close, and no
+# high ever reaches it. A move that appeared and vanished inside one bar is
+# therefore invisible to an ENTRY while the live engine, looking every sixty
+# seconds, could act on it.
+#
+# Measured before minute bars existed: FIL bought live at 13:18:18, between the
+# replay's 13:15 and 13:30 bars, reported as a trade the replay missed. Finer
+# bars shrink that window; they never close it.
+#
+# Naming it does not soften the verdict. The trade really was not reproduced —
+# what changes is that the reader can tell "your rules disagree" from "your rules
+# could not be evaluated at this resolution", which are opposite things to do
+# next. Judging entries on the bar's HIGH instead would make the replay strictly
+# more permissive and start inventing trades on wicks, which is a worse error
+# than the one being explained.
+_CLOSE_ONLY_CAVEAT = (
+    " The replay judged each bar at its CLOSE and its bars were {bar} long, so a move that"
+    " appeared and vanished inside one is invisible to it — while your engine looked every"
+    " 60 seconds. Exits are checked against each bar's high and low, so this can only"
+    " affect entries."
+)
+
+
+def _close_only_note(bar_seconds: float | None) -> str:
+    """The caveat, or nothing at all when the resolution is unknown — an unknown
+    bar size cannot support a claim about what a bar could hide."""
+    bar = _bar_words(bar_seconds)
+    return _CLOSE_ONLY_CAVEAT.format(bar=bar) if bar else ""
+
+
+def _trade_log(matched: list[dict], live_only: list[dict], backtest_only: list[dict],
+               bar_seconds: float | None = None) -> list[dict]:
     """Every buy and sell either side made, as separate events at their own
     timestamps.
 
@@ -562,7 +631,17 @@ def _trade_log(matched: list[dict], live_only: list[dict], backtest_only: list[d
             live_at=live_in if both_timed else None,
             sim_at=sim_in if both_timed else None,
         )
-        if m["exit_comparable"] is False:
+        if m.get("entry_timing_differs") and m["live_exit_day"]:
+            # Set aside for the ENTRY's sake, not the exit's. A trailing stop
+            # trails from the entry price, so two positions opened this far apart
+            # carry different stop levels and are different trades — judging one
+            # exit against the other reports the entry difference twice.
+            event(m.get("live_exit_at") or m["live_exit_day"], m["live_exit_day"], m["symbol"],
+                  "sold", "not compared",
+                  f"You sold {m['symbol']} ({m['live_exit_reason'] or 'no reason recorded'}). "
+                  f"The replay's position was opened {_gap_words(m['entry_gap_seconds'])} apart "
+                  "from yours, so this is a different trade and its exit isn't judged against it.")
+        elif m["exit_comparable"] is False:
             event(m.get("live_exit_at") or m["live_exit_day"], m["live_exit_day"], m["symbol"],
                   "sold", "not compared",
                   f"You closed {m['symbol']} by hand, so its exit isn't judged against the replay.")
@@ -674,7 +753,7 @@ def _trade_log(matched: list[dict], live_only: list[dict], backtest_only: list[d
                 " own reconstruction of that day's movers did not include it. So it could see"
                 " this symbol and still didn't buy: that is a signal difference, not a"
                 " coverage gap."
-            )
+            ) + _close_only_note(bar_seconds)
         elif covered is False:
             why = " It wasn't in the universe the replay covered, so it was never looking for it."
         elif covered is None:
@@ -687,7 +766,7 @@ def _trade_log(matched: list[dict], live_only: list[dict], backtest_only: list[d
             why = (
                 " The replay was watching this symbol and passed — no bars for that day, or a"
                 " different view of it. This is the kind that points at a real bug."
-            )
+            ) + _close_only_note(bar_seconds)
         event(r.get("entry_at") or r["day"], r["day"], r["symbol"], "bought",
               "replay missed it", f"You bought {r['symbol']}. The replay did not." + why)
         # The sale really happened, so it belongs in the log even though there is
@@ -785,7 +864,19 @@ def _decision_stats(matched: list[dict], live_only: list[dict], backtest_only: l
         # different claims: "you closed this yourself" and "no segment of a split
         # comparison could see this trade end" call for different responses.
         "manual_exits": sum(
-            1 for m in matched if not m["exit_comparable"] and not m["exit_spans_boundary"]
+            1 for m in matched
+            if not m["exit_comparable"]
+            and not m["exit_spans_boundary"]
+            and not m.get("entry_timing_differs")
+        ),
+        # Matched trades whose exits were set aside because the two sides opened
+        # the position too far apart to be the same trade. Counted apart from the
+        # hand-closed ones deliberately: "you closed these yourself" and "the
+        # replay was holding a different position" call for opposite responses,
+        # and folding a timing difference into `manual_exits` would blame the
+        # user for the replay's entry.
+        "exits_entry_mismatched": sum(
+            1 for m in matched if m.get("entry_timing_differs") and m["live_exit_day"]
         ),
         # Matched trades whose exit fell in a later segment than their entry, on a
         # segmented comparison. Their exits are excluded from every percentage

@@ -2061,6 +2061,11 @@ async def compare(
         timing_tolerance_seconds=(
             max(bar_seconds) + backtest.LIVE_POLL_SECONDS if bar_seconds else None
         ),
+        # The same coarsest figure, for a different sentence: entries are judged
+        # on a bar's CLOSE while exits see its high and low, so a missed entry
+        # can be the resolution where a missed exit cannot. See
+        # fidelity._CLOSE_ONLY_CAVEAT.
+        bar_seconds=max(bar_seconds) if bar_seconds else None,
     )
     # When the replay traded NOTHING, the backtester already knows why — it
     # counts every rejection reason as it goes. Passing that through turns a
