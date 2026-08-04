@@ -3,6 +3,26 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Two clocks in one row, four hours apart (2026-08-03)
+
+A line in the fidelity log read:
+
+> **2026-08-03 10:01** · AMZN · bought · match · *"Both bought AMZN — the replay
+> was 14:01 vs 14:26."*
+
+Same event, same row, two different times. The "When" column is converted to the
+timezone you chose; the sentence beside it was carrying a clock cut straight out
+of the raw UTC timestamp, four hours away.
+
+The server cannot format a time of day, because it does not know which zone the
+page is being read in — that is what the display-timezone setting is for, and
+this was the last place ignoring it. The comparison now sends the two instants
+untouched and the page formats them with the same converter it uses for the
+column, so the two clocks in a row cannot disagree again.
+
+What that row was telling you is real and worth reading now that the numbers
+line up: you bought AMZN at 10:01 and the replay bought it at 10:26.
+
 ## A blank Dashboard, and five other things you should not have had to find (2026-08-03)
 
 An audit that could actually render the app — rather than read the stylesheet and

@@ -517,7 +517,15 @@ export default function FidelityPanel() {
                         >
                           {r.verdict}
                         </td>
-                        <td className="hint">{r.detail}</td>
+                        <td className="hint">
+                          {r.detail}
+                          {/* Formatted HERE and not on the server: fmtHm uses the
+                              same display zone as the When column, so the two
+                              clocks in one row can no longer disagree. */}
+                          {r.live_at && r.sim_at ? (
+                            <> — the replay was {fmtHm(r.live_at)} vs {fmtHm(r.sim_at)}</>
+                          ) : null}
+                        </td>
                       </tr>
                     ))}
                   </tbody>

@@ -441,3 +441,71 @@ def test_the_note_stops_the_chase_only_when_the_poller_model_ran():
     coarse = _exit_model([{"exit_model": "intrabar", "bar_seconds": 86400.0}])
     assert "tick data" not in coarse["note"]
     assert "high and low" in coarse["note"]
+
+
+# ---- the log must not paste a server-side clock into its own sentence ----
+
+def test_a_matched_row_carries_instants_not_a_formatted_clock():
+    """The row's "When" column is converted to the reader's display zone by the
+    frontend; the detail sentence used to carry a clock sliced straight out of
+    the UTC string. One real row read "2026-08-03 10:01" in its column and "the
+    replay was 14:01 vs 14:26" in its text — the same instant, four hours apart.
+
+    The server cannot format a clock: it does not know which zone the page is
+    read in. So it ships the instants and says nothing about the time."""
+    from qt.services.fidelity import compare
+
+    live = [{
+        "symbol": "AMZN", "entry_day": "2026-08-03", "status": "open",
+        "entry_price": 200.0, "entry_at": "2026-08-03T14:01:00Z",
+        "exit_day": None, "exit_at": None, "exit_reason": "",
+    }]
+    result = {
+        "trade_list": [],
+        "open_positions": [{
+            "symbol": "AMZN", "entry_day": "2026-08-03", "entry_price": 200.5,
+            "entry_at": "2026-08-03T14:26:00Z", "exit_day": None, "exit_reason": None,
+        }],
+    }
+    row = next(r for r in compare(live, result, replayed_symbols=["AMZN"])["log"]
+               if r["action"] == "bought")
+
+    assert "14:01" not in row["detail"] and "14:26" not in row["detail"], (
+        "a UTC clock in the sentence contradicts the row's own converted column"
+    )
+    assert row["live_at"] == "2026-08-03T14:01:00Z"
+    assert row["sim_at"] == "2026-08-03T14:26:00Z"
+
+
+def test_identical_instants_carry_no_clock_pair_at_all():
+    """Nothing to compare when both sides acted at the same moment — the row
+    would otherwise render "the replay was 14:01 vs 14:01"."""
+    from qt.services.fidelity import compare
+
+    at = "2026-08-03T14:01:00Z"
+    live = [{"symbol": "AMZN", "entry_day": "2026-08-03", "status": "open",
+             "entry_price": 200.0, "entry_at": at, "exit_day": None,
+             "exit_at": None, "exit_reason": ""}]
+    result = {"trade_list": [], "open_positions": [
+        {"symbol": "AMZN", "entry_day": "2026-08-03", "entry_price": 200.0,
+         "entry_at": at, "exit_day": None, "exit_reason": None}]}
+    row = next(r for r in compare(live, result, replayed_symbols=["AMZN"])["log"]
+               if r["action"] == "bought")
+    assert "live_at" not in row and "sim_at" not in row
+
+
+def test_a_daily_replay_with_no_time_of_day_offers_no_clocks():
+    """A daily bar has no meaningful time. Inventing one would imply precision
+    the replay does not have."""
+    from qt.services.fidelity import compare
+
+    live = [{"symbol": "AMZN", "entry_day": "2026-08-03", "status": "open",
+             "entry_price": 200.0, "entry_at": "2026-08-03T14:01:00Z",
+             "exit_day": None, "exit_at": None, "exit_reason": ""}]
+    result = {"trade_list": [], "open_positions": [
+        {"symbol": "AMZN", "entry_day": "2026-08-03", "entry_price": 200.5,
+         "entry_at": "2026-08-03", "exit_day": None, "exit_reason": None}]}
+    row = next(r for r in compare(live, result, replayed_symbols=["AMZN"])["log"]
+               if r["action"] == "bought")
+    assert "live_at" not in row and "sim_at" not in row
+    assert "at the same point" in row["detail"]

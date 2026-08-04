@@ -841,9 +841,16 @@ def test_the_log_reads_as_a_comparison_not_a_bucket_count():
     )
     buy = next(r for r in out["log"] if r["action"] == "bought")
     assert buy["verdict"] == "match"
-    # Both clocks, because "three hours later" and "a day later" are different
-    # findings and a day-grouped row cannot tell them apart.
-    assert "14:14" in buy["detail"] and "14:00" in buy["detail"]
+    # Both instants, because "three hours later" and "a day later" are different
+    # findings and a day-grouped row cannot tell them apart. The CLAIM is
+    # unchanged; only where it lives has moved. This used to assert the clocks
+    # appeared as text inside `detail`, which is precisely the defect: the server
+    # sliced them out of the UTC string while the row's own "When" column was
+    # converted to the reader's zone, so one row read 10:01 and 14:01 at once.
+    # The instants ship raw and the frontend formats them with the same
+    # converter the column uses.
+    assert buy["live_at"] == _at("2026-07-29", "14:14")
+    assert buy["sim_at"] == _at("2026-07-29", "14:00")
 
 
 def test_an_exit_a_day_late_is_named_as_such():

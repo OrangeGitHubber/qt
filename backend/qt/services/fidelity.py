@@ -273,12 +273,23 @@ def _same_rule(live_reason: str | None, sim_reason: str | None) -> bool | None:
     return head(live_reason) == head(sim_reason)
 
 
-def _clock(iso: str | None) -> str:
-    """14:03 from a timestamp, blank when there isn't one. A daily replay has no
-    meaningful time of day, so inventing one would imply precision it lacks."""
-    if not iso or "T" not in iso:
-        return ""
-    return iso.split("T", 1)[1][:5]
+def _has_clock(iso: str | None) -> bool:
+    """Whether this timestamp carries a time of day at all.
+
+    It used to RETURN one — `iso.split("T")[1][:5]`, sliced straight out of the
+    UTC string and pasted into the sentence. The row's own "When" column is
+    converted to the reader's chosen zone by the frontend, so one row said
+    "10:01" in the column and "the replay was 14:01" in the text: the same
+    instant, four hours apart, in one line.
+
+    The server cannot format a clock, because it does not know which zone the
+    page is being read in — that is the whole point of the display-timezone
+    setting, and this file was the one place still ignoring it. So the instants
+    go out as ISO and the frontend formats them with the same converter it uses
+    for the column. All this decides is whether there is a time worth showing:
+    a daily replay has none, and inventing one would imply precision it lacks.
+    """
+    return bool(iso and "T" in iso)
 
 
 def _trade_log(matched: list[dict], live_only: list[dict], backtest_only: list[dict]) -> list[dict]:
@@ -293,17 +304,26 @@ def _trade_log(matched: list[dict], live_only: list[dict], backtest_only: list[d
     """
     rows: list[dict] = []
 
-    def event(at, day, symbol, action, verdict, detail):
-        rows.append({"at": at, "day": day, "symbol": symbol, "action": action,
-                     "verdict": verdict, "detail": detail})
+    def event(at, day, symbol, action, verdict, detail, live_at=None, sim_at=None):
+        # live_at/sim_at go out as ISO instants, never as formatted clocks: only
+        # the browser knows which timezone the reader chose. Present ONLY when
+        # the two differ meaningfully and both are timed.
+        row = {"at": at, "day": day, "symbol": symbol, "action": action,
+               "verdict": verdict, "detail": detail}
+        if live_at and sim_at and live_at != sim_at:
+            row["live_at"] = live_at
+            row["sim_at"] = sim_at
+        rows.append(row)
 
     for m in matched:
-        live_t, sim_t = _clock(m.get("live_entry_at")), _clock(m.get("sim_entry_at"))
-        gap = f" — the replay was {live_t} vs {sim_t}" if live_t and sim_t and live_t != sim_t else ""
+        live_in, sim_in = m.get("live_entry_at"), m.get("sim_entry_at")
+        both_timed = _has_clock(live_in) and _has_clock(sim_in)
         event(
-            m.get("live_entry_at") or m["day"], m["day"], m["symbol"], "bought",
-            "match",
-            f"Both bought {m['symbol']}{gap or ' at the same point'}.",
+            live_in or m["day"], m["day"], m["symbol"], "bought", "match",
+            f"Both bought {m['symbol']}." if both_timed else
+            f"Both bought {m['symbol']} at the same point.",
+            live_at=live_in if both_timed else None,
+            sim_at=sim_in if both_timed else None,
         )
         if m["exit_comparable"] is False:
             event(m.get("live_exit_at") or m["live_exit_day"], m["live_exit_day"], m["symbol"],
@@ -315,11 +335,11 @@ def _trade_log(matched: list[dict], live_only: list[dict], backtest_only: list[d
                   f"You sold {m['symbol']} ({m['live_exit_reason']}). The replay was still "
                   "holding it when the window ended.")
         elif m["exit_day_matches"] and m["exit_reason_matches"] is not False:
-            live_x, sim_x = _clock(m.get("live_exit_at")), _clock(m.get("sim_exit_at"))
-            when = f" — the replay was {live_x} vs {sim_x}" if live_x and sim_x and live_x != sim_x else ""
-            event(m.get("live_exit_at") or m["live_exit_day"], m["live_exit_day"], m["symbol"],
-                  "sold", "match",
-                  f"Both sold {m['symbol']}, {m['sim_exit_reason'] or 'same reason'}{when}.")
+            live_x, sim_x = m.get("live_exit_at"), m.get("sim_exit_at")
+            timed = _has_clock(live_x) and _has_clock(sim_x)
+            event(live_x or m["live_exit_day"], m["live_exit_day"], m["symbol"], "sold", "match",
+                  f"Both sold {m['symbol']}, {m['sim_exit_reason'] or 'same reason'}.",
+                  live_at=live_x if timed else None, sim_at=sim_x if timed else None)
         elif not m["live_exit_day"] and not m["sim_exit_day"]:
             # NEITHER side has exited — both are still holding. There is no exit
             # to compare, so there is no row. `exit_day_matches` is false when

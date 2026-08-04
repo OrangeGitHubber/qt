@@ -1307,6 +1307,13 @@ export interface FidelityReport {
     action: string;
     verdict: string;
     detail: string;
+    /** The two instants behind a "both bought/sold" row, as ISO — present only
+     *  when they differ. Sent raw and formatted HERE, because only the browser
+     *  knows the reader's display zone: the server used to paste a UTC clock
+     *  into `detail`, so a row read "10:01" in its own When column and
+     *  "the replay was 14:01" in its text. */
+    live_at?: string | null;
+    sim_at?: string | null;
   }[];
   // Everything that happened to this strategy in one stream, ordered by the
   // clock: buys, sells and the edits between them. Separate lists made the
@@ -1319,6 +1326,8 @@ export interface FidelityReport {
     action: string;
     verdict: string;
     detail: string;
+    live_at?: string | null;
+    sim_at?: string | null;
   }[];
   // When the strategy was switched on, and whether NEITHER side traded in the
   // window. A quiet report is an agreement, not a failure — it needs saying,
