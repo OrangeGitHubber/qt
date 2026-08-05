@@ -19,6 +19,7 @@ import {
   toggleStrategy,
   updateStrategy,
 } from "../api";
+import ConfirmDialog from "../components/ConfirmDialog";
 import InfoTip from "../components/InfoTip";
 import NumberField from "../components/NumberField";
 import UniverseSymbols from "../components/UniverseSymbols";
@@ -1700,6 +1701,9 @@ export default function Strategies() {
   // double-click that quietly makes two copies of all of them is exactly the
   // mess this button exists to end.
   const [cloningId, setCloningId] = useState<number | null>(null);
+  // The row whose Clone button was pressed — the naming dialog is open while
+  // this is set, and it carries the row so the dialog can suggest a name.
+  const [cloneTarget, setCloneTarget] = useState<StrategyRow | null>(null);
 
   /** Copy a strategy so a variant can be TRIED instead of retyped. Verbatim
    *  params, born disabled (the create endpoint forces `enabled=False`, it is
@@ -1707,7 +1711,7 @@ export default function Strategies() {
    *  confuse it with the original, and pointed at its source as parent so it
    *  groups with the strategy it came from rather than joining the pile of
    *  hand-made near-duplicates that made this page hard to read. */
-  async function clone(row: StrategyRow) {
+  async function clone(row: StrategyRow, chosenName: string) {
     if (cloningId != null) return;
     setCloningId(row.id);
     try {
@@ -1720,12 +1724,12 @@ export default function Strategies() {
         id: _id, version: _version, open_trades: _open, enabled: _enabled,
         template: _template, ...rest
       } = row;
-      const suffix = " (copy)";
       const created = await createStrategy({
         ...(JSON.parse(JSON.stringify(rest)) as Partial<StrategyRow>),
-        // 80 is the server's cap; trim the base rather than lose the suffix,
-        // because the suffix is the part that keeps the two apart.
-        name: row.name.slice(0, 80 - suffix.length) + suffix,
+        // The name the user just typed. Naming it up front beats "(copy)" and a
+        // hunt through the list to rename it afterwards — which is what this
+        // used to cost. 80 is the server's cap.
+        name: chosenName.slice(0, 80),
         optimized_from_id: row.id,
         // Deliberately NOT copied: it records the length of the parameter search
         // that produced a strategy, and no search produced this one. Copying it
@@ -1740,6 +1744,7 @@ export default function Strategies() {
           ? `Made “${created.name}” from the ${row.name.replace(/^Template · /, "")} template. It's yours now — disabled, and fully editable.`
           : `Copied “${row.name}” → “${created.name}”. It's disabled, and listed under the original.`
       );
+      setCloneTarget(null);
       refresh();
     } catch (e) {
       setNote((e as Error).message);
@@ -1927,7 +1932,7 @@ export default function Strategies() {
             <button
               className="small btn-ghost"
               disabled={cloningId != null}
-              onClick={() => clone(r)}
+              onClick={() => setCloneTarget(r)}
               title="Make a disabled copy of this strategy — same settings, listed under this one, ready to tweak"
             >
               {cloningId === r.id ? "Copying…" : "Clone"}
@@ -1994,6 +1999,34 @@ export default function Strategies() {
 
   return (
     <>
+      {/* Name the copy up front. The old behaviour appended " (copy)" and left
+          you to find the row and rename it, which is two extra steps for
+          something you already knew the answer to when you clicked. */}
+      <ConfirmDialog
+        open={cloneTarget != null}
+        title={cloneTarget?.template ? "Make a strategy from this template" : "Copy this strategy"}
+        facts={
+          cloneTarget
+            ? [{ label: "From", value: cloneTarget.name }]
+            : []
+        }
+        prompt={{
+          label: "Name the new strategy",
+          // A template's own "Template · " prefix would be a lie on a copy that
+          // is not one; an ordinary strategy keeps the (copy) suffix so the two
+          // stay distinguishable if you just press Enter.
+          defaultValue: cloneTarget
+            ? cloneTarget.template
+              ? cloneTarget.name.replace(/^Template · /, "")
+              : `${cloneTarget.name.slice(0, 80 - 7)} (copy)`
+            : "",
+          placeholder: "e.g. Dip buyer — tech only",
+        }}
+        confirmLabel="Create"
+        busy={cloningId != null}
+        onConfirm={(name) => cloneTarget && clone(cloneTarget, name)}
+        onCancel={() => setCloneTarget(null)}
+      />
       <div className="toolbar">
         <h2>Strategies</h2>
         <button className="small" onClick={() => startEdit(EMPTY)}>

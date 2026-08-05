@@ -517,6 +517,36 @@ textarea:focus {
   font-weight: 600;
 }
 
+/* The naming prompt. Full-width because a strategy name is long and reading it
+   back is the point of showing it at all. */
+.confirm-prompt {
+  display: block;
+  margin: 0 0 1.1rem;
+}
+
+.confirm-prompt span {
+  display: block;
+  margin-bottom: 0.35rem;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.confirm-prompt input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0.55rem 0.7rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: inherit;
+  font: inherit;
+}
+
+.confirm-prompt input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
 .confirm-warning {
   margin: 0 0 1.1rem;
   color: var(--muted);

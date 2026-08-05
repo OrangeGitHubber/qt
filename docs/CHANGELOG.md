@@ -23,6 +23,26 @@ the line it belongs to, so the figure and the curve identify each other.
 An indicator that isn't defined yet reads "—" rather than a broken number — a
 200-day average has nothing to say on day 40, and now it says so.
 
+## Clone asks what to call it (2026-08-05)
+
+Clone used to append " (copy)" and drop the new strategy into the list, leaving
+you to find the row and rename it — two steps for something you already knew the
+answer to when you clicked the button.
+
+It now opens a small dialog with the name pre-filled and selected: press Enter to
+accept the suggestion, or just start typing to replace it. Cloning a template
+suggests the template's name without its "Template · " prefix, since the copy is
+not one; cloning an ordinary strategy keeps the "(copy)" suffix so the two stay
+apart if you do just press Enter. A blank name disables Create rather than
+quietly falling back to a default.
+
+Built as an option on the existing confirmation dialog rather than a second
+component, so the focus trap, Escape handling and click-away behaviour have one
+implementation. The one behaviour that differs is which control takes focus: a
+confirmation focuses Cancel, because a destructive button under the default
+focus ring turns a reflexive Enter into a sold position — a naming prompt
+focuses its field, because you opened it in order to type.
+
 ## Four strategy templates you can clone (2026-08-05)
 
 A day spent working out why one strategy kept underperforming produced the same
