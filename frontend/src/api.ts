@@ -1420,6 +1420,17 @@ export interface FidelityReport {
   // Named here so a failed stretch that happened to hold no trades cannot pass
   // for agreement.
   replay_failures?: { from: string; to: string; error: string | null }[];
+  // WHERE THE COMPARISON STOPPED BEING INDEPENDENT. A fidelity run is path
+  // dependent: cash, free position slots, after-loss cooldowns and the makeup of
+  // a ranked top-N all follow from what came before, so once one trade differs
+  // the two sides are no longer the same account and later rows are consequences
+  // rather than separate findings. Null when they never diverged.
+  first_divergence?: {
+    at: string;
+    symbol: string;
+    verdict: string;
+    note: string;
+  } | null;
   backtest_only: { symbol: string; day: string; sim_entry: number | null; sim_exit_reason: string }[];
   rails_blocked: { symbol: string; day: string; blocked_by: string | null }[];
   decision: {

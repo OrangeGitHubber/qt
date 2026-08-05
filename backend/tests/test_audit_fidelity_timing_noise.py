@@ -111,8 +111,12 @@ def test_a_buy_after_the_replay_let_go_is_a_real_miss_again():
     signal difference and must keep saying so — this is the verdict the whole
     report exists to produce, and silencing it would be the same fault pointing
     the other way."""
-    let_go = _sim("2026-08-04T11:43:00+00:00", symbol="SPY",
-                  out_at="2026-08-04T12:00:00+00:00")
+    # Closed at a PROFIT, and that is load-bearing: a losing exit would arm the
+    # after-loss cooldown, and the replay's failure to re-enter would then be a
+    # consequence of its own earlier loss rather than a signal difference — which
+    # the report now says instead, correctly. See the divergence-cascade tests.
+    let_go = dict(_sim("2026-08-04T11:43:00+00:00", symbol="SPY",
+                       out_at="2026-08-04T12:00:00+00:00"), pnl=1.0)
     report = compare([SPY_IN, SPY_AGAIN],
                      {"trade_list": [let_go], "open_positions": []},
                      replayed_symbols=["SPY"],

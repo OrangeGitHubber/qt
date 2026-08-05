@@ -3,6 +3,35 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Once one trade differs, the rest are consequences (2026-08-04)
+
+The last SPY mystery on "FAANGs - optimized 2 aug" turned out not to be a bug at
+all, and the answer changes how the whole report should be read.
+
+Both sides rotated out of SPY at 18:53. Your fill closed a few cents green; the
+replay's, seconds earlier, closed a few cents red. A red close arms the
+24-hour after-loss cooldown — a rail your engine has too and applies exactly the
+same way — so the replay was locked out of SPY for the rest of the day while you
+re-entered twice. Same rule, correctly applied, to two accounts that were no
+longer in the same state.
+
+Nothing about the rails is wrong, so nothing about them changed. What was wrong
+is that the report presented every later row as independent evidence. Cash, free
+position slots, cooldowns and the makeup of a ranked top-N all depend on what
+came before, so one early difference re-writes everything after it. Somebody
+counting eight mismatches was counting one difference and seven of its children.
+
+The report now names the FIRST place the two sides differ and says plainly that
+rows below it are largely downstream of it — that is the row worth understanding,
+and explaining it is what moves the rest. And where the replay's own earlier
+losing exit is what blocked a later entry, the row says so instead of implying
+your entry rules disagreed.
+
+Practical consequence worth knowing: the tighter your stops sit to the noise, the
+sooner a comparison will diverge, because a few seconds of fill difference is
+enough to flip a trade red or green right at a rail. A strategy with more room
+between its triggers and its exits will stay in step much longer.
+
 ## When your journal proves a trade happened, the replay looks harder (2026-08-04)
 
 You asked why the replay shouldn't accept an entry when the price crossed your

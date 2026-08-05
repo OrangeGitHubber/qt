@@ -212,6 +212,13 @@ def compare(
                     "replay_held_it": _held_at(
                         sim_trades + sim_open, live.get("symbol"), live.get("entry_at")
                     ),
+                    # When the replay's OWN earlier loss is what shut it out. See
+                    # _lost_on_before — this is the cascade, and it is the
+                    # difference between "your rules disagree" and "the replay is
+                    # still paying for a difference further up the page".
+                    "replay_lost_before": _lost_on_before(
+                        sim_trades, live.get("symbol"), live.get("entry_at")
+                    ),
                     # Why there is nothing to compare this against: the stretch
                     # it falls in did not replay. Set by the API layer, which is
                     # the half that knows a window was split at all.
@@ -349,7 +356,9 @@ def compare(
         # plain words. The buckets above summarise; this is the thing you can
         # actually read and act on — "the replay bought it a day late" is a bug
         # report, "48 invented" is a number.
-        "log": _trade_log(matched, live_only, backtest_only, bar_seconds),
+        "log": (log := _trade_log(matched, live_only, backtest_only, bar_seconds)),
+        # WHERE THE COMPARISON STOPPED BEING INDEPENDENT. See _first_divergence.
+        "first_divergence": _first_divergence(log),
         "matched": sorted(matched, key=lambda r: (r["day"], r["symbol"])),
         "live_only": sorted(live_only, key=lambda r: (r["day"], r["symbol"])),
         "backtest_only": sorted(backtest_only, key=lambda r: (r["day"], r["symbol"])),
@@ -453,6 +462,74 @@ def _pair_by_nearest(
         left_over_live += [(key, t) for t in rest_live[len(rest_sim):]]
         left_over_sim += [(key, t) for t in rest_sim[len(rest_live):]]
     return pairs, left_over_live, left_over_sim
+
+
+def _first_divergence(log: list[dict]) -> dict | None:
+    """The earliest row on which the two sides stopped agreeing, and why that
+    matters more than any single row after it.
+
+    A fidelity comparison is PATH DEPENDENT. Position slots, cash, the after-loss
+    cooldown, the daily trade budget and the composition of a ranked top-N all
+    depend on what came before, so the moment one trade differs the two sides are
+    no longer the same account and every later row is a consequence rather than
+    independent evidence. A reader counting eight mismatches may be counting one
+    difference and seven of its children.
+
+    Measured on SPY, 2026-08-04: both sides rotated out at 18:53, live's fill
+    closed a few cents green and the replay's a few cents red, and the replay
+    then reported `cooldown after loss` on every remaining bar of the day. Same
+    rule, correctly applied, to accounts that had drifted apart — which is why
+    the rails are not the thing to change.
+
+    Ordered by TIME, not by severity: a dramatic disagreement in the afternoon is
+    usually a descendant of a two-minute timing difference in the morning, and
+    naming the loud one sends the reader to the end of the chain."""
+    disagreements = [
+        r for r in log
+        if r.get("verdict") not in ("match", "not compared", "nothing to compare")
+        and r.get("at")
+    ]
+    if not disagreements:
+        return None
+    first = min(disagreements, key=lambda r: str(r["at"]))
+    return {
+        "at": first["at"],
+        "symbol": first["symbol"],
+        "verdict": first["verdict"],
+        "note": (
+            "This is the FIRST place the two sides differ, and it is the one worth "
+            "understanding. From here on the replay and your engine are no longer the same "
+            "account — a trade one of them took and the other did not changes the cash, the "
+            "free position slots, the after-loss cooldowns and which names sit in a ranked "
+            "top-N. Rows below this point are largely a consequence of this one, not "
+            "independent evidence, so fixing or explaining this row is what moves the rest."
+        ),
+    }
+
+
+def _lost_on_before(sim_rows: list[dict], symbol: str | None, when: str | None) -> str | None:
+    """When the REPLAY last closed its own position in `symbol` at a loss before
+    `when`, or None.
+
+    This is the whole cascade in one lookup. A losing exit arms the after-loss
+    cooldown — a rail the live engine has too, and applies identically — so once
+    the replay books a loss the engine did not, it is locked out of that symbol
+    while the engine is free to re-enter. Every subsequent "the replay missed
+    it" on that name is that block, not a judgement about your rules.
+
+    Measured on SPY: both sides rotated out at 18:53, live's fill closed a few
+    cents green and the replay's a few cents red, and the replay then reported
+    `cooldown after loss` on every remaining bar of the day."""
+    if not symbol or not _has_clock(when):
+        return None
+    losses = [
+        row.get("exit_at") for row in sim_rows
+        if (row.get("symbol") or "").upper() == symbol.upper()
+        and (row.get("pnl") or 0) < 0
+        and _has_clock(row.get("exit_at"))
+        and _is_after(when, row.get("exit_at"))
+    ]
+    return max(losses) if losses else None
 
 
 def _held_at(sim_rows: list[dict], symbol: str | None, when: str | None) -> bool:
@@ -759,6 +836,28 @@ def _trade_log(matched: list[dict], live_only: list[dict], backtest_only: list[d
                       f"You sold {r['symbol']} "
                       f"({r.get('exit_reason') or 'no reason recorded'}). The stretch it was "
                       "held in never replayed, so there is no exit to judge this against.")
+            continue
+        if r.get("replay_lost_before") and not r.get("replay_held_it"):
+            # NOT a rule disagreement — the replay never reached your rules. Its
+            # own earlier exit closed red and armed the after-loss cooldown, a
+            # rail the live engine has too and applies the same way. Live's
+            # equivalent exit closed green (fills seconds apart, margins this
+            # tight), so live was free to re-enter and the replay was not.
+            event(
+                r.get("entry_at") or r["day"], r["day"], r["symbol"], "bought",
+                "blocked by its own earlier loss",
+                f"You bought {r['symbol']}. The replay could not: it had closed its own "
+                f"position in {r['symbol']} at a loss earlier in this window, which starts the "
+                "after-loss cooldown — the same rail your engine has. Your exit on that trade "
+                "closed green and the replay's closed red, on fills seconds apart, so this is a "
+                "consequence of that earlier difference rather than a separate one.",
+            )
+            if r.get("exit_day"):
+                event(r.get("exit_at") or r["exit_day"], r["exit_day"], r["symbol"], "sold",
+                      "nothing to compare",
+                      f"You sold {r['symbol']} "
+                      f"({r.get('exit_reason') or 'no reason recorded'}). The replay was "
+                      "cooling off on this symbol and never held it, so there is no exit here.")
             continue
         if r.get("replay_held_it"):
             # NOT a missed signal. The replay could not buy what it had never
