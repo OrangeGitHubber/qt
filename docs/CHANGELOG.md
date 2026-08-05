@@ -3,6 +3,33 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## When your journal proves a trade happened, the replay looks harder (2026-08-04)
+
+You asked why the replay shouldn't accept an entry when the price crossed your
+trigger *inside* a bar, given that a real trade demonstrably happened there. It
+should — on that bar, and only in a fidelity comparison.
+
+A plain backtest has no way to know a trade happened, so judging entries on a
+bar's high would just make it more permissive: it would take every spike your
+engine's once-a-minute look would have missed, and each invented trade then eats
+a position slot and cash that later trades don't have. Ordinary backtests are
+unchanged.
+
+A fidelity comparison is different — your journal is proof. So on the exact bar
+you filled on, the replay now re-asks the same rules using that bar's high, and
+pays the high if it gets in (for a buy the high is the worst price in the bar, so
+it can't flatter itself). Every such entry is labelled, the way seeded symbols
+are: a comparison that quietly helps itself is worth less than one that admits
+what it did.
+
+**One thing worth knowing: this changes nothing at 1-minute bars, and that's
+correct.** The replay already flattens each minute bar to a single price on
+purpose, because your engine also gets exactly one look per minute — a price
+touched at 10:07:20 and gone by 10:07:40 was never available to either of you.
+So at that resolution both are equally blind, and a missed entry there is a real
+difference rather than a sampling one. The report now says which of the two
+situations you're in instead of offering the same excuse either way.
+
 ## Why a missed buy might just be the bar size (2026-08-04)
 
 Two changes, both about not making you guess which mismatches are real.

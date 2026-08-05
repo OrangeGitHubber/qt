@@ -58,14 +58,14 @@ def test_it_says_the_asymmetry_out_loud():
     """Naming the bar size without saying WHY it matters for entries and not for
     exits leaves the reader to guess, and the guess most people make — "the
     replay just didn't see the price" — is wrong for exits."""
-    assert "exits" in _missed(60.0)["detail"].lower()
+    assert "exits" in _missed(900.0)["detail"].lower()
 
 
 def test_the_verdict_itself_is_unchanged():
     """This is a caveat, not an excuse. The trade really was not reproduced, and
     softening the verdict would hide the rows that are genuinely worth chasing."""
-    assert _missed(60.0)["verdict"] == "replay missed it"
-    assert "watching this symbol and passed" in _missed(60.0)["detail"]
+    assert _missed(900.0)["verdict"] == "replay missed it"
+    assert "watching this symbol and passed" in _missed(900.0)["detail"]
 
 
 def test_it_does_not_assert_a_bug_and_then_explain_it_away():
@@ -74,9 +74,25 @@ def test_it_does_not_assert_a_bug_and_then_explain_it_away():
     the next breath. Nobody can act on that. Either the resolution is known and
     both possibilities are named, or it is not and the strong claim stands
     alone — never both."""
-    with_bar = _missed(60.0)["detail"]
+    with_bar = _missed(900.0)["detail"]
     assert "points at a real bug" not in with_bar, with_bar
     assert "genuinely disagreed" in with_bar, with_bar
+
+
+def test_at_the_poll_s_own_resolution_the_excuse_is_RULED_OUT():
+    """The case the first version of this got backwards. `_apply_poller_view`
+    flattens every bar's extremes onto its close once the bars are no coarser
+    than the 60-second poll, because live gets ONE look per minute bar and a
+    price touched at 10:07:20 and gone by 10:07:40 was never available to it
+    either — measured at 0.73% of exit error when the extremes were kept.
+
+    So at 1Min the two sides are equally blind, sampling is eliminated as an
+    explanation, and the strong claim becomes MORE justified rather than less.
+    Offering the intrabar excuse here would be inventing a reason."""
+    detail = _missed(60.0)["detail"]
+    assert "equally blind" in detail, detail
+    assert "points at a real bug" in detail, detail
+    assert "genuinely disagreed" not in detail, detail
 
 
 def test_without_a_known_bar_size_the_strong_claim_survives():
@@ -101,3 +117,15 @@ def test_a_symbol_outside_the_universe_is_not_given_the_excuse():
     row = next(r for r in report["log"] if r["action"] == "bought")
     assert "wasn't in the universe" in row["detail"], row["detail"]
     assert "15 minutes" not in row["detail"], row["detail"]
+
+
+def test_the_poll_constant_matches_the_engine_s():
+    """This module restates the 60-second cycle rather than importing the
+    simulator for one number. Restating it is only safe while something checks
+    the two have not drifted — the wording tells the reader which side of
+    `_apply_poller_view`'s threshold their bars fall on, and a stale constant
+    would put every row on the wrong side of it."""
+    from qt.services.backtest import LIVE_POLL_SECONDS
+    from qt.services.fidelity import _POLL_SECONDS
+
+    assert _POLL_SECONDS == LIVE_POLL_SECONDS

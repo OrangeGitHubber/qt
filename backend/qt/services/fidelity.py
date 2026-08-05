@@ -578,9 +578,23 @@ def _bar_words(seconds: float | None) -> str | None:
 _CLOSE_ONLY_CAVEAT = (
     " Either its rules genuinely disagreed with yours, or the price qualified at a moment"
     " between bar closes: the replay judges each bar at its CLOSE and its bars were {bar}"
-    " long, while your engine looked every 60 seconds at an offset nothing records. The"
-    " shorter the bar, the less room there is for the second explanation. Exits are checked"
-    " against each bar's high and low, so this can only affect entries."
+    " long, while your engine looked every 60 seconds and had {looks} looks inside each of"
+    " those bars. Exits are checked against each bar's high and low, so this can only"
+    " affect entries."
+)
+# AT ONE-MINUTE BARS THE TWO ARE ALIGNED, and saying otherwise invents a reason.
+# `backtest._apply_poller_view` flattens every bar's high and low onto its close
+# whenever the bars are no coarser than the 60-second poll, deliberately: the
+# live engine gets exactly ONE look per minute bar, so a price touched at
+# 10:07:20 and gone by 10:07:40 was never available to it either. Measured —
+# keeping the extremes ran the replay's exits 0.73% better than reality. So at
+# this resolution there is nothing hiding inside a bar for either side, and a
+# miss here is a real difference rather than a sampling one.
+_POLLER_ALIGNED = (
+    " Its bars were {bar} long — no coarser than your engine's own 60-second look — so the"
+    " replay deliberately sees each bar as the single price a poll would have caught, the"
+    " same one instant your engine had. A move hiding inside a bar cannot explain this one —"
+    " both sides were equally blind to it — so this is the kind that points at a real bug."
 )
 # What the row says when the resolution is UNKNOWN: there is no second
 # possibility to offer, so the strong claim stands on its own rather than being
@@ -589,10 +603,23 @@ _UNQUALIFIED_MISS = " This is the kind that points at a real bug."
 
 
 def _close_only_note(bar_seconds: float | None) -> str:
-    """The caveat, or nothing at all when the resolution is unknown — an unknown
-    bar size cannot support a claim about what a bar could hide."""
+    """What the bar size can and cannot explain about a missed entry.
+
+    Nothing at all when the resolution is unknown — an unknown bar size cannot
+    support a claim about what a bar could hide, in either direction."""
     bar = _bar_words(bar_seconds)
-    return _CLOSE_ONLY_CAVEAT.format(bar=bar) if bar else ""
+    if not bar:
+        return ""
+    if bar_seconds <= _POLL_SECONDS:
+        return _POLLER_ALIGNED.format(bar=bar)
+    return _CLOSE_ONLY_CAVEAT.format(
+        bar=bar, looks=int(bar_seconds // _POLL_SECONDS)
+    )
+
+
+# The live engine's cycle. Restated rather than imported from qt.services.backtest
+# to keep this module free of it — the two are asserted equal by a test.
+_POLL_SECONDS = 60.0
 
 
 def _trade_log(matched: list[dict], live_only: list[dict], backtest_only: list[dict],

@@ -21,7 +21,7 @@ import os
 from bisect import bisect_left
 from collections import Counter
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 from math import floor, log10
 from zoneinfo import ZoneInfo
@@ -502,6 +502,53 @@ def _price(v: float | None) -> float | None:
     if v == 0 or abs(v) >= 1:
         return round(v, 4)
     return round(v, 5 - floor(log10(abs(v))))
+
+
+def _intrabar_candidate(cand, bar: dict):
+    """The same candidate judged at the bar's HIGH instead of its close.
+
+    Only ever built for a bar a fidelity replay is allowed to reconsider — see
+    `intrabar_entry_at`. `change_pct` is recomputed from the high against the
+    same baseline the close used, so the day-gain rule is asked "did this bar
+    ever qualify?" rather than "did it end qualifying". The rest of the
+    candidate is unchanged: MACD and RSI come off completed daily bars and have
+    no intrabar value, and VWAP is the bar's own.
+
+    The baseline is recovered from the bar itself rather than threaded through:
+    `change_pct` is the close measured against it, so the baseline is
+    close / (1 + change_pct/100) — exact, and it works for the crypto rolling
+    24-hour reference as well as the previous session close.
+
+    Returns None when there is no baseline to measure a gain against, which is
+    the same condition under which the ordinary path has no `change_pct`
+    either."""
+    change, high = bar.get("change_pct"), bar.get("high")
+    if change is None or high is None:
+        return None
+    baseline = bar["close"] / (1 + change / 100)
+    if not baseline:
+        return None
+    return replace(cand, price=high, change_pct=(high / baseline - 1) * 100)
+
+
+def _may_look_inside_bar(
+    allowance: dict[str, list[datetime]] | None, symbol: str, ts, bar_seconds: float | None
+) -> bool:
+    """Whether this exact bar is one the journal proves live opened a position on.
+
+    NOT "any bar that day". Allowing the day would be enter-on-wicks with extra
+    steps: the replay would take the best spike of the session and land hours
+    from the real fill, manufacturing the very timing gaps the fidelity report
+    exists to surface. The window is one bar either side of the recorded fill,
+    because live's own 60-second sampling is out of phase with the bar clock by
+    an amount nothing records."""
+    if not allowance:
+        return False
+    window = bar_seconds or 60.0
+    return any(
+        abs((moment - ts).total_seconds()) < window
+        for moment in allowance.get(symbol, ())
+    )
 
 
 def _rotation_reason(strategy: dict) -> str:
@@ -1072,6 +1119,10 @@ class SimTrade:
     # inferring it. None on an unranked universe.
     rank: int | None = None
     rank_of: int | None = None
+    # True when this entry was only found by looking INSIDE the bar, which a
+    # fidelity replay may do on a bar the journal proves live traded on. Declared
+    # all the way to the report — see `intrabar_entry_at`.
+    entry_intrabar: bool = False
     exit_price: float | None = None
     exit_at: datetime | None = None
     exit_reason: str = ""
@@ -1512,6 +1563,7 @@ def run_backtest(
     account_entries: list | None = None,
     account_realized: list[dict] | None = None,
     nonfill_events: list[dict] | None = None,
+    intrabar_entry_at: dict[str, list[datetime]] | None = None,
 ) -> dict:
     """Pure simulation: strategy dict (same shape as the DB row), raw bars per
     symbol, global risk config. Returns metrics + equity curve + trades.
@@ -1901,6 +1953,16 @@ def run_backtest(
                     _btlog(day, symbol, bar, params, "reject-entry: market closed", debug_lines)
                 continue
             ok, entry_reason = evaluate_entry(params, cand, ts.astimezone(ET))
+            # NOT REPRODUCED AT THE CLOSE — so if the journal proves live opened a
+            # position on THIS bar, ask the same rules what the bar's high says.
+            # See _may_look_inside_bar for why it is this bar and no other, and
+            # `intrabar_entry_at` for why a plain backtest never gets here.
+            intrabar = False
+            if not ok and _may_look_inside_bar(intrabar_entry_at, symbol, ts, bar_seconds):
+                widened = _intrabar_candidate(cand, bar)
+                if widened is not None:
+                    ok, entry_reason = evaluate_entry(params, widened, ts.astimezone(ET))
+                    intrabar = ok
             # The same sentence the live journal writes (engine._rank_note), so a
             # replayed entry and the real one it is being compared against read
             # alike instead of differing for a reason that isn't a difference.
@@ -2009,7 +2071,14 @@ def run_backtest(
                 if debug:
                     _btlog(day, symbol, bar, params, f"reject-rail: {rails_reason}", debug_lines)
                 continue
-            fill = bar["close"] * (1 + slip)
+            # PAYS THE HIGH when the entry was only found by looking inside the
+            # bar. Granting the trade on the strength of the high and then
+            # filling at the close would hand the replay the best price in the
+            # minute on the strength of the worst-case reading of it — the
+            # flattering direction, and the one `_fill_price` refuses on the exit
+            # side for the same reason. For a buy the high IS the pessimistic
+            # fill.
+            fill = (bar["high"] if intrabar else bar["close"]) * (1 + slip)
             qty = _entry_qty(strategy["asset_class"], entry_sizing, fill, _fractional(params))
             # The fee is part of what the buy costs you, so it has to clear the
             # cash check too — otherwise the sim can spend money it doesn't have.
@@ -2031,7 +2100,7 @@ def run_backtest(
             state.open_trades[symbol] = SimTrade(
                 symbol=symbol, qty=qty, entry_price=fill, entry_at=ts,
                 entry_reason=entry_reason, high_water=fill,
-                rank=rank_pos, rank_of=rank_of,
+                rank=rank_pos, rank_of=rank_of, entry_intrabar=intrabar,
             )
 
         # How much of the account was actually working? (the dilution story)
@@ -2081,6 +2150,8 @@ def run_backtest(
             "mark_price": _price(mark_price),
             "unrealized_pnl": round((mark_price - trade.entry_price) * trade.qty, 2),
             "rank": trade.rank, "rank_of": trade.rank_of,
+            # See the trade_list note: declared, never folded in silently.
+            "entry_intrabar": trade.entry_intrabar,
         })
 
     min_gain = params.get("entry", {}).get("min_day_gain_pct", 0)
@@ -2250,6 +2321,12 @@ def run_backtest(
                 # bought — the pair the live journal stamps, so the two sides of a
                 # fidelity comparison can be matched on it.
                 "rank": t.rank, "rank_of": t.rank_of,
+                # DECLARED, never quietly folded in: this entry was found only
+                # by looking inside the bar, which a fidelity replay may do on a
+                # bar the journal proves live traded on. A comparison that helps
+                # itself and does not say so is worth less than one that admits
+                # it — the same obligation `universe_seeded` carries.
+                "entry_intrabar": t.entry_intrabar,
                 "exit_price": _price(t.exit_price or 0),
                 "exit_at": t.exit_at.isoformat() if t.exit_at else None,
                 "exit_day": day_of(t.exit_at) if t.exit_at else None,

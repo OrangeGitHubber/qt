@@ -970,6 +970,32 @@ def _iso(ts: datetime | None) -> str | None:
     return aware.isoformat() if aware else None
 
 
+def _intrabar_entry_at(live_rows: list[dict]) -> dict[str, list[datetime]]:
+    """{symbol: the moments the engine really opened a position} — the evidence
+    that lets a replay reconsider ONE bar.
+
+    A fidelity comparison knows something no backtest does: this trade happened.
+    So when the replay finds no entry at a bar's close on the very bar the
+    journal says live filled, it may re-ask the same rules using that bar's HIGH
+    — a rule satisfied inside the bar is a sampling difference, not a
+    disagreement. Same reasoning as `_seed_by_day`, which removes the universe
+    artefact for the same purpose: strip the differences you can prove are
+    artefacts, so what is left is about the rules.
+
+    Rejected rows are excluded. They never filled, so they are not evidence that
+    anything was tradable — they are evidence a rail said no, which the replay
+    applies for itself."""
+    out: dict[str, list[datetime]] = {}
+    for row in live_rows:
+        if row.get("status") not in ("open", "closed"):
+            continue
+        moment = _parse(row.get("entry_at"))
+        symbol = (row.get("symbol") or "").upper()
+        if moment is not None and symbol:
+            out.setdefault(symbol, []).append(moment)
+    return out
+
+
 def _seed_by_day(live_rows: list[dict]) -> dict[str, list[str]]:
     """{entry day: [symbols the live engine acted on that day]}.
 
@@ -1413,6 +1439,10 @@ async def _replay_segments(
                         session, strategy, start, segment.end, mode
                     ),
                     nonfill_events=_nonfill_events(session, start, segment.end, mode),
+                    # THIS stretch's own fills, like everything else here: a
+                    # stretch must not be handed moments from a configuration it
+                    # is not replaying.
+                    intrabar_entry_at=_intrabar_entry_at(segment.live),
                     timeframe=_timeframe_for(
                         config["params"], (segment.end - start).total_seconds() / 3600
                     ),
@@ -2015,6 +2045,11 @@ async def compare(
                     _nonfill_events(session, replay_from, until, body.mode)
                     if seed_rails else []
                 ),
+                # See _intrabar_entry_at. Gated on `seed_rails` for the reason
+                # every other journal-derived input is: imported trades came from
+                # another instance, so this machine's journal is not evidence
+                # about what that engine could see.
+                intrabar_entry_at=_intrabar_entry_at(live_rows) if seed_rails else {},
                 timeframe=_timeframe_for(
                     json.loads(strategy.params), (until - replay_from).total_seconds() / 3600
                 ),

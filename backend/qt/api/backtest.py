@@ -676,6 +676,17 @@ class BacktestBody(BaseModel):
     # order by construction so it can never generate that evidence itself. See
     # qt.services.backtest._NonfillLedger. Empty for every ordinary backtest.
     nonfill_events: list[dict] = Field(default_factory=list)
+    # {symbol: [moments the live engine really opened a position]} — and ONLY a
+    # fidelity comparison ever fills it. On those bars, and no others, a replay
+    # that found no entry at the close may re-ask the same rules using the bar's
+    # HIGH: the journal is evidence the trade happened, so a rule satisfied
+    # somewhere inside that bar is a sampling difference rather than a
+    # disagreement. Empty for every ordinary backtest, which has no ground truth
+    # to justify it and would simply become more permissive. See
+    # backtest._may_look_inside_bar, and note it is inert at 1-minute resolution
+    # by construction — _apply_poller_view has already flattened the extremes
+    # there, deliberately, because live gets one look per bar too.
+    intrabar_entry_at: dict[str, list[datetime]] = Field(default_factory=dict)
     starting_cash: float = Field(default=5000, ge=100, le=10_000_000)
     spread_pct: float = Field(default=0.1, ge=0, le=2)
     # None = use the asset class's real-world rate (see DEFAULT_FEE_PCT). An
@@ -1844,6 +1855,7 @@ async def replay(
         account_entries=body.account_entries or None,
         account_realized=body.account_realized or None,
         nonfill_events=body.nonfill_events or None,
+        intrabar_entry_at=body.intrabar_entry_at or None,
     )
     if "error" in result:
         raise HTTPException(status_code=422, detail=result["error"])
@@ -2047,6 +2059,7 @@ async def _scanner_replay(
             account_entries=body.account_entries or None,
             account_realized=body.account_realized or None,
             nonfill_events=body.nonfill_events or None,
+            intrabar_entry_at=body.intrabar_entry_at or None,
         )
 
     replay_daily = ds.daily if _needs_warmup(strategy_dict["params"]) else None
