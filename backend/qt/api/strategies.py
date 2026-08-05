@@ -19,7 +19,17 @@ router = APIRouter(prefix="/api/strategies", tags=["strategies"])
 
 
 class EntryRules(BaseModel):
-    min_day_gain_pct: float = Field(default=3.0, ge=0, le=100)
+    # NEGATIVE IS ALLOWED, and is the only way to say "today's direction does not
+    # matter". Unlike its neighbours this rule has no `if value and …` guard in
+    # evaluate_entry — `change_pct < min_gain` at 0 still rejects anything DOWN on
+    # the day, so 0 means "must not be red", not "off". That is fatal to a
+    # mean-reversion entry: a stock crossing up out of oversold is often still
+    # red. Measured on strategy 31, where it blocked 321 symbol-days while the
+    # settings page showed no minimum at all.
+    #
+    # Widening the floor rather than redefining 0 is deliberate: making 0 mean
+    # "off" would silently loosen every existing strategy that has it at 0.
+    min_day_gain_pct: float = Field(default=3.0, ge=-100, le=100)
     max_day_gain_pct: float = Field(default=0, ge=0, le=1000)  # 0 = no ceiling; skip over-extended movers
     min_price: float = Field(default=0, ge=0)  # $/share floor for this strategy; 0 = any
     max_price: float = Field(default=0, ge=0)  # $/share cap; 0 = none (e.g. only movers under $10)

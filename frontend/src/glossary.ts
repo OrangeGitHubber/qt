@@ -286,7 +286,7 @@ export const GLOSSARY: Record<string, GlossaryEntry> = {
   min_day_gain: {
     term: "Min gain today (%)",
     explain:
-      "How far a symbol must be up to qualify — on the scanner, to appear on the list; on a strategy, to be eligible to enter. It's the core momentum trigger. For stocks, 'up' means versus yesterday's session close. For crypto (which has no daily close), it means the ROLLING last-24-hours change — the same number crypto sites quote, and the same number everywhere in QT: scanner, watchlist, strategy engine and backtest all use one definition, so what you see is what the bot trades on. Higher = only strong movers (fewer, more extended); lower = more candidates, including weak ones.",
+      "The stock must be up at least this much today before it can be bought. IMPORTANT: unlike the other optional rules here, 0 does NOT switch this off — it means 'must not be down today', because the test is 'today's move is at least this number'. To ignore the day's direction entirely, set a negative value: -100 accepts anything. That matters for a buy-the-dip entry like the RSI crossing, where the stock has usually just stopped falling and is often still red on the day.",
     url: "https://www.investopedia.com/terms/m/momentum.asp",
   },
   entry_window: {

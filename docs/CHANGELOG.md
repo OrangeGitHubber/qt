@@ -3,6 +3,24 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## "Min gain today: 0" was never off (2026-08-05)
+
+Strategy 31 was built around the RSI crossing with the minimum day gain left at
+0, and the backtest still blocked 321 symbol-days with "day gain below the
+minimum" — a minimum the settings page showed as absent, because it hides zeros.
+
+It was not absent. Every other optional entry rule is skipped when it is zero;
+this one is not. The test is "today's move is at least this number", so at 0 it
+means **must not be down today**. Invisible on a momentum strategy, which wants
+that anyway. Fatal on a buy-the-dip one, where the stock has just stopped
+falling and is usually still red.
+
+The floor is now -100 rather than 0, so "I don't care which way it went today"
+is finally expressible. 0 keeps its old meaning on purpose: redefining it as
+"off" would quietly loosen every existing strategy sitting at 0, and that is a
+live-trading change nobody asked for. The field label now says so when it is set
+to zero, and the tooltip explains the negative.
+
 ## The RSI crossing needs daily bars, and said so in the wrong words (2026-08-05)
 
 "Favorites - optimized 4 aug v2 no macd" was built around the new RSI crossing,

@@ -945,8 +945,18 @@ function Editor({
         <h4 className="builder-head">Entry criteria</h4>
         <p className="sec-sub">When the strategy is allowed to buy.</p>
         <div className="param-grid">
-          <Param label="Min gain today (%)" tip="min_day_gain">
-            <NumberField step="any" min="0" value={p.entry.min_day_gain_pct}
+          <Param
+            label={
+              Number(p.entry.min_day_gain_pct) === 0
+                ? "Min gain today (%) — 0 still means “not down”"
+                : "Min gain today (%)"
+            }
+            tip="min_day_gain"
+          >
+            {/* min="-100": zero is a real threshold here, not an off switch,
+                so refusing negatives left no way to ignore the day's
+                direction — which is what a buy-the-dip entry needs. */}
+            <NumberField step="any" min="-100" value={p.entry.min_day_gain_pct}
               onChange={(n) => setEntry("min_day_gain_pct", n)} />
           </Param>
         </div>
