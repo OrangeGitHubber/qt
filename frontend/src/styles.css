@@ -3169,3 +3169,41 @@ tbody tr:hover > td {
      footnote that ever needs different treatment from the table above it. */
   max-width: none;
 }
+
+/* A form field a rejected save actually named. The risk form PUTs every field
+   at once, so the offending one is routinely NOT the one under the cursor —
+   "max_total_positions: Input should be less than or equal to 50" arrived while
+   the cursor sat in "Max new trades per day", and read as though that box were
+   wrong. Outlining the real one is what makes a rejection actionable. */
+label.bad input,
+label.bad select {
+  border-color: var(--err);
+}
+label.bad {
+  color: var(--err);
+}
+
+/* The accepted range, under its input. Muted and small: it is reference, not
+   instruction, and it must not compete with the label above it. Shown always
+   rather than on error, because the point is to prevent the rejection — the
+   API knew the ceiling was 50, the input knew once `max` was added, and the
+   person filling the form in was the only one who didn't. */
+.field-hint {
+  display: block;
+  margin-top: 0.25rem;
+  font-size: 0.78rem;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* And the rejection itself, beside the field it names rather than only in the
+   banner at the top of the page (UX guidance: error-placement). */
+.field-error {
+  display: block;
+  margin-top: 0.2rem;
+  font-size: 0.78rem;
+  color: var(--err);
+}
+label.bad .field-hint {
+  color: var(--err);
+}

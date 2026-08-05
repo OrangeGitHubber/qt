@@ -3,6 +3,21 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Settings tells you the limits before you hit them (2026-08-04)
+
+Typing 1000 into "Max open positions" produced *"max_total_positions: Input
+should be less than or equal to 50"* — a field name that appears nowhere on the
+page, in a neutral grey banner, while the cursor sat in a different box
+entirely. The form sends every setting at once, so the rejection was about a
+field you weren't looking at, and nothing on screen had ever mentioned 50.
+
+Every risk field now shows its accepted range under the input (1–50, 1–200,
+0–720 hours) and enforces it in the browser, so an out-of-range value is caught
+against the right field before it ever reaches the server. If a save is still
+rejected, the message is red and announced to screen readers, names the field in
+the words printed on the page rather than in code, outlines the offending input,
+repeats the reason beneath it, and puts your cursor in it.
+
 ## Once one trade differs, the rest are consequences (2026-08-04)
 
 The last SPY mystery on "FAANGs - optimized 2 aug" turned out not to be a bug at

@@ -126,6 +126,63 @@ function CacheMetrics({ stats, hasIntraday, unitPairs }: { stats: BarCacheStats 
   );
 }
 
+// THE FORM'S OWN LABELS, keyed by the field name the API validates on. A
+// rejected save names the field in code — "max_total_positions: Input should be
+// less than or equal to 50" — and the reader is looking at a form that says
+// "Max open positions (total)" somewhere else on the row. Werner hit exactly
+// that: the message named one field while he was editing another, so it read as
+// though the box under his cursor was wrong.
+//
+// The risk form PUTs every field at once, so ANY field out of range blocks the
+// whole save — including one the user has not touched in months. Naming it in
+// the words on screen, and outlining the input itself, is what turns an
+// unexplainable rejection into a two-second fix.
+const RISK_LABELS: Record<string, string> = {
+  max_daily_loss_usd: "Max daily loss ($)",
+  max_daily_loss_pct: "Max daily loss (% of account)",
+  max_total_positions: "Max open positions (total)",
+  max_total_exposure_usd: "Max total exposure ($)",
+  max_trades_per_day: "Max new trades per day",
+  cooldown_hours_after_loss: "Cooldown after a loss (hours)",
+  wash_sale_guard: "Wash-sale guard",
+};
+
+/** Field keys named in a validation message, so the inputs can be outlined. */
+function offendingFields(message: string): string[] {
+  return Object.keys(RISK_LABELS).filter((key) => message.includes(key + ":"));
+}
+
+/** The same message with code-level field names replaced by the form's labels. */
+function inPlainLabels(message: string): string {
+  return Object.entries(RISK_LABELS).reduce(
+    (text, [key, label]) => text.split(key + ":").join(label + " —"),
+    message,
+  );
+}
+
+/** The accepted range, shown under the input — and the rejection, when there is
+ *  one, under the field the server actually named.
+ *
+ *  Both come from the SAME numbers as the input's own min/max, so the hint
+ *  cannot drift from what the form will accept. Werner typed 1000 into a field
+ *  capped at 50 because nothing on screen said 50: the API knew, the input knew
+ *  once `max` was added, and the person filling it in was the only one who
+ *  didn't. UX guidance calls this `input-helper-text` and `error-placement` —
+ *  the error belongs beside the problem, not only in a banner at the top. */
+function Limits({ min, max, unit, error }: {
+  min: number; max: number; unit?: string; error?: string;
+}) {
+  return (
+    <>
+      <span className="field-hint">
+        {min.toLocaleString()}–{max.toLocaleString()}
+        {unit ? ` ${unit}` : ""}
+      </span>
+      {error && <span className="field-error">{error}</span>}
+    </>
+  );
+}
+
 export default function Settings() {
   const [engine, setEngine] = useState<EngineState | null>(null);
   const [risk, setRiskLocal] = useState<RiskConfig | null>(null);
@@ -139,6 +196,18 @@ export default function Settings() {
   const [bars, setBars] = useState<BarCacheStatus | null>(null);
   const [showFresh, setShowFresh] = useState(false);
   const [note, setNote] = useState<string | null>(null);
+  // Success and failure used the same neutral banner, so a rejected save looked
+  // like a confirmation. Tracked separately rather than sniffed from the text.
+  const [noteIsError, setNoteIsError] = useState(false);
+  // Which inputs the rejection actually named. The risk form sends every field
+  // at once, so the offending one is routinely NOT the one under the cursor.
+  const badFields = noteIsError && note ? offendingFields(note) : [];
+  /** The part of a rejection that concerns one field, without repeating its name. */
+  const fieldError = (key: string): string | undefined => {
+    if (!note || !badFields.includes(key)) return undefined;
+    const part = note.split("; ").find((p) => p.startsWith(key + ":"));
+    return part ? part.slice(key.length + 1).trim() : undefined;
+  };
   // Broker connection: current account + replace-keys form + liquidation.
   const [status, setStatus] = useState<StatusResponse | null>(null);
   const [keyId, setKeyId] = useState("");
@@ -181,6 +250,7 @@ export default function Settings() {
   async function replaceKeys(e: FormEvent) {
     e.preventDefault();
     setNote(null);
+    setNoteIsError(false);
     setBrokerBusy(true);
     try {
       const res = await saveAlpacaKeys(keyId.trim(), keySecret.trim());
@@ -192,6 +262,7 @@ export default function Settings() {
       setNote(`Connected to Alpaca account ${res.account_number} (${res.status}).`);
     } catch (err) {
       setNote((err as Error).message);
+      setNoteIsError(true);
     } finally {
       setBrokerBusy(false);
     }
@@ -199,6 +270,7 @@ export default function Settings() {
 
   async function doLiquidate() {
     setNote(null);
+    setNoteIsError(false);
     setLiqBusy(true);
     try {
       const res = await liquidateAll(liqOrphans);
@@ -214,6 +286,7 @@ export default function Settings() {
       );
     } catch (err) {
       setNote((err as Error).message);
+      setNoteIsError(true);
     } finally {
       setLiqBusy(false);
     }
@@ -221,52 +294,62 @@ export default function Settings() {
 
   async function runSweep() {
     setNote(null);
+    setNoteIsError(false);
     try {
       await runBarSweep();
       const s = await getBarCacheStatus();
       setBars(s); // flips running=true, which starts the poll above
     } catch (e) {
       setNote((e as Error).message);
+      setNoteIsError(true);
     }
   }
 
   async function runReconstruct() {
     setNote(null);
+    setNoteIsError(false);
     try {
       await runBarReconstruct();
       setBars(await getBarCacheStatus());
     } catch (e) {
       setNote((e as Error).message);
+      setNoteIsError(true);
     }
   }
 
   async function runIntraday() {
     setNote(null);
+    setNoteIsError(false);
     try {
       await runIntradaySweep();
       setBars(await getBarCacheStatus()); // flips running=true, starts the poll
     } catch (e) {
       setNote((e as Error).message);
+      setNoteIsError(true);
     }
   }
 
   async function runCrypto() {
     setNote(null);
+    setNoteIsError(false);
     try {
       await runCryptoSweep();
       setBars(await getBarCacheStatus()); // flips running=true, starts the poll
     } catch (e) {
       setNote((e as Error).message);
+      setNoteIsError(true);
     }
   }
 
   async function runCryptoIntraday() {
     setNote(null);
+    setNoteIsError(false);
     try {
       await runCryptoIntradaySweep();
       setBars(await getBarCacheStatus());
     } catch (e) {
       setNote((e as Error).message);
+      setNoteIsError(true);
     }
   }
 
@@ -284,11 +367,13 @@ export default function Settings() {
   async function toggleRegime(enabled: boolean) {
     setEngine((prev) => (prev ? { ...prev, regime_filter_enabled: enabled } : prev));
     setNote(null);
+    setNoteIsError(false);
     try {
       await setRegimeEnabled(enabled);
     } catch (err) {
       setEngine((prev) => (prev ? { ...prev, regime_filter_enabled: !enabled } : prev));
       setNote((err as Error).message);
+      setNoteIsError(true);
     }
   }
 
@@ -300,11 +385,13 @@ export default function Settings() {
       );
     flip(enabled);
     setNote(null);
+    setNoteIsError(false);
     try {
       await setSlackPrefs({ [key]: enabled });
     } catch (err) {
       flip(!enabled);
       setNote((err as Error).message);
+      setNoteIsError(true);
     }
   }
 
@@ -312,13 +399,26 @@ export default function Settings() {
     e.preventDefault();
     if (!risk) return;
     setNote(null);
+    setNoteIsError(false);
     try {
       await setRisk({ ...risk, leverage_confirm: leverageConfirm });
       setLeverageConfirm("");
       setNote("Risk settings saved.");
       refresh();
     } catch (err) {
-      setNote((err as Error).message);
+      const message = (err as Error).message;
+      setNote(message);
+      setNoteIsError(true);
+      // WCAG focus-management: after a rejected submit, put the cursor in the
+      // first field the server complained about. The risk form sends every
+      // field at once, so without this the user is left hunting for which of
+      // six inputs is the problem — which is exactly what happened.
+      const first = offendingFields(message)[0];
+      if (first) {
+        requestAnimationFrame(() => {
+          document.querySelector<HTMLInputElement>(`[data-field="${first}"] input`)?.focus();
+        });
+      }
     }
   }
 
@@ -330,8 +430,12 @@ export default function Settings() {
         <h2>Settings</h2>
       </div>
       {note && (
-        <div className="card note" onClick={() => setNote(null)}>
-          {note}
+        <div
+          className={noteIsError ? "card note error" : "card note"}
+          role={noteIsError ? "alert" : undefined}
+          onClick={() => setNote(null)}
+        >
+          {noteIsError ? inPlainLabels(note) : note}
         </div>
       )}
 
@@ -457,29 +561,35 @@ export default function Settings() {
         </summary>
         <form onSubmit={saveRisk}>
         <div className="filter-grid">
-          <label>
+          <label data-field="max_daily_loss_usd" className={badFields.includes("max_daily_loss_usd") ? "bad" : undefined}>
             Max daily loss ($) <InfoTip k="daily_loss_limit" />
-            <NumberField min={10} step="any" {...num("max_daily_loss_usd")} />
+            <NumberField min={10} max={1_000_000} step="any" {...num("max_daily_loss_usd")} />
+            <Limits min={10} max={1000000} unit="$" error={fieldError("max_daily_loss_usd")} />
           </label>
-          <label>
+          <label data-field="max_daily_loss_pct" className={badFields.includes("max_daily_loss_pct") ? "bad" : undefined}>
             Max daily loss (% of account) <InfoTip k="daily_loss_limit" />
-            <NumberField min={0.5} step={0.5} {...num("max_daily_loss_pct")} />
+            <NumberField min={0.5} max={50} step={0.5} {...num("max_daily_loss_pct")} />
+            <Limits min={0.5} max={50} unit="%" error={fieldError("max_daily_loss_pct")} />
           </label>
-          <label>
+          <label data-field="max_total_positions" className={badFields.includes("max_total_positions") ? "bad" : undefined}>
             Max open positions (total) <InfoTip k="max_positions" />
-            <NumberField min={1} step={1} {...num("max_total_positions")} />
+            <NumberField min={1} max={50} step={1} {...num("max_total_positions")} />
+            <Limits min={1} max={50} error={fieldError("max_total_positions")} />
           </label>
-          <label>
+          <label data-field="max_total_exposure_usd" className={badFields.includes("max_total_exposure_usd") ? "bad" : undefined}>
             Max total exposure ($) <InfoTip k="max_exposure" />
-            <NumberField min={10} step="any" {...num("max_total_exposure_usd")} />
+            <NumberField min={10} max={10_000_000} step="any" {...num("max_total_exposure_usd")} />
+            <Limits min={10} max={10000000} unit="$" error={fieldError("max_total_exposure_usd")} />
           </label>
-          <label>
+          <label data-field="max_trades_per_day" className={badFields.includes("max_trades_per_day") ? "bad" : undefined}>
             Max new trades per day <InfoTip k="trade_rate" />
-            <NumberField min={1} step={1} {...num("max_trades_per_day")} />
+            <NumberField min={1} step={1} max={200} {...num("max_trades_per_day")} />
+            <Limits min={1} max={200} unit="per day" error={fieldError("max_trades_per_day")} />
           </label>
-          <label>
+          <label data-field="cooldown_hours_after_loss" className={badFields.includes("cooldown_hours_after_loss") ? "bad" : undefined}>
             Cooldown after a loss (hours) <InfoTip k="cooldown" />
-            <NumberField min={0} step="any" {...num("cooldown_hours_after_loss")} />
+            <NumberField min={0} step="any" max={720} {...num("cooldown_hours_after_loss")} />
+            <Limits min={0} max={720} unit="hours" error={fieldError("cooldown_hours_after_loss")} />
           </label>
           <label>
             Wash-sale guard <InfoTip k="wash_sale" />
