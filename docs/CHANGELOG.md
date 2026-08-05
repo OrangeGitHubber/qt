@@ -3,7 +3,30 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
-## Rotation follows the rotation setting, not the ranking one (2026-08-05)
+## The rotation setting is visible wherever it still sells (2026-08-04)
+
+The same setting again, from the owner's side. Werner could not find the
+control that was selling his winners, and he was right that it wasn't there:
+
+* With "Rank & trade only the top N" switched **off**, the rotation checkbox was
+  hidden entirely — while the saved value stayed on and kept selling. The only
+  two ranking-ish words on the page were a checkbox that was off and a metric
+  dropdown, so the honest reading of that screen was "ranking is not on".
+* With ranking **on**, the checkbox was there but folded away inside "Advanced
+  exit options", which is collapsed by default.
+
+Now the checkbox shows for any fixed symbol list regardless of the ranking
+setting, its label names the metric it ranks by ("leaves the top 10 by today's
+% move") instead of just "the top 10", and when entry ranking is off it says in
+so many words that every symbol is still a buy candidate but holdings that drop
+out get sold. The exit fold opens by itself when rotation is on, and stays open
+when you clear it, so unticking the box doesn't collapse the section under your
+cursor.
+
+The rule this came from: a control may be hidden when it does nothing. Not when
+it is acting.
+
+## Rotation follows the rotation setting, not the ranking one (2026-08-04)
 
 Found on "Favorites - optimized 4 aug v2", which has ranking switched OFF and
 rotation switched ON — a combination the settings page lets you make.

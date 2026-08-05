@@ -731,6 +731,30 @@ function Editor({
   // are already ranked by the scanner, so the controls don't apply there.
   const rankable = s.universe === "watchlist" || s.universe === "custom";
   const ranking = s.universe === "basket" || (rankable && !!s.rank_enabled);
+  // ROTATION IS A SEPARATE OPT-IN and must stay VISIBLE wherever it still acts.
+  //
+  // This control used to be hidden behind `ranking`, so turning "rank & trade
+  // only the top N" off made the checkbox disappear while its saved value
+  // stayed true — and rotation kept selling positions with no control on the
+  // page to see or clear it. Measured on strategy 29: rank_enabled false,
+  // rotate_on_rank_dropout true, and the backtest reporting "rotated out of the
+  // top 10 by momentum today" while the owner could see no ranking setting
+  // switched on anywhere.
+  //
+  // The two settings are genuinely independent — `rank_enabled` cuts which
+  // names you may BUY, this sells what you already HOLD — and the engine has
+  // always treated them so (engine._rotation_exits ranks the pool whatever
+  // rank_enabled says). A control is allowed to be hidden only when it does
+  // nothing; this one does something on every fixed pool.
+  const rotatable = s.universe === "basket" || rankable;
+  // Latched, not bound. Bound directly to the flag, unchecking the box would
+  // snap the fold shut under the cursor mid-edit — and clearing rotation is
+  // exactly what someone who just found this control came to do. So: open when
+  // rotation is on, stay open afterwards, and let the summary close it.
+  const [exitFoldOpen, setExitFoldOpen] = useState(false);
+  useEffect(() => {
+    if (p.exit.rotate_on_rank_dropout) setExitFoldOpen(true);
+  }, [p.exit.rotate_on_rank_dropout]);
   return (
     <form className="card editor" onSubmit={save}>
       <h3>{s.id ? `Edit: ${s.name}` : "New strategy"}</h3>
@@ -1041,7 +1065,13 @@ function Editor({
           </p>
         )}
 
-        <details className="adv">
+        {/* Opened when rotation is ON, because a switched-on setting must not be
+            invisible. Werner had rotation selling his winners and could not find
+            the control: it was hidden by `ranking` in one build and, once that
+            was fixed, still folded away behind this summary. A collapsed section
+            is a fine default for options at rest — not for one that is acting. */}
+        <details className="adv" open={exitFoldOpen}
+                 onToggle={(e) => setExitFoldOpen(e.currentTarget.open)}>
           <summary>Advanced exit options</summary>
           <div className="param-grid">
             {/* Crypto promotes this to the main section (it replaces the
@@ -1083,11 +1113,22 @@ function Editor({
                 Sell to cash when the market turns down (SPY &lt; 200-day) <InfoTip k="regime_exit" />
               </label>
             )}
-            {ranking && (
+            {rotatable && (
               <label className="check">
                 <input type="checkbox" checked={!!p.exit.rotate_on_rank_dropout}
                   onChange={(e) => setExit("rotate_on_rank_dropout", e.target.checked)} />
-                Rotate out when it leaves the top {s.top_n} <InfoTip k="rotate_on_rank_dropout" />
+                Rotate out when it leaves the top {s.top_n} by{" "}
+                {(s.rank_by && RANK_LABELS[s.rank_by]) || s.rank_by || "momentum today"}{" "}
+                <InfoTip k="rotate_on_rank_dropout" />
+                {/* Named explicitly when entries are NOT ranked: without it the
+                    row reads "the top 10" with nothing on the page saying top
+                    ten of what, or by which measure. */}
+                {!ranking && p.exit.rotate_on_rank_dropout && (
+                  <span className="field-hint">
+                    Ranking is off for ENTRIES, so every symbol is a candidate — but this still
+                    ranks your list and sells anything that drops out of the top {s.top_n}.
+                  </span>
+                )}
               </label>
             )}
           </div>
