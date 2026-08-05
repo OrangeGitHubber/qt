@@ -3,6 +3,26 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Ticking an overlay now puts its number in the readout (2026-08-05)
+
+SPCE's detail chart with **RSI** and **Rel. strength vs SPY** ticked showed both
+lines on the chart and neither number anywhere. Hovering gave the price, the
+date, and the change since the start of the window — nothing else. To read the
+RSI you had to eyeball the height of a line against a gridline.
+
+The hover readout only ever knew about the overlays drawn on the price panel
+itself. Everything in a sub-panel below it — volume, MACD, RSI, relative
+strength — contributed nothing, and Bollinger got a colour swatch with no value.
+
+Now **every overlay you switch on reports its value for the day you're hovering**,
+and an overlay you switch off reports nothing: 50/200-day MA, EMA 9 & 21, the
+ATR-stop level, Bollinger (upper / middle / lower), volume, MACD (line, signal
+and histogram), RSI, and relative strength. Each number carries the colour of
+the line it belongs to, so the figure and the curve identify each other.
+
+An indicator that isn't defined yet reads "—" rather than a broken number — a
+200-day average has nothing to say on day 40, and now it says so.
+
 ## "Min gain today: 0" was never off (2026-08-05)
 
 Strategy 31 was built around the RSI crossing with the minimum day gain left at
