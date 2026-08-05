@@ -118,14 +118,16 @@ def _ema_series(values: list[float], period: int) -> list[float | None]:
     return out
 
 
-def macd(closes: list[float], fast: int = 12, slow: int = 26, signal: int = 9) -> tuple[float, float, float] | None:
-    """MACD (line, signal, histogram) at the LAST close.
+def _macd_lines(
+    closes: list[float], fast: int, slow: int, signal: int
+) -> tuple[list[float], list[float]] | None:
+    """(macd_line, signal_line) oldest-first, trimmed to where BOTH are defined.
 
-    `closes` is oldest-first and must contain only COMPLETED bars — the caller
-    excludes any in-progress bar, so there is NO look-ahead. MACD line =
-    EMA(fast) − EMA(slow); signal = EMA(signal) of the MACD line; histogram =
-    line − signal. Returns None when there isn't enough history to form the
-    signal line (needs ≥ slow + signal points; more to stabilise the EMAs)."""
+    The one implementation. `macd` reads its last point; the ranking metrics read
+    the whole series to measure how the histogram is MOVING. A second copy of
+    this EMA chain that drifted from this one would put the ranker and the entry
+    signal on subtly different MACDs — the exact class of bug the shared
+    rsi_from_closes core exists to prevent."""
     if not (0 < fast < slow) or signal <= 0 or len(closes) < slow + signal:
         return None
     ema_fast = _ema_series(closes, fast)
@@ -136,10 +138,92 @@ def macd(closes: list[float], fast: int = 12, slow: int = 26, signal: int = 9) -
     if len(macd_line) < signal:
         return None
     signal_series = _ema_series(macd_line, signal)
-    last_line, last_sig = macd_line[-1], signal_series[-1]
-    if last_sig is None:
+    pairs = [(l, s) for l, s in zip(macd_line, signal_series) if s is not None]
+    if not pairs:
         return None
+    return [l for l, _ in pairs], [s for _, s in pairs]
+
+
+def macd(closes: list[float], fast: int = 12, slow: int = 26, signal: int = 9) -> tuple[float, float, float] | None:
+    """MACD (line, signal, histogram) at the LAST close.
+
+    `closes` is oldest-first and must contain only COMPLETED bars — the caller
+    excludes any in-progress bar, so there is NO look-ahead. MACD line =
+    EMA(fast) − EMA(slow); signal = EMA(signal) of the MACD line; histogram =
+    line − signal. Returns None when there isn't enough history to form the
+    signal line (needs ≥ slow + signal points; more to stabilise the EMAs)."""
+    lines = _macd_lines(closes, fast, slow, signal)
+    if lines is None:
+        return None
+    last_line, last_sig = lines[0][-1], lines[1][-1]
     return round(last_line, 6), round(last_sig, 6), round(last_line - last_sig, 6)
+
+
+# How many completed daily bars back macd_slope_pct measures the histogram's
+# change over. Three sessions: long enough that one noisy close doesn't decide
+# the ranking, short enough to still be describing "this week".
+MACD_SLOPE_SPAN = 3
+
+
+def _macd_hist_pct(
+    bars: list[dict], fast: int, slow: int, signal: int
+) -> tuple[list[float], float] | None:
+    """(histogram series, price) for the ranking metrics, or None.
+
+    Price is the LAST CLOSE in `bars`, not a live quote — deliberately. MACD
+    itself is computed from completed bars only (see `macd`) precisely so the
+    signal doesn't wiggle with every intraday tick, and a metric that held the
+    indicator still while its divisor moved would reorder the pool on nothing.
+    It also makes both metrics pure functions of completed daily bars, so the
+    replay and the live engine cannot disagree about them."""
+    closes = [float(b["c"]) for b in bars]
+    lines = _macd_lines(closes, fast, slow, signal)
+    if lines is None or not closes or not closes[-1]:
+        return None
+    return [l - s for l, s in zip(*lines)], closes[-1]
+
+
+def macd_strength_pct(
+    bars: list[dict], fast: int = 12, slow: int = 26, signal: int = 9
+) -> float | None:
+    """The MACD histogram as a % OF PRICE — how far the fast average has pulled
+    ahead of its signal, relative to what the share costs.
+
+    Dividing by price is what makes this rankable ACROSS symbols at all. Raw
+    MACD scales with the share price: measured on Werner's pool, DELL's histogram
+    read +13.44 while AAL's read +0.029 on the same day, purely because DELL is a
+    $400 stock and AAL a $14 one. Ranking the raw number would sort the list by
+    price and call it momentum.
+
+    Higher = stronger current up-momentum. Note this is a LEVEL, and the
+    histogram peaks late in a move — see macd_slope_pct for the leading version."""
+    got = _macd_hist_pct(bars, fast, slow, signal)
+    if got is None:
+        return None
+    hist, price = got
+    return round(hist[-1] / price * 100, 4)
+
+
+def macd_slope_pct(
+    bars: list[dict], fast: int = 12, slow: int = 26, signal: int = 9,
+    span: int = MACD_SLOPE_SPAN,
+) -> float | None:
+    """How fast the MACD histogram is RISING, as a % of price over `span` bars.
+
+    The leading counterpart to macd_strength_pct. A histogram LEVEL is highest
+    when a move is furthest along — rank by it and you buy what has already run,
+    which is the same failure mode as ranking by RSI. The histogram's rate of
+    change turns positive as momentum builds, so this ranks a name that is
+    accelerating above one that is merely high and flattening.
+
+    Positive = momentum building; negative = fading, even while still bullish."""
+    got = _macd_hist_pct(bars, fast, slow, signal)
+    if got is None:
+        return None
+    hist, price = got
+    if span <= 0 or len(hist) < span + 1:
+        return None
+    return round((hist[-1] - hist[-1 - span]) / price * 100, 4)
 
 
 def macd_bullish(closes: list[float], fast: int = 12, slow: int = 26, signal: int = 9) -> bool | None:

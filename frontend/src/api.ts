@@ -77,7 +77,14 @@ export interface StrategyParams {
   execution?: { market_orders: boolean };
 }
 
-export type RankBy = "momentum_today" | "return_30d" | "relative_strength" | "rs_vs_spy" | "rsi";
+export type RankBy =
+  | "momentum_today"
+  | "return_30d"
+  | "relative_strength"
+  | "rs_vs_spy"
+  | "rsi"
+  | "macd_strength"
+  | "macd_slope";
 
 export interface StrategyRow {
   id: number;

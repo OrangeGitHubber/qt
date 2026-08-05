@@ -3,6 +3,34 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Rank by MACD, as strength or as acceleration (2026-08-05)
+
+"Favorites - optimized 4 aug v2" was ranking its 19 names by RSI, highest first,
+and then requiring a 1% up-day, a price above VWAP, and an already-bullish MACD
+to buy. Every one of those four conditions selects for "has already run".
+
+The record showed it plainly: 17 trades, an 11.8% win rate, and 6 of them exited
+on the HARD stop — meaning price fell below the entry without ever setting a high
+water mark. A third of the entries went down from the moment they were made.
+That is also why widening the trailing stop had changed nothing: a wider trail
+helps a position that goes up first, and does nothing for one that never does.
+
+So there are two new ranking metrics:
+
+* **MACD strength** — how far the MACD line is ahead of its signal, as a % of
+  the share price. The percentage is the point: raw MACD scales with price, so on
+  the same day DELL's read +13.44 and AAL's +0.029 purely because one is a $400
+  stock and the other a $14 one. Ranking the raw number sorts your list by how
+  expensive it is and calls the result momentum.
+* **MACD momentum building** — how fast that gap is GROWING over three sessions.
+  This is the early one. A MACD gap is widest late in a move, so ranking on the
+  level repeats the RSI mistake in a different costume; ranking on the rate of
+  change favours a name that is accelerating over one that is high and flattening.
+
+Both use the strategy's own MACD periods and the same 120-day history the MACD
+entry signal already uses, so a strategy that ranks and gates on MACD is reading
+one indicator rather than two that quietly disagree.
+
 ## The trailing stop can size itself to each symbol (2026-08-05)
 
 The hard stop has been able to scale with a symbol's own volatility for a while

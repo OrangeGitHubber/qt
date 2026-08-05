@@ -349,6 +349,18 @@ export const GLOSSARY: Record<string, GlossaryEntry> = {
       "Sets the stop at a multiple of this symbol's Average True Range — its typical daily move — instead of a fixed %. A volatile stock gets a wider stop, a calm one a tighter stop, so ordinary daily wiggle doesn't shake you out. It's recomputed each bar, so it breathes with the symbol's volatility. While it is on it OVERRIDES the fixed stop-loss (which stays as the fallback if ATR can't be computed). This is the HARD stop only — the trailing stop has its own separate ATR setting. 0 = off.",
     url: "https://www.investopedia.com/terms/a/atr.asp",
   },
+  macd_strength: {
+    term: "Rank by MACD strength",
+    explain:
+      "Ranks your list by how far the MACD line has pulled ahead of its signal line, measured as a percentage of the share price. Higher = stronger current up-momentum. The percentage matters: raw MACD grows with the share price, so a $400 stock always shows a bigger number than a $14 one no matter which is actually moving — dividing by price is what makes two different stocks comparable. Be aware this is a LEVEL, and the MACD gap is widest late in a move, so it tends to rank names that have already run.",
+    url: "https://www.investopedia.com/terms/m/macd.asp",
+  },
+  macd_slope: {
+    term: "Rank by MACD momentum building",
+    explain:
+      "Ranks by how fast the MACD gap is GROWING over the last 3 days, rather than how big it is. This is the early version: a stock whose momentum is accelerating ranks above one whose MACD is already high but flattening off. If you have been buying things that top out shortly after you buy them, this is the setting to try — ranking by any 'how far has it gone' measure (RSI, MACD strength, 30-day return) puts the most-extended names at the top of your list by design.",
+    url: "https://www.investopedia.com/terms/m/macd.asp",
+  },
   atr_trail: {
     term: "ATR trailing stop (× ATR)",
     explain:

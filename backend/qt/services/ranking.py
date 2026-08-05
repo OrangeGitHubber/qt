@@ -18,13 +18,29 @@ The metrics are all derived from price data QT already computes:
                          recent momentum. Note this also means the MOST overbought
                          names rank top, so RSI ranking pairs best with an
                          overbought EXIT (exit_rsi_above) to take profit on froth.
+  - macd_strength      : the MACD histogram (line − signal) as a % OF PRICE.
+                         Higher = the fast average is further ahead of its
+                         signal, i.e. stronger current up-momentum. The division
+                         by price is not cosmetic: raw MACD scales with the share
+                         price, so ranking it unnormalised sorts a mixed list by
+                         how expensive its members are. Like RSI this is a LEVEL,
+                         and the histogram peaks late in a move — it ranks what
+                         has already run.
+  - macd_slope         : how fast that histogram is RISING, as a % of price over
+                         the last 3 sessions. The LEADING counterpart: a name
+                         whose momentum is building outranks one whose histogram
+                         is merely high and flattening. Positive = accelerating,
+                         negative = fading even while still bullish.
 
 Ranking is descending (bigger metric = better) with a deterministic tie-break
 on symbol, and symbols whose chosen metric is missing (None) are dropped — you
 cannot rank on data you don't have.
 """
 
-RANK_METRICS = ("momentum_today", "return_30d", "relative_strength", "rs_vs_spy", "rsi")
+RANK_METRICS = (
+    "momentum_today", "return_30d", "relative_strength", "rs_vs_spy", "rsi",
+    "macd_strength", "macd_slope",
+)
 
 
 def rank_symbols(

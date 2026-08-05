@@ -616,6 +616,16 @@ def last_trade_at_from_snapshot(snap: dict) -> datetime | None:
 MACD_LOOKBACK_DAYS = 120  # ~120 daily bars: comfortably above the 12/26/9 warm-up
 
 
+def _strategy_macd_periods(strategy) -> tuple[int, int, int]:
+    """The row's MACD periods, for the ranking metrics. Tolerates unparseable
+    params the same way every other reader here does — a bad params blob must
+    not take down the tick, it just means the 12/26/9 defaults."""
+    try:
+        return _macd_periods(json.loads(strategy.params) or {})
+    except (TypeError, ValueError):
+        return (12, 26, 9)
+
+
 def _macd_periods(params: dict) -> tuple[int, int, int]:
     m = params.get("macd") or {}
     return int(m.get("fast", 12)), int(m.get("slow", 26)), int(m.get("signal", 9))
@@ -1486,7 +1496,8 @@ async def _candidates_for(
             # metric; otherwise consider them all (entry rules decide).
             if strategy.rank_enabled:
                 return await _ranked_candidates(
-                    client, strategy.asset_class, syms, strategy.rank_by, strategy.top_n
+                    client, strategy.asset_class, syms, strategy.rank_by, strategy.top_n,
+                    _strategy_macd_periods(strategy),
                 ), scan_result
             return await _symbol_candidates(client, strategy.asset_class, syms), scan_result
         except AlpacaError as exc:
@@ -1507,7 +1518,8 @@ async def _candidates_for(
             return [], scan_result
         try:
             return await _ranked_candidates(
-                client, strategy.asset_class, syms, strategy.rank_by, strategy.top_n
+                client, strategy.asset_class, syms, strategy.rank_by, strategy.top_n,
+                _strategy_macd_periods(strategy),
             ), scan_result
         except AlpacaError as exc:
             log.warning("watchlist ranking for '%s' failed: %s", strategy.name, exc)
@@ -1639,7 +1651,8 @@ async def _symbol_candidates(
 
 
 async def _pool_metrics(
-    client: AlpacaClient, asset_class: str, symbols: list[str], rank_by: str
+    client: AlpacaClient, asset_class: str, symbols: list[str], rank_by: str,
+    macd_periods: tuple[int, int, int] = (12, 26, 9),
 ) -> tuple[dict, dict, dict, dict, datetime | None]:
     """Snapshot a pool and compute the ranking metric for each symbol. Returns
     (metrics, price_map, vwap_map, trade_at_map, snapped_at). Shared by live
@@ -1694,14 +1707,24 @@ async def _pool_metrics(
             "relative_strength": None,
             "rs_vs_spy": None,
             "rsi": None,
+            "macd_strength": None,
+            "macd_slope": None,
         }
 
     # rs_vs_spy is a STOCK-only metric (SPY is the benchmark); never fetch SPY for crypto.
     RS_VS_SPY_WINDOW = 90  # calendar days of relative return
     want_rs_vs_spy = rank_by == "rs_vs_spy" and asset_class == "stock"
 
-    if rank_by in ("return_30d", "relative_strength", "rsi") or want_rs_vs_spy:
-        lookback_days = 320 if rank_by in ("relative_strength", "rs_vs_spy") else 60
+    macd_rank = rank_by in ("macd_strength", "macd_slope")
+    if rank_by in ("return_30d", "relative_strength", "rsi") or want_rs_vs_spy or macd_rank:
+        # MACD ranking gets the SAME 120-day window the MACD entry signal uses
+        # (MACD_LOOKBACK_DAYS), so a strategy that ranks and gates on MACD is
+        # reading one indicator rather than two that disagree.
+        lookback_days = (
+            320 if rank_by in ("relative_strength", "rs_vs_spy")
+            else MACD_LOOKBACK_DAYS if macd_rank
+            else 60
+        )
         start = (datetime.now(timezone.utc) - timedelta(days=lookback_days)).strftime("%Y-%m-%dT%H:%M:%SZ")
         fetch_symbols = symbols + ["SPY"] if want_rs_vs_spy else symbols
         bars_by_symbol = await client.historical_bars(fetch_symbols, asset_class, "1Day", start)
@@ -1711,6 +1734,15 @@ async def _pool_metrics(
             metrics[sym]["return_30d"] = stats.pct_change_over(bars, 30, cur)
             metrics[sym]["relative_strength"] = stats.vs_sma_pct(bars, 200, cur)
             metrics[sym]["rsi"] = stats.rsi(bars, RSI_PERIOD, cur)
+            if macd_rank:
+                # COMPLETED bars only and no live price — matching the MACD
+                # entry signal exactly (see _completed_daily_bars). Passing
+                # `cur` here would make the ranking twitch every 60s on an
+                # indicator deliberately built to hold still.
+                done = _completed_daily_bars(bars, asset_class)
+                fast, slow, signal = macd_periods
+                metrics[sym]["macd_strength"] = stats.macd_strength_pct(done, fast, slow, signal)
+                metrics[sym]["macd_slope"] = stats.macd_slope_pct(done, fast, slow, signal)
         if want_rs_vs_spy:
             spy_bars = bars_by_symbol.get("SPY") or []
             spy_last = float(spy_bars[-1]["c"]) if spy_bars else None
@@ -1748,7 +1780,8 @@ def _rank_note(rank_by: str | None, cand: Candidate) -> str:
 
 
 async def _ranked_candidates(
-    client: AlpacaClient, asset_class: str, symbols: list[str], rank_by: str, top_n: int
+    client: AlpacaClient, asset_class: str, symbols: list[str], rank_by: str, top_n: int,
+    macd_periods: tuple[int, int, int] = (12, 26, 9),
 ) -> list[Candidate]:
     """Snapshot a POOL of symbols, score each by `rank_by`, and return the top-N
     as candidates. Universe-agnostic: the pool can be a basket's members, a
@@ -1760,7 +1793,7 @@ async def _ranked_candidates(
     if not symbols:
         return []
     metrics, price_map, vwap_map, trade_at_map, snapped_at = await _pool_metrics(
-        client, asset_class, symbols, rank_by
+        client, asset_class, symbols, rank_by, macd_periods
     )
     ranked = ranking.rank_symbols(metrics, rank_by, top_n)
     candidates: list[Candidate] = []
@@ -1812,7 +1845,7 @@ async def _basket_candidates(
     top-N (a basket is always ranked)."""
     return await _ranked_candidates(
         client, strategy.asset_class, _basket_symbols(session, strategy),
-        strategy.rank_by, strategy.top_n,
+        strategy.rank_by, strategy.top_n, _strategy_macd_periods(strategy),
     )
 
 
@@ -1843,7 +1876,9 @@ async def _ranked_symbols_now(session: Session, client: AlpacaClient, s: Strateg
     pool = _strategy_pool(session, s)
     if not pool:
         return set()
-    cands = await _ranked_candidates(client, s.asset_class, pool, s.rank_by, s.top_n)
+    cands = await _ranked_candidates(
+        client, s.asset_class, pool, s.rank_by, s.top_n, _strategy_macd_periods(s)
+    )
     return {c.symbol for c in cands}
 
 
@@ -1858,7 +1893,8 @@ async def rank_pool(session: Session, client: AlpacaClient, strategy: Strategy) 
     if not pool:
         return []
     metrics, price_map, _vwap, _trade_at, _snapped_at = await _pool_metrics(
-        client, strategy.asset_class, pool, strategy.rank_by
+        client, strategy.asset_class, pool, strategy.rank_by,
+        _strategy_macd_periods(strategy),
     )
 
     # Daily-MACD (bullish/bearish) per symbol for the ranking view — a separate,

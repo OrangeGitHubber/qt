@@ -32,6 +32,7 @@ from qt.services.engine import (
     RSI_PERIOD,
     Candidate,
     RailContext,
+    _macd_periods,
     _rank_note,
     atr_position_size,
     check_rails,
@@ -804,7 +805,10 @@ def _annotate_rsi(
 # rides on the snapshot alone — and the replay already holds it: `change_pct` on
 # a prepared bar IS the number the snapshot carries (previous session close for
 # stocks, the hour-quantised rolling 24h reference for crypto).
-DAILY_RANK_METRICS = ("return_30d", "relative_strength", "rs_vs_spy", "rsi")
+DAILY_RANK_METRICS = (
+    "return_30d", "relative_strength", "rs_vs_spy", "rsi",
+    "macd_strength", "macd_slope",
+)
 
 # How much daily history each metric is computed from — copied from live's own
 # fetch window (engine._pool_metrics: 320 days for the two 200-day-average
@@ -816,6 +820,11 @@ DAILY_RANK_METRICS = ("return_30d", "relative_strength", "rs_vs_spy", "rsi")
 RANK_LOOKBACK_DAYS = {
     "return_30d": 60,
     "rsi": 60,
+    # 120 to match engine.MACD_LOOKBACK_DAYS — the window live already fetches
+    # for the MACD ENTRY signal. Same indicator, same history, or a strategy
+    # that both ranks and gates on MACD would be using two different MACDs.
+    "macd_strength": 120,
+    "macd_slope": 120,
     "relative_strength": 320,
     "rs_vs_spy": 320,
 }
@@ -920,8 +929,11 @@ class _PoolRanker:
         daily_bars_by_symbol: dict[str, list[dict]] | None,
         day_of,
         benchmark: str = "SPY",
+        macd_periods: tuple[int, int, int] = (12, 26, 9),
     ) -> None:
         self.rank_by = rank_by
+        # The strategy's OWN MACD periods, so ranking and the entry gate agree.
+        self.macd_periods = macd_periods
         self.top_n = top_n
         self.applied = True
         self.warning: str | None = None
@@ -1017,6 +1029,15 @@ class _PoolRanker:
             return stats.vs_sma_pct(prefix + [{"c": price}], _SMA_PERIOD, price)
         if self.rank_by == "rsi":
             return stats.rsi(prefix + [{"c": price}], RSI_PERIOD, price)
+        if self.rank_by in ("macd_strength", "macd_slope"):
+            # COMPLETED bars only, and no synthetic in-progress bar: live
+            # computes MACD from completed dailies precisely so the signal
+            # does not wiggle intraday (see engine._completed_daily_bars), and
+            # the ranker has to read the same number the entry gate does.
+            fast, slow, signal = self.macd_periods
+            fn = (stats.macd_strength_pct if self.rank_by == "macd_strength"
+                  else stats.macd_slope_pct)
+            return fn(prefix, fast, slow, signal)
         # The two window-return metrics read the synthetic bar's TIMESTAMP (it is
         # what pct_change_over measures its window back from), so it carries one.
         window = prefix + [{"t": ts.strftime("%Y-%m-%dT%H:%M:%SZ"), "c": price}]
@@ -1746,6 +1767,7 @@ def run_backtest(
                 rank_daily_bars_by_symbol, daily_bars_by_symbol, bars_by_symbol, bar_seconds
             ),
             day_of,
+            macd_periods=_macd_periods(strategy.get("params") or {}),
         )
         if rank_cfg is not None
         else None
@@ -2548,6 +2570,7 @@ def run_portfolio_backtest(
                 bar_seconds,
             ),
             day_of,
+            macd_periods=_macd_periods(strat_by_id[sid].get("params") or {}),
         )
     poller_view = False
     for by_symbol in prepared_by_strategy.values():

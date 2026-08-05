@@ -165,7 +165,7 @@ class StrategyBody(BaseModel):
     symbols: list[str] = []  # for universe="custom": the hand-picked symbol list
     rank_by: str = Field(
         default="momentum_today",
-        pattern="^(momentum_today|return_30d|relative_strength|rs_vs_spy|rsi)$",
+        pattern="^(momentum_today|return_30d|relative_strength|rs_vs_spy|rsi|macd_strength|macd_slope)$",
     )
     top_n: int = Field(default=10, ge=1, le=50)
     rank_enabled: bool = False  # rank the pool + keep top N (basket forces this on)

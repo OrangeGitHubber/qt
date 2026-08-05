@@ -41,6 +41,8 @@ const RANK_LABELS: Record<RankBy, string> = {
   relative_strength: "Relative strength (vs 200-day average)",
   rs_vs_spy: "Relative strength vs S&P 500",
   rsi: "RSI (14-day) — highest first",
+  macd_strength: "MACD strength (how far ahead of its signal)",
+  macd_slope: "MACD momentum building (fastest rising)",
 };
 
 const EMPTY: Partial<StrategyRow> = {
