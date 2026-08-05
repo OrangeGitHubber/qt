@@ -971,6 +971,9 @@ class _PoolRanker:
         self._rankable: set[str] = set()
         self._unrankable: set[str] = set()
         self._prefix: dict[str, dict[str, list[dict]]] = {}
+        # (symbol, day) -> MACD rank value. See _value for why only the MACD
+        # metrics are cacheable.
+        self._macd_cache: dict[tuple[str, str], float | None] = {}
         self._spy: dict[str, float | None] = {}
         self._spy_missing = False
         if rank_by not in DAILY_RANK_METRICS:
@@ -1056,10 +1059,22 @@ class _PoolRanker:
             # computes MACD from completed dailies precisely so the signal
             # does not wiggle intraday (see engine._completed_daily_bars), and
             # the ranker has to read the same number the entry gate does.
-            fast, slow, signal = self.macd_periods
-            fn = (stats.macd_strength_pct if self.rank_by == "macd_strength"
-                  else stats.macd_slope_pct)
-            return fn(prefix, fast, slow, signal)
+            #
+            # MEMOISED PER (symbol, day) because of that: the inputs are the
+            # daily prefix and fixed periods, so every bar in a day recomputes an
+            # identical answer. Measured at 30 symbols x 7 bars/day, the metric
+            # cost 4.1x momentum_today and made optimizer runs on the trend
+            # follower template painfully slow — three full EMA passes over ~120
+            # daily closes, per symbol, per bar. The other daily metrics cannot
+            # do this: rsi and the window returns inject the bar's CURRENT price,
+            # so their value genuinely moves intraday.
+            key = (symbol, bar["day"])
+            if key not in self._macd_cache:
+                fast, slow, signal = self.macd_periods
+                fn = (stats.macd_strength_pct if self.rank_by == "macd_strength"
+                      else stats.macd_slope_pct)
+                self._macd_cache[key] = fn(prefix, fast, slow, signal)
+            return self._macd_cache[key]
         # The two window-return metrics read the synthetic bar's TIMESTAMP (it is
         # what pct_change_over measures its window back from), so it carries one.
         window = prefix + [{"t": ts.strftime("%Y-%m-%dT%H:%M:%SZ"), "c": price}]

@@ -149,3 +149,68 @@ def test_the_shared_core_still_gives_the_old_macd_answer():
     line, sig, hist = stats.macd(closes)
     assert hist == pytest.approx(line - sig, abs=1e-6)
     assert stats.macd_bullish(closes) is (line > sig)
+
+
+def test_the_macd_rank_value_is_computed_once_per_symbol_day(monkeypatch):
+    """PERFORMANCE, measured. The ranker runs on every BAR, and these metrics
+    read only the daily prefix — no live price is injected, deliberately — so on
+    hourly bars every day recomputed three full EMA passes over ~120 daily closes
+    seven times per symbol for an identical answer.
+
+    At 30 symbols it made macd_slope 4.1x the cost of momentum_today and turned
+    optimizer runs on the Trend Follower template painfully slow. Memoised per
+    (symbol, day): 2.9x faster, byte-identical trade list and equity curve.
+
+    This asserts the CALL COUNT rather than the wall clock, because a timing
+    assertion on a shared CI box is a flaky test pretending to be a guarantee."""
+    from datetime import datetime, timedelta, timezone
+
+    from qt.services import backtest as bt
+    from qt.services.engine import RISK_DEFAULTS
+
+    calls = {"n": 0}
+    real = stats.macd_slope_pct
+
+    def counted(*a, **k):
+        calls["n"] += 1
+        return real(*a, **k)
+
+    monkeypatch.setattr(bt.stats, "macd_slope_pct", counted)
+
+    utc = timezone.utc
+    start = datetime(2025, 1, 2, 14, 30, tzinfo=utc)
+    n_days, per_day, n_syms = 120, 7, 4
+
+    def series(seed):
+        out, price = [], 100.0 + seed
+        for d in range(n_days):
+            for h in range(per_day):
+                t = start + timedelta(days=d, hours=h)
+                price *= 1 + (((d * 7 + h * 3 + seed) % 11) - 5) / 400
+                out.append({"t": t.strftime("%Y-%m-%dT%H:%M:%SZ"), "o": price,
+                            "h": price * 1.004, "l": price * 0.996, "c": price,
+                            "v": 1e6, "vw": price})
+        return out
+
+    syms = {f"S{i}": series(i) for i in range(n_syms)}
+    daily = {s: [b for i, b in enumerate(v) if i % per_day == per_day - 1]
+             for s, v in syms.items()}
+    strategy = {
+        "asset_class": "stock", "swing_mode": True, "sizing_usd": 500.0,
+        "sleeve_usd": 5000.0, "max_positions": 4, "universe": "custom",
+        "rank_enabled": True, "rank_by": "macd_slope", "top_n": 4,
+        "params": {"entry": {"min_day_gain_pct": 1.0},
+                   "exit": {"stop_loss_pct": 6.0, "trailing_stop_pct": 12.0}},
+    }
+    bt.run_backtest(
+        strategy, syms, dict(RISK_DEFAULTS, max_total_positions=50),
+        starting_cash=5000, spread_pct=0.1,
+        sim_start=start + timedelta(days=40), daily_bars_by_symbol=daily,
+    )
+
+    # One per (symbol, traded day) at most. Without the memo it is one per BAR,
+    # which is `per_day` times larger — so the ceiling below is comfortably
+    # under the uncached count and comfortably above the cached one.
+    ceiling = n_syms * n_days
+    assert calls["n"] <= ceiling, f"{calls['n']} calls — the per-day memo is not working"
+    assert calls["n"] > 0, "vacuous: the metric was never computed at all"

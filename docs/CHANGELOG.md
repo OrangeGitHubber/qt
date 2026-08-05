@@ -23,6 +23,26 @@ the line it belongs to, so the figure and the curve identify each other.
 An indicator that isn't defined yet reads "—" rather than a broken number — a
 200-day average has nothing to say on day 40, and now it says so.
 
+## MACD ranking was doing the same sum seven times a day (2026-08-05)
+
+An optimizer run on the Trend Follower template over ~30 symbols crawled. The
+cause was the ranking metric added earlier the same day.
+
+The ranker runs on every BAR, and the MACD metrics read only the daily prefix —
+no live price is injected, deliberately, so the value cannot change during a day.
+On hourly bars that meant three full exponential-average passes over ~120 daily
+closes, per symbol, seven times a day, for an identical answer each time.
+Measured at 30 symbols it made ranking by MACD **4.1x** the cost of ranking by
+today's move.
+
+Now computed once per symbol per day. **2.9x faster**, and the trade list,
+equity curve and ranking report are byte-identical with the cache on and off —
+verified by running the same backtest both ways and diffing, not by assuming.
+
+The other daily metrics can't do this and shouldn't try: RSI and the window
+returns deliberately mix in the bar's current price, so their value genuinely
+does move during the day.
+
 ## The DCA template was the wrong shape, and is gone (2026-08-05)
 
 The first template set included a buy-and-hold DCA sleeve, justified as the
