@@ -68,6 +68,23 @@ def test_the_verdict_itself_is_unchanged():
     assert "watching this symbol and passed" in _missed(60.0)["detail"]
 
 
+def test_it_does_not_assert_a_bug_and_then_explain_it_away():
+    """The caveat was bolted onto a sentence ending "this is the kind that points
+    at a real bug", so the row claimed a bug and then argued against itself in
+    the next breath. Nobody can act on that. Either the resolution is known and
+    both possibilities are named, or it is not and the strong claim stands
+    alone — never both."""
+    with_bar = _missed(60.0)["detail"]
+    assert "points at a real bug" not in with_bar, with_bar
+    assert "genuinely disagreed" in with_bar, with_bar
+
+
+def test_without_a_known_bar_size_the_strong_claim_survives():
+    """There is nothing else it could be, so the report should say so plainly
+    rather than hedging on a caveat it cannot support."""
+    assert "points at a real bug" in _missed(None)["detail"]
+
+
 def test_an_unknown_bar_size_adds_nothing():
     """Same rule as everywhere else in this file: unknown is not a licence to
     make a claim. Without the resolution there is nothing truthful to say."""

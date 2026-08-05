@@ -571,12 +571,21 @@ def _bar_words(seconds: float | None) -> str | None:
 # next. Judging entries on the bar's HIGH instead would make the replay strictly
 # more permissive and start inventing trades on wicks, which is a worse error
 # than the one being explained.
+# Two possibilities, named as two rather than one asserted and then argued
+# against. The first version appended this to a sentence ending "this is the kind
+# that points at a real bug", so the row claimed a bug and undercut itself in the
+# next breath — which is not something a reader can act on either way.
 _CLOSE_ONLY_CAVEAT = (
-    " The replay judged each bar at its CLOSE and its bars were {bar} long, so a move that"
-    " appeared and vanished inside one is invisible to it — while your engine looked every"
-    " 60 seconds. Exits are checked against each bar's high and low, so this can only"
-    " affect entries."
+    " Either its rules genuinely disagreed with yours, or the price qualified at a moment"
+    " between bar closes: the replay judges each bar at its CLOSE and its bars were {bar}"
+    " long, while your engine looked every 60 seconds at an offset nothing records. The"
+    " shorter the bar, the less room there is for the second explanation. Exits are checked"
+    " against each bar's high and low, so this can only affect entries."
 )
+# What the row says when the resolution is UNKNOWN: there is no second
+# possibility to offer, so the strong claim stands on its own rather than being
+# hedged against a caveat nothing supports.
+_UNQUALIFIED_MISS = " This is the kind that points at a real bug."
 
 
 def _close_only_note(bar_seconds: float | None) -> str:
@@ -763,10 +772,11 @@ def _trade_log(matched: list[dict], live_only: list[dict], backtest_only: list[d
                 " than a disagreement."
             )
         else:
+            note = _close_only_note(bar_seconds)
             why = (
                 " The replay was watching this symbol and passed — no bars for that day, or a"
-                " different view of it. This is the kind that points at a real bug."
-            ) + _close_only_note(bar_seconds)
+                " different view of it."
+            ) + (note or _UNQUALIFIED_MISS)
         event(r.get("entry_at") or r["day"], r["day"], r["symbol"], "bought",
               "replay missed it", f"You bought {r['symbol']}. The replay did not." + why)
         # The sale really happened, so it belongs in the log even though there is
