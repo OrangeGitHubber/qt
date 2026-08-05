@@ -3,6 +3,36 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## The trailing stop can size itself to each symbol (2026-08-05)
+
+The hard stop has been able to scale with a symbol's own volatility for a while
+(`ATR stop`). The trailing stop — the setting that actually decides how long a
+winner is allowed to run — could not, and it turns out that's the one where a
+single fixed percentage hurts most.
+
+Measured on "Favorites - optimized 4 aug v2". Its 19 names ranged from a 0.5%
+median daily move (SPY) to 3.8% (AMD). Against one 3% trailing stop:
+
+* DELL exceeded the *entire* trailing stop on a **median** day, and on 37 of 60
+  sessions. The stock ran +93% over the window and is 56% of that strategy's
+  buy-and-hold benchmark — but a 3% trail cannot hold it through a normal week.
+* SPY, at the other end, never came close to a 3% pullback, so the trail did
+  nothing at all.
+
+Tight enough for the calm names means selling the volatile ones on an ordinary
+day. So `ATR trailing stop (× ATR)` now sits beside the ATR hard stop and works
+the same way: the trail becomes your multiple × that symbol's own daily ATR,
+recalculated as it goes. Either can be used without the other. The fixed
+percentage stays as the fallback for when ATR can't be computed, so a position
+is never left without a trailing stop, and the exit reason now reads
+"ATR trailing stop: 4.20% ≥ 3.75% off high $118.40 (2.5× ATR 1.50%)".
+
+Honest caveat: this was built after widening that strategy's fixed trail from 3%
+to 10% changed its result by 0.19 points. So the trail width is evidently *not*
+what is holding that particular strategy back. The setting is still wrong for a
+mixed list and worth having — but it is not a fix for a flat curve, and the hunt
+for what is actually ending those trades continues.
+
 ## The rotation setting is visible wherever it still sells (2026-08-04)
 
 The same setting again, from the owner's side. Werner could not find the

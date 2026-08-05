@@ -586,12 +586,12 @@ function Editor({
   }
   // ATR block is optional; seed 14 / 0 / 0 (period / stop off / sizing off) the
   // first time any field is edited so all three are stored together.
-  function setAtr(key: "period" | "stop_mult" | "risk_usd", value: number) {
+  function setAtr(key: "period" | "stop_mult" | "risk_usd" | "trail_mult", value: number) {
     setS((cur) => ({
       ...cur,
       params: {
         ...cur.params!,
-        atr: { period: 14, stop_mult: 0, risk_usd: 0, ...(cur.params!.atr ?? {}), [key]: value },
+        atr: { period: 14, stop_mult: 0, risk_usd: 0, trail_mult: 0, ...(cur.params!.atr ?? {}), [key]: value },
       },
     }));
   }
@@ -709,10 +709,14 @@ function Editor({
   // ATR knob lives in a collapsed Advanced section while the stop-loss sits in
   // plain sight — so the field you're reading isn't the rule that's running.
   const atrStopOn = Number(p.atr?.stop_mult || 0) > 0;
+  const atrTrailOn = Number(p.atr?.trail_mult || 0) > 0;
   // The MACD period fields appear only when at least one MACD toggle is on.
   const macdOn = !!(p.entry.require_macd_bullish || p.exit.exit_on_macd_bearish);
   const macd = p.macd ?? { fast: 12, slow: 26, signal: 9 };
-  const atr = p.atr ?? { period: 14, stop_mult: 0, risk_usd: 0 };
+  // Spread OVER the defaults, not `??` them: a strategy saved before trail_mult
+  // existed has an `atr` block WITHOUT the key, and `??` would leave the field
+  // bound to undefined.
+  const atr = { period: 14, stop_mult: 0, risk_usd: 0, trail_mult: 0, ...(p.atr ?? {}) };
   const windowOn = !!(p.entry.entry_window_start && p.entry.entry_window_end);
   // How much of a 24-hour day the window shuts out. Only said out loud for
   // crypto, where the hours outside it are a market that is genuinely open.
@@ -1031,9 +1035,12 @@ function Editor({
         <h4 className="builder-head">Exit criteria</h4>
         <p className="sec-sub">When to sell — "the configurable downturn".</p>
         <div className="param-grid">
-          <Param label="Trailing stop (%)" tip="trailing_stop">
+          <Param
+            label={atrTrailOn ? "Trailing stop (%) — replaced by the ATR trail" : "Trailing stop (%)"}
+            tip="trailing_stop"
+          >
             <NumberField step="any" min="0.5" value={p.exit.trailing_stop_pct}
-              onChange={(n) => setExit("trailing_stop_pct", n)} />
+              onChange={(n) => setExit("trailing_stop_pct", n)} disabled={atrTrailOn} />
           </Param>
           <Param
             label={atrStopOn ? "Stop-loss (%) — replaced by the ATR stop" : "Stop-loss (%) — required"}
@@ -1047,6 +1054,20 @@ function Editor({
               onChange={(n) => setExit("take_profit_pct", n)} />
           </Param>
         </div>
+        {atrTrailOn && (
+          <p className="field-help">
+            <strong>Your trailing stop is {Number(p.atr?.trail_mult)}x ATR, not {p.exit.trailing_stop_pct}%.</strong>{" "}
+            It trails {Number(p.atr?.trail_mult)} x each symbol's own <strong>daily ATR</strong> below the highest price
+            the position has seen — so a name moving 1% a day trails about{" "}
+            {(Number(p.atr?.trail_mult) * 1).toFixed(1)}%, while one moving 4% a day trails around{" "}
+            {(Number(p.atr?.trail_mult) * 4).toFixed(1)}% and isn't sold out of an ordinary pullback.
+            <br />
+            This is the setting that decides how long a winner is allowed to run. One fixed percentage has to serve
+            every name in the list at once: tight enough for your calmest symbol, it will sell your most volatile one
+            on a normal day. The fixed {p.exit.trailing_stop_pct}% above is kept as the <strong>fallback</strong> for
+            when ATR can't be worked out. To go back to a plain percentage, set the ATR trailing stop to 0.
+          </p>
+        )}
         {atrStopOn && (
           <p className="field-help">
             <strong>Your hard stop is {Number(p.atr?.stop_mult)}x ATR, not {p.exit.stop_loss_pct}%.</strong> With the
@@ -1213,6 +1234,10 @@ function Editor({
             <Param label="ATR stop (× ATR, 0 = off)" tip="atr_stop">
               <NumberField step="any" min="0" max="20" value={atr.stop_mult}
                 onChange={(n) => setAtr("stop_mult", n)} />
+            </Param>
+            <Param label="ATR trailing stop (× ATR, 0 = off)" tip="atr_trail">
+              <NumberField step="any" min="0" max="20" value={atr.trail_mult}
+                onChange={(n) => setAtr("trail_mult", n)} />
             </Param>
             <Param label="Risk $ per trade (0 = off)" tip="atr_risk">
               <NumberField step="any" min="0" value={atr.risk_usd} onChange={(n) => setAtr("risk_usd", n)} />

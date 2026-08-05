@@ -608,10 +608,19 @@ def _macd_on(params: dict) -> bool:
 
 
 def _atr_on(params: dict) -> bool:
-    """Whether either ATR feature is on — the ATR stop (stop_mult > 0) or ATR
-    sizing (risk_usd > 0). Absent/zero on both = off."""
+    """Whether ANY ATR feature is on — the ATR stop (stop_mult > 0), the ATR
+    trailing stop (trail_mult > 0), or ATR sizing (risk_usd > 0). Absent/zero on
+    all three = off.
+
+    `trail_mult` belongs here for the same reason the others do: this gate is
+    what decides whether the ATR series gets computed at all, so leaving it out
+    would let the trail be configured and then silently never apply."""
     a = params.get("atr") or {}
-    return float(a.get("stop_mult", 0) or 0) > 0 or float(a.get("risk_usd", 0) or 0) > 0
+    return (
+        float(a.get("stop_mult", 0) or 0) > 0
+        or float(a.get("trail_mult", 0) or 0) > 0
+        or float(a.get("risk_usd", 0) or 0) > 0
+    )
 
 
 def _daily_frontier(

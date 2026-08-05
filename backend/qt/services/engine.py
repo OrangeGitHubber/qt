@@ -436,8 +436,25 @@ def evaluate_exit(
         return _trigger(level, f"stop-loss: {worst_from_entry:.2f}% ≤ -{stop_loss:g}%")
 
     trailing = exit_rules.get("trailing_stop_pct", 0)
-    if trailing and drop_from_high >= trailing and low > entry_price * (1 - effective_stop / 100):
-        stop_level = high_water * (1 - trailing / 100)
+    # ATR trailing stop (opt-in), the same shape as the hard stop above: the
+    # effective trail = trail_mult × current ATR%. A FIXED percentage cannot
+    # serve a pool that spans SPY and a small cap — measured on Werner's
+    # "Favorites" strategy, whose 19 names ranged from a 0.5% to a 3.8% median
+    # daily move, so a 3% trail sat inside the noise for the names that trended
+    # and never triggered at all for the ones that didn't. Falls back to the
+    # fixed percentage when off or atr_pct is unavailable — never stopless.
+    atr_trail_mult = float((params.get("atr") or {}).get("trail_mult", 0) or 0)
+    effective_trail = trailing
+    if atr_trail_mult > 0 and atr_pct is not None and atr_pct > 0:
+        effective_trail = atr_trail_mult * atr_pct
+    if effective_trail and drop_from_high >= effective_trail and low > entry_price * (1 - effective_stop / 100):
+        stop_level = high_water * (1 - effective_trail / 100)
+        if effective_trail != trailing:
+            return _trigger(stop_level, (
+                f"ATR trailing stop: {drop_from_high:.2f}% ≥ {effective_trail:.2f}% off high "
+                f"{_money(high_water)} ({atr_trail_mult:g}× ATR {atr_pct:.2f}%) "
+                f"(stop {_money(stop_level)})"
+            ))
         # Was: "trailing stop: 8.54% off high 818.6700" — the drop, and nothing
         # to measure it against. Every other exit names actual vs threshold; this
         # one left you to remember your own setting and do the arithmetic.
@@ -613,6 +630,20 @@ def _atr_stop_enabled(params: dict) -> bool:
     return float((params.get("atr") or {}).get("stop_mult", 0) or 0) > 0
 
 
+def _atr_trail_enabled(params: dict) -> bool:
+    """ATR trailing stop is on when trail_mult > 0 (it replaces the fixed
+    trailing_stop_pct). Independent of the hard stop's multiplier."""
+    return float((params.get("atr") or {}).get("trail_mult", 0) or 0) > 0
+
+
+def _atr_value_needed(params: dict) -> bool:
+    """Whether evaluate_exit needs an atr_pct at all. Every caller that FETCHES
+    the daily bars must ask this and not `_atr_stop_enabled`, or a strategy with
+    only the ATR TRAIL configured gets atr_pct=None and falls silently back to
+    the fixed percentage — the feature switched on in the UI and doing nothing."""
+    return _atr_stop_enabled(params) or _atr_trail_enabled(params)
+
+
 def _atr_sizing_enabled(params: dict) -> bool:
     """ATR sizing needs BOTH a risk budget AND a stop multiple — the size is
     derived from the ATR stop distance, so it's meaningless without the stop."""
@@ -771,7 +802,7 @@ async def _daily_exit_signals(
         except (TypeError, ValueError):
             params = {}
         want_macd = bool(params.get("exit", {}).get("exit_on_macd_bearish"))
-        want_atr = _atr_stop_enabled(params)
+        want_atr = _atr_value_needed(params)
         want_rsi = _exit_rsi_enabled(params)
         if not (want_macd or want_atr or want_rsi):
             continue
@@ -784,7 +815,7 @@ async def _daily_exit_signals(
         fast, slow, signal = _macd_periods(params)
         period = _atr_period(params)
         want_macd = bool(params.get("exit", {}).get("exit_on_macd_bearish"))
-        want_atr = _atr_stop_enabled(params)
+        want_atr = _atr_value_needed(params)
         want_rsi = _exit_rsi_enabled(params)
         start = (
             datetime.now(timezone.utc) - timedelta(days=_daily_lookback_days(params, want_atr))

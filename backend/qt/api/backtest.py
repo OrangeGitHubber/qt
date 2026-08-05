@@ -1147,8 +1147,13 @@ def _uses_daily_only_signals(params: dict) -> bool:
         or float(entry.get("rsi_max", 0) or 0) > 0
         or float(exit_rules.get("exit_rsi_above", 0) or 0) > 0
     )
-    # Either ATR feature: the volatility stop, or ATR-based position sizing.
-    atr_on = float(atr.get("stop_mult", 0) or 0) > 0 or float(atr.get("risk_usd", 0) or 0) > 0
+    # ANY ATR feature: the volatility stop, the volatility TRAIL, or ATR-based
+    # position sizing. All three read the same daily-bar ATR series.
+    atr_on = (
+        float(atr.get("stop_mult", 0) or 0) > 0
+        or float(atr.get("trail_mult", 0) or 0) > 0
+        or float(atr.get("risk_usd", 0) or 0) > 0
+    )
     return macd or rsi or atr_on
 
 
@@ -1167,7 +1172,9 @@ def _has_price_triggered_exit(params: dict) -> bool:
     return any(
         float(x.get(k, 0) or 0) > 0
         for k in ("stop_loss_pct", "trailing_stop_pct", "take_profit_pct")
-    ) or float(atr.get("stop_mult", 0) or 0) > 0
+    ) or float(atr.get("stop_mult", 0) or 0) > 0 or float(
+        atr.get("trail_mult", 0) or 0
+    ) > 0
 
 
 def daily_signal_names(params: dict) -> str:
@@ -1191,6 +1198,8 @@ def daily_signal_names(params: dict) -> str:
         names.append("RSI")
     if float(atr.get("stop_mult", 0) or 0) > 0:
         names.append("the ATR stop")
+    if float(atr.get("trail_mult", 0) or 0) > 0:
+        names.append("the ATR trailing stop")
     if float(atr.get("risk_usd", 0) or 0) > 0:
         names.append("ATR position sizing")
     return " and ".join(names) if names else "daily signals"
@@ -1274,7 +1283,11 @@ def warmup_days_for(params: dict, asset_class: str) -> int:
     if not _needs_warmup(params):
         return baseline
     atr = params.get("atr") or {}
-    want_atr = float(atr.get("stop_mult", 0) or 0) > 0 or float(atr.get("risk_usd", 0) or 0) > 0
+    want_atr = (
+        float(atr.get("stop_mult", 0) or 0) > 0
+        or float(atr.get("trail_mult", 0) or 0) > 0
+        or float(atr.get("risk_usd", 0) or 0) > 0
+    )
     return max(baseline, _daily_lookback_days(params, want_atr))
 
 
@@ -1311,6 +1324,7 @@ def _needs_warmup(params: dict) -> bool:
         or float(entry.get("rsi_max", 0) or 0) > 0
         or float(exit_rules.get("exit_rsi_above", 0) or 0) > 0
         or float(atr.get("stop_mult", 0) or 0) > 0
+        or float(atr.get("trail_mult", 0) or 0) > 0
         or float(atr.get("risk_usd", 0) or 0) > 0
     )
 

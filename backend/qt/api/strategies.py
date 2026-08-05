@@ -83,12 +83,14 @@ class DCAConfig(BaseModel):
 
 
 class ATRConfig(BaseModel):
-    """ATR-based stops & position sizing. Two independent switches, off by
+    """ATR-based stops & position sizing. Three independent switches, off by
     default. period is the ATR lookback in daily bars. stop_mult > 0 enables the
     ATR stop (the hard stop becomes stop_mult × ATR% below entry, adapting to the
-    symbol's volatility). risk_usd > 0 (which also needs stop_mult > 0) enables
-    ATR sizing (each position sized so a stop-out loses ~risk_usd). Both zero =
-    off, and the fixed stop_loss_pct / sizing_usd are unchanged.
+    symbol's volatility). trail_mult > 0 does the same for the TRAILING stop
+    (trail_mult × ATR% off the high water mark). risk_usd > 0 (which also needs
+    stop_mult > 0) enables ATR sizing (each position sized so a stop-out loses
+    ~risk_usd). All zero = off, and the fixed stop_loss_pct / trailing_stop_pct /
+    sizing_usd are unchanged.
 
     Declared as an explicit nested model — like DCAConfig — because pydantic drops
     keys it doesn't know about, so without this field the atr block would not
@@ -97,6 +99,10 @@ class ATRConfig(BaseModel):
     period: int = Field(default=14, ge=2, le=100)
     stop_mult: float = Field(default=0, ge=0, le=20)  # 0 = off (use fixed stop_loss_pct)
     risk_usd: float = Field(default=0, ge=0, le=100_000)  # 0 = off (use fixed sizing_usd)
+    # 0 = off (use fixed trailing_stop_pct). Independent of stop_mult: the hard
+    # stop and the trailing stop answer different questions, and a pool spanning
+    # SPY and a small cap needs the TRAIL to scale even more than the stop does.
+    trail_mult: float = Field(default=0, ge=0, le=20)
 
 
 class MACDConfig(BaseModel):

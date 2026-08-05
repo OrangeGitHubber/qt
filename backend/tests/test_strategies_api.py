@@ -28,7 +28,10 @@ def test_atr_block_persists_through_save(client):
     resp = client.post("/api/strategies", json=body)
     assert resp.status_code == 200
     atr = resp.json()["params"]["atr"]
-    assert atr == {"period": 20, "stop_mult": 2.5, "risk_usd": 75.0}
+    # Exact equality on purpose: this test's job is to catch a key going MISSING,
+    # so a new one showing up should break it and be acknowledged here rather
+    # than absorbed by a subset check. trail_mult defaults to 0 = off.
+    assert atr == {"period": 20, "stop_mult": 2.5, "risk_usd": 75.0, "trail_mult": 0.0}
 
     # And it round-trips on read-back.
     sid = resp.json()["id"]

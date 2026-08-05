@@ -346,7 +346,13 @@ export const GLOSSARY: Record<string, GlossaryEntry> = {
   atr_stop: {
     term: "ATR stop (× ATR)",
     explain:
-      "Sets the stop at a multiple of this symbol's Average True Range — its typical daily move — instead of a fixed %. A volatile stock gets a wider stop, a calm one a tighter stop, so ordinary daily wiggle doesn't shake you out. It's recomputed each bar, so it breathes with the symbol's volatility. While it is on it OVERRIDES the fixed stop-loss (which stays as the fallback if ATR can't be computed); the trailing stop is unaffected and still applies. 0 = off.",
+      "Sets the stop at a multiple of this symbol's Average True Range — its typical daily move — instead of a fixed %. A volatile stock gets a wider stop, a calm one a tighter stop, so ordinary daily wiggle doesn't shake you out. It's recomputed each bar, so it breathes with the symbol's volatility. While it is on it OVERRIDES the fixed stop-loss (which stays as the fallback if ATR can't be computed). This is the HARD stop only — the trailing stop has its own separate ATR setting. 0 = off.",
+    url: "https://www.investopedia.com/terms/a/atr.asp",
+  },
+  atr_trail: {
+    term: "ATR trailing stop (× ATR)",
+    explain:
+      "Trails the stop a multiple of this symbol's Average True Range — its typical daily move — below the highest price your position has seen, instead of a fixed %. This is the setting that decides how long a winner is allowed to run, and it is the one a mixed list breaks hardest: a 3% trail is inside a single ordinary day for a volatile stock (so it sells on noise) and never triggers at all for a steady one. Scaling it by ATR gives each symbol a trail sized to its own behaviour. While it is on it OVERRIDES the fixed trailing stop, which stays as the fallback if ATR can't be computed. Independent of the ATR hard stop — you can use either, both, or neither. 0 = off.",
     url: "https://www.investopedia.com/terms/a/atr.asp",
   },
   atr_risk: {
