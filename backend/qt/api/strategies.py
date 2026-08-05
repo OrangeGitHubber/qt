@@ -253,6 +253,7 @@ def _serialize(s: Strategy) -> dict:
         "id": s.id,
         "name": s.name,
         "enabled": s.enabled,
+        "template": bool(s.template),
         "enabled_at": iso_utc(s.enabled_at),
         "asset_class": s.asset_class,
         "universe": s.universe,
@@ -350,6 +351,7 @@ def update_strategy(
     strategy = session.get(Strategy, strategy_id)
     if not strategy:
         raise HTTPException(status_code=404, detail="Strategy not found.")
+    _refuse_if_template(strategy, "edited")
     _validate_basket(session, body)
     before = {k: v for k, v in _serialize(strategy).items() if k not in ("notes", "version")}
     previous_notes = strategy.notes
@@ -387,11 +389,30 @@ def update_strategy(
     return _serialize(strategy)
 
 
+def _refuse_if_template(strategy: Strategy, verb: str) -> None:
+    """Templates are shipped reference configurations, not strategies you own.
+
+    Enabling is the one the user asked for, but editing and deleting are refused
+    for the same reason: a template that drifts stops being a fixed starting
+    point, and one that can be deleted leaves the reference set incomplete with
+    no way back short of a reinstall. Clone is the only affordance, and the clone
+    is an ordinary strategy with no restrictions at all."""
+    if strategy.template:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"'{strategy.name}' is a template and cannot be {verb}. "
+                "Use Clone to make your own copy, then change that."
+            ),
+        )
+
+
 @router.post("/{strategy_id}/toggle")
 def toggle_strategy(strategy_id: int, session: Session = Depends(get_session)) -> dict:
     strategy = session.get(Strategy, strategy_id)
     if not strategy:
         raise HTTPException(status_code=404, detail="Strategy not found.")
+    _refuse_if_template(strategy, "enabled")
     strategy.enabled = not strategy.enabled
     if strategy.enabled:
         # Stamped on the way ON only: "when did this go live" is the question the
@@ -407,6 +428,7 @@ def delete_strategy(strategy_id: int, session: Session = Depends(get_session)) -
     strategy = session.get(Strategy, strategy_id)
     if not strategy:
         raise HTTPException(status_code=404, detail="Strategy not found.")
+    _refuse_if_template(strategy, "deleted")
     any_trades = (
         session.query(func.count(Trade.id)).filter(Trade.strategy_id == strategy_id).scalar()
     )

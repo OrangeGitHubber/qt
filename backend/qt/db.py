@@ -51,9 +51,12 @@ def init_db() -> None:
 
     # Seed the curated starter baskets once (idempotent — see the function).
     from qt.services.starter_baskets import seed_starter_baskets
+    from qt.services.starter_strategies import seed_starter_strategies
 
     with session_scope() as session:
         seed_starter_baskets(session)
+        # Create-only, unlike the baskets above — see the function's docstring.
+        seed_starter_strategies(session)
 
 
 @contextmanager

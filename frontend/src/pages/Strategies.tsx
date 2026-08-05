@@ -1714,7 +1714,12 @@ export default function Strategies() {
       // Everything the server owns is dropped: a copy is a NEW strategy, on
       // version 1, holding nothing. The rest goes across untouched — a clone
       // that quietly "improved" one setting would be worse than no clone.
-      const { id: _id, version: _version, open_trades: _open, enabled: _enabled, ...rest } = row;
+      // `template` is dropped with the rest of the server-owned fields: a copy of
+      // a shipped reference is YOUR strategy, with none of its restrictions.
+      const {
+        id: _id, version: _version, open_trades: _open, enabled: _enabled,
+        template: _template, ...rest
+      } = row;
       const suffix = " (copy)";
       const created = await createStrategy({
         ...(JSON.parse(JSON.stringify(rest)) as Partial<StrategyRow>),
@@ -1730,7 +1735,11 @@ export default function Strategies() {
       // A disabled copy of an enabled strategy goes straight into that family's
       // fold, so without this the button looks like it did nothing.
       setOpenFamilies((cur) => new Set(cur).add(rootIdOf(row)));
-      setNote(`Copied “${row.name}” → “${created.name}”. It's disabled, and listed under the original.`);
+      setNote(
+        row.template
+          ? `Made “${created.name}” from the ${row.name.replace(/^Template · /, "")} template. It's yours now — disabled, and fully editable.`
+          : `Copied “${row.name}” → “${created.name}”. It's disabled, and listed under the original.`
+      );
       refresh();
     } catch (e) {
       setNote((e as Error).message);
@@ -1761,9 +1770,17 @@ export default function Strategies() {
           <span className="sr-name">
             {variant && <span className="sr-branch" aria-hidden>↳</span>}
             <span className="sr-title">{r.name}</span>
-            <span className={`pill ${r.enabled ? "ok pill-live" : "muted"}`}>
-              {r.enabled ? "● ENABLED" : "disabled"}
-            </span>
+            {/* "disabled" is the wrong word for a template — it implies something
+                you could switch on. It is a reference; the pill says so. */}
+            {r.template ? (
+              <span className="pill muted" title="A shipped starting point. Clone it to make one of your own — it can't be enabled, edited or deleted.">
+                TEMPLATE · clone to use
+              </span>
+            ) : (
+              <span className={`pill ${r.enabled ? "ok pill-live" : "muted"}`}>
+                {r.enabled ? "● ENABLED" : "disabled"}
+              </span>
+            )}
             {gen > 1 && (
               <span
                 className="pill muted sr-gen"
@@ -1886,7 +1903,11 @@ export default function Strategies() {
           {(r.rank_enabled || r.universe === "basket") && <RankingView strategyId={r.id} />}
           <LastRunView strategyId={r.id} />
           <div className="card-actions">
-            <button
+            {/* A template is a fixed reference, not a strategy you own: the server
+    refuses enable/edit/delete on one, so offering the buttons would only
+    produce a 400. Clone and Backtest stay — they are how you use it. */}
+            {!r.template && (
+              <button
               className={`small btn-icon ${r.enabled ? "btn-pause" : "btn-enable"}`}
               onClick={() => toggle(r)}
               title={r.enabled ? "Stop this strategy from opening new trades" : "Arm this strategy (it trades once the engine is on)"}
@@ -1894,10 +1915,13 @@ export default function Strategies() {
               {r.enabled ? <IconPause /> : <IconPlay />}
               {r.enabled ? "Pause" : "Enable"}
             </button>
-            <button className="small btn-icon btn-ghost" onClick={() => startEdit(r)} title="Edit this strategy's settings">
-              <IconEdit />
-              Edit
-            </button>
+            )}
+            {!r.template && (
+              <button className="small btn-icon btn-ghost" onClick={() => startEdit(r)} title="Edit this strategy's settings">
+                <IconEdit />
+                Edit
+              </button>
+            )}
             {/* Text-only ghost like Backtest, deliberately: Clone belongs to the
                 quiet half of this row, not next to Pause/Delete. */}
             <button
@@ -1918,18 +1942,22 @@ export default function Strategies() {
             >
               Backtest
             </button>
-            <button
-              className="small btn-icon btn-ghost"
-              onClick={() => leaveFor("optimizer", r.id)}
-              title="Search better settings for this strategy (opens the Optimizer)"
-            >
-              <IconOptimize />
-              Optimize
-            </button>
-            <button className="small btn-icon danger" onClick={() => remove(r)} title="Delete this strategy permanently">
-              <IconDelete />
-              Delete
-            </button>
+            {!r.template && (
+              <button
+                className="small btn-icon btn-ghost"
+                onClick={() => leaveFor("optimizer", r.id)}
+                title="Search better settings for this strategy (opens the Optimizer)"
+              >
+                <IconOptimize />
+                Optimize
+              </button>
+            )}
+            {!r.template && (
+              <button className="small btn-icon danger" onClick={() => remove(r)} title="Delete this strategy permanently">
+                <IconDelete />
+                Delete
+              </button>
+            )}
           </div>
         </div>
       </details>

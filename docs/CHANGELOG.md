@@ -23,6 +23,36 @@ the line it belongs to, so the figure and the curve identify each other.
 An indicator that isn't defined yet reads "—" rather than a broken number — a
 200-day average has nothing to say on day 40, and now it says so.
 
+## Four strategy templates you can clone (2026-08-05)
+
+A day spent working out why one strategy kept underperforming produced the same
+answer over and over: settings belonging to DIFFERENT trading styles had been
+stacked on one strategy. A dip-buying entry carried three trend confirmations,
+each measured as near-incompatible with it, and the result took four trades in
+three months.
+
+So the four styles are now shipped as templates, each internally coherent:
+
+* **Dip buyer (mean reversion)** — RSI crossing up through 35, no trend
+  confirmations at all, ATR stop and trail, 12% take-profit to bank the move
+  before the trail hands it back.
+* **Trend follower** — the opposite thesis. Min day gain, above VWAP, MACD
+  bullish, ranked by *MACD momentum building*, wide trail and deliberately no
+  take-profit. This is the style that owns the stock that doubles.
+* **Intraday scanner rider** — the day's movers, swing mode OFF, a 10:00–15:30
+  entry window and flatten-before-close. Flat overnight.
+* **Long-term DCA baseline** — buys the list every 14 days and holds. The
+  yardstick the others have to beat, and it wins more often than people expect.
+
+Each carries long notes explaining what it is, what NOT to add to it, and how
+much evidence is actually behind it — only the dip buyer has been measured, and
+only weakly. That honesty is deliberate: a template that reads like a
+recommendation would be worse than none.
+
+**They can only be cloned.** A template cannot be enabled, edited or deleted, so
+it stays a fixed reference rather than drifting into a half-configured live
+strategy. The clone is an ordinary strategy with no restrictions at all.
+
 ## "Min gain today: 0" was never off (2026-08-05)
 
 Strategy 31 was built around the RSI crossing with the minimum day gain left at

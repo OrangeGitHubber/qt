@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -63,6 +63,13 @@ class Strategy(Base):
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     name: Mapped[str] = mapped_column(String(80))
     enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    # A SHIPPED REFERENCE configuration, not a strategy you own. Templates can
+    # never be enabled, edited or deleted — the only thing you can do with one is
+    # clone it, and the clone is an ordinary strategy. Kept inert on purpose: a
+    # template that could be switched on would drift into a half-configured live
+    # strategy and stop being a reliable starting point. See
+    # qt.services.starter_strategies.
+    template: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("0"))
     asset_class: Mapped[str] = mapped_column(String(16))  # stock | crypto
     universe: Mapped[str] = mapped_column(String(16), default="scanner")  # scanner | watchlist | both | basket | custom
     # When it was last switched ON. The moment the engine was allowed to act, so
