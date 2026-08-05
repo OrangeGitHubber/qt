@@ -23,6 +23,33 @@ the line it belongs to, so the figure and the curve identify each other.
 An indicator that isn't defined yet reads "—" rather than a broken number — a
 200-day average has nothing to say on day 40, and now it says so.
 
+## A trailing stop wider than the gain can only lose (2026-08-05)
+
+Looking at where the give-back actually happens turned up something worse than a
+tuning problem. On every losing trade, the trailing stop that fired was WIDER
+than the entire gain it was protecting:
+
+    PLTR    peaked +7.4%   trail 13.60%   ended -7.3%
+    GOOGL   peaked +4.2%   trail  8.24%   ended -4.5%
+    AMZN    peaked +4.7%   trail  6.99%   ended -3.4%
+
+A trailing stop 13.6% wide on a position that only ever rose 7.4% sits BELOW
+what you paid for its entire life. It cannot lock in a profit; the only thing it
+can do is book a loss. It was a second stop-loss wearing a trailing stop's name,
+and no choice of ATR multiple fixes it — the multiple is a share of the PRICE,
+and the thing worth protecting is a share of the GAIN.
+
+So there is a new exit: "Give back at most X% of the gain". At 25%, a position
+that peaked +170% sells at +127%; one that peaked +5% sells at +3.75%. The
+tolerance grows with the move, so it sits far away during a big run and close
+during a small one — and it can never turn a winner into a loser, because the
+sell price is always above your entry.
+
+It is an ALTERNATIVE to the take-profit, not a partner. A take-profit caps how
+far a position can run; this one caps only how much of a run you hand back. If
+you want to ride a spike and still leave near the turn, this is the setting —
+and a take-profit is the setting that guarantees you cannot.
+
 ## The basket sweep now sweeps YOUR strategy (2026-08-05)
 
 Sweeping the trend-follower template returned "Health Care looks good", and

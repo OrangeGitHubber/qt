@@ -522,6 +522,33 @@ def evaluate_exit(
             f"take-profit: +{best_from_entry:.2f}% ≥ {take_profit:g}%",
         )
 
+    # GIVE-BACK: keep a fixed share of the peak GAIN, rather than a fixed share
+    # of the price. Measured on strategy 31, every losing trade exited on a trail
+    # WIDER than the whole gain it was protecting — PLTR peaked at +7.4% under a
+    # 13.6% trail, GOOGL at +4.2% under 8.24%, AMZN at +4.7% under 6.99%. A trail
+    # wider than the move cannot lock anything in; it can only fire below entry,
+    # so it is a second stop-loss wearing a trailing stop's name.
+    #
+    # This scales with the move instead. At 25%: a position that peaked +170%
+    # exits at +127%, one that peaked +5% exits at +3.75%. Two consequences worth
+    # stating — it NEVER converts a winner into a loser (the level is always above
+    # entry while giveback < 100), and it places no ceiling on the upside, which
+    # is what a take-profit does and why the two are alternatives rather than
+    # partners.
+    giveback = exit_rules.get("exit_giveback_pct", 0) or 0
+    peak_gain = (high_water / entry_price - 1) * 100 if high_water else 0.0
+    if giveback and peak_gain > 0:
+        floor_gain = peak_gain * (1 - giveback / 100)
+        level = entry_price * (1 + floor_gain / 100)
+        # `low`, not `price`: an intra-bar dip through the level is an exit, the
+        # same reading every other price-triggered rule here uses.
+        if low <= level:
+            return _trigger(
+                level,
+                f"gave back {giveback:g}% of the peak gain: +{peak_gain:.2f}% "
+                f"high → +{floor_gain:.2f}% floor ({_money(level)})",
+            )
+
     if exit_rules.get("exit_below_vwap") and vwap is not None and price < vwap:
         return True, f"price {_money(price)} fell below VWAP {_money(vwap)}"
 

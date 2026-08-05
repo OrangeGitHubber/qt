@@ -57,6 +57,9 @@ export interface StrategyParams {
     exit_on_macd_bearish?: boolean; // optional daily-MACD exit signal (off by default)
     exit_rsi_above?: number; // sell when RSI >= this (overbought take-profit); 0 = off
     exit_rsi_below?: number; // sell when RSI drops through this floor; 0 = off
+    /** Sell after handing back this share of the peak GAIN. 0 = off. Unlike a
+     *  take-profit it sets no ceiling — it only bounds the give-back. */
+    exit_giveback_pct?: number;
     exit_rsi_falling?: boolean; // sell as soon as RSI turns down, wherever it is
     exit_on_regime_bear?: boolean; // stocks: sell to cash when SPY < its 200-day MA (live-only)
     rotate_on_rank_dropout?: boolean; // basket rotation: sell when it leaves the top-N

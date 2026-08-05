@@ -349,6 +349,12 @@ export const GLOSSARY: Record<string, GlossaryEntry> = {
       "Sets the stop at a multiple of this symbol's Average True Range — its typical daily move — instead of a fixed %. A volatile stock gets a wider stop, a calm one a tighter stop, so ordinary daily wiggle doesn't shake you out. It's recomputed each bar, so it breathes with the symbol's volatility. While it is on it OVERRIDES the fixed stop-loss (which stays as the fallback if ATR can't be computed). This is the HARD stop only — the trailing stop has its own separate ATR setting. 0 = off.",
     url: "https://www.investopedia.com/terms/a/atr.asp",
   },
+  exit_giveback: {
+    term: "Give back at most (% of the gain)",
+    explain:
+      "Sells once the position has handed back this share of its BEST gain — not this share of its price. That distinction is the whole point. A 13% trailing stop on a position that only ever rose 7% cannot protect anything: its level sits below what you paid, so the only thing it can do is book a loss. A give-back of 25% instead means a stock that peaked +170% sells at +127%, and one that peaked +5% sells at +3.75%. The tolerance grows with the move, so it sits far away during a big run and close during a small one — and it can never turn a winner into a loser, because the exit price is always above your entry. Unlike a take-profit it sets NO ceiling: the position can run as far as it likes so long as it keeps making new highs. Use one or the other, not both — a take-profit caps the upside, this bounds the give-back. 0 = off.",
+    url: "https://www.investopedia.com/terms/t/trailingstop.asp",
+  },
   rsi_cross_above: {
     term: "Buy as RSI crosses up through",
     explain:

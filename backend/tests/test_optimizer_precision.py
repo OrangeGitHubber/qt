@@ -69,6 +69,7 @@ _KNOB_FIELDS = {
     "atr_trail_mult": "atr.trail_mult",
     "rsi_cross_above": "p.entry.rsi_cross_above",
     "exit_rsi_below": "p.exit.exit_rsi_below",
+    "exit_giveback_pct": "p.exit.exit_giveback_pct",
 }
 
 

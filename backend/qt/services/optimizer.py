@@ -84,6 +84,7 @@ KNOB_BOUNDS: dict[str, tuple[float, float, int]] = {
     "trailing_stop_pct": (0.5, 50.0, 2),
     "stop_loss_pct": (0.1, 50.0, 2),
     "take_profit_pct": (0.05, 500.0, 2),
+    "exit_giveback_pct": (1.0, 90.0, 1),
     "rsi_max": (1.0, 99.0, 1),
     "rsi_min": (1.0, 99.0, 1),
     "exit_rsi_above": (1.0, 99.0, 1),
@@ -128,7 +129,8 @@ def _geometric_grid(anchor: float, step: float, bounds: tuple[float, float, int]
 # every anchor. macd_slow is special-cased (it lives in the `macd` block and is
 # only meaningful when a MACD toggle is on).
 _ENTRY_KNOBS = {"min_day_gain_pct", "rsi_max", "rsi_min", "rsi_cross_above"}
-_EXIT_KNOBS = {"trailing_stop_pct", "stop_loss_pct", "take_profit_pct", "exit_rsi_above"}
+_EXIT_KNOBS = {"trailing_stop_pct", "stop_loss_pct", "take_profit_pct", "exit_rsi_above",
+               "exit_giveback_pct"}
 # Explicitly ORDERED, never a set union: the key order fixes the order random
 # combos are drawn in, so a set's arbitrary iteration order would make a seeded
 # run unreproducible across processes.
@@ -137,6 +139,7 @@ _CORE_KNOBS = (
     "trailing_stop_pct",
     "stop_loss_pct",
     "take_profit_pct",
+    "exit_giveback_pct",
     "rsi_min",
     "rsi_max",
     "exit_rsi_above",

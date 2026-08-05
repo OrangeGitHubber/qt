@@ -1191,7 +1191,8 @@ def _has_price_triggered_exit(params: dict) -> bool:
     atr = params.get("atr") or {}
     return any(
         float(x.get(k, 0) or 0) > 0
-        for k in ("stop_loss_pct", "trailing_stop_pct", "take_profit_pct")
+        for k in ("stop_loss_pct", "trailing_stop_pct", "take_profit_pct",
+                  "exit_giveback_pct")
     ) or float(atr.get("stop_mult", 0) or 0) > 0 or float(
         atr.get("trail_mult", 0) or 0
     ) > 0

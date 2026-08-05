@@ -90,6 +90,7 @@ const EMPTY: Partial<StrategyRow> = {
       exit_below_vwap: false,
       exit_rsi_above: 0,
       exit_rsi_below: 0,
+      exit_giveback_pct: 0,
       exit_rsi_falling: false,
       exit_on_regime_bear: false,
       exit_slippage_pct: 1,
@@ -1064,6 +1065,10 @@ function Editor({
           <Param label="Take-profit (%, 0 = off)" tip="take_profit">
             <NumberField step="any" min="0" value={p.exit.take_profit_pct}
               onChange={(n) => setExit("take_profit_pct", n)} />
+          </Param>
+          <Param label="Give back at most (% of the gain, 0 = off)" tip="exit_giveback">
+            <NumberField step="any" min="0" max="90" value={p.exit.exit_giveback_pct ?? 0}
+              onChange={(n) => setExit("exit_giveback_pct", n)} />
           </Param>
         </div>
         {atrTrailOn && (

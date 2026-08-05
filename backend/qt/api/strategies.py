@@ -64,6 +64,13 @@ class ExitRules(BaseModel):
     trailing_stop_pct: float = Field(default=5.0, ge=0, le=50)
     stop_loss_pct: float = Field(default=4.0, ge=0, le=50)
     take_profit_pct: float = Field(default=0, ge=0, le=500)  # 0 = disabled
+    # Keep this share of the peak GAIN. 0 = off. An alternative to
+    # take_profit_pct rather than a partner: a take-profit caps the upside,
+    # this one does not — it only bounds how much of a move you hand back.
+    # Bounded below 100 because 100 would mean "exit at break-even", which
+    # the stop-loss already expresses, and above 0 because 0 is the off
+    # switch.
+    exit_giveback_pct: float = Field(default=0, ge=0, le=90)
     max_holding_hours: float = Field(default=0, ge=0, le=2400)  # 0 = disabled
     flatten_before_close: bool = False
     exit_below_vwap: bool = False
