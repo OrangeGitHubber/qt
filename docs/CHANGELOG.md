@@ -23,6 +23,26 @@ the line it belongs to, so the figure and the curve identify each other.
 An indicator that isn't defined yet reads "—" rather than a broken number — a
 200-day average has nothing to say on day 40, and now it says so.
 
+## The DCA template was the wrong shape, and is gone (2026-08-05)
+
+The first template set included a buy-and-hold DCA sleeve, justified as the
+baseline the other strategies had to beat. Two things are wrong with that.
+
+A sleeve that never sells locks capital up indefinitely in a tool whose whole
+purpose is turning it over. And the comparison it existed to provide is
+**already drawn on every backtest chart** — the cyan buy-and-hold line is equal-
+weight ownership of the strategy's own symbols, which is exactly the "should I
+have just held?" question, answered for free with no capital committed.
+
+It has been replaced by a **Basket rotation** template, which is the style that
+was actually missing: medium-term, and mechanically different from the other
+three in that it never judges a symbol on its own merits at all.
+
+Seeding now also DELETES templates that have been retracted, so the DCA one
+disappears on the next restart rather than sitting in your list forever. Only
+rows marked as templates are touched — a strategy of your own is never at risk,
+even one whose name starts with "Template".
+
 ## Clone asks what to call it (2026-08-05)
 
 Clone used to append " (copy)" and drop the new strategy into the list, leaving
@@ -61,8 +81,10 @@ So the four styles are now shipped as templates, each internally coherent:
   take-profit. This is the style that owns the stock that doubles.
 * **Intraday scanner rider** — the day's movers, swing mode OFF, a 10:00–15:30
   entry window and flatten-before-close. Flat overnight.
-* **Long-term DCA baseline** — buys the list every 14 days and holds. The
-  yardstick the others have to beat, and it wins more often than people expect.
+* **Basket rotation** — ranks the whole list by 30-day return and holds the
+  strongest 5, swapping them out as leadership changes. It never judges a symbol
+  on its own; a position is sold because something else got better. Rotation is
+  the exit, so the trailing stop and take-profit are deliberately off.
 
 Each carries long notes explaining what it is, what NOT to add to it, and how
 much evidence is actually behind it — only the dip buyer has been measured, and

@@ -225,13 +225,70 @@ def test_the_intraday_template_turns_swing_mode_off():
     assert spec["params"]["entry"]["entry_window_start"]
 
 
-def test_the_dca_baseline_does_no_timing():
-    spec = _by("DCA")
-    assert spec["params"]["dca"]["interval_days"] > 0
-    entry = spec["params"]["entry"]
-    assert entry.get("min_day_gain_pct", 0) == 0
-    assert not entry.get("require_macd_bullish")
-    assert not entry.get("require_above_vwap")
+def test_the_rotation_template_rotates_and_lets_rotation_be_the_exit():
+    """Rotation IS the exit here. A trailing stop would sell a leader during an
+    ordinary pullback and rotation would buy it straight back, paying the spread
+    twice for nothing — so both soft exits are off and only the hard stop
+    remains."""
+    spec = _by("Basket rotation")
+    assert spec["params"]["exit"]["rotate_on_rank_dropout"] is True
+    assert spec["params"]["exit"]["trailing_stop_pct"] == 0
+    assert spec["params"]["exit"]["take_profit_pct"] == 0
+    assert spec["params"]["exit"]["stop_loss_pct"] > 0     # a hard stop is mandatory
+
+
+def test_the_rotation_template_ranks_on_a_metric_with_memory():
+    """momentum_today would reshuffle the holdings daily on noise and churn the
+    sleeve to death. Rotation needs a slow metric."""
+    spec = _by("Basket rotation")
+    assert spec["rank_by"] == "return_30d"
+    assert spec["rank_enabled"] is True
+    assert spec["top_n"] < len(spec["symbols"])            # a real cut, not a formality
+
+
+def test_no_template_is_a_buy_and_hold_sleeve():
+    """A DCA template shipped in the first set and was retracted: a sleeve that
+    never sells is the wrong shape for a tool built around turning capital over,
+    and the comparison it existed to provide is already drawn on every backtest
+    chart as the buy-and-hold line."""
+    for spec in STARTER_STRATEGIES:
+        assert not (spec["params"].get("dca") or {}).get("interval_days"), spec["name"]
+
+
+def test_a_retracted_template_is_removed_on_seed(client, db_session):
+    """The shipped SET converges even though template CONTENT does not. Leaving
+    something behind that we no longer stand behind is how a starting point
+    becomes a trap."""
+    ghost = Strategy(
+        name="Template · Something We Retracted", template=True,
+        asset_class="stock", universe="custom", symbols="[]",
+        params=json.dumps({"entry": {}, "exit": {"stop_loss_pct": 4}}),
+    )
+    db_session.add(ghost)
+    db_session.commit()
+    assert "Template · Something We Retracted" in _templates(client)
+
+    seed_starter_strategies(db_session)
+    db_session.commit()
+    assert "Template · Something We Retracted" not in _templates(client)
+
+
+def test_pruning_never_touches_a_users_own_strategy(client, db_session):
+    """The prune filters on template=True. A user strategy whose name happens to
+    start with "Template" must survive — deleting someone's work to tidy up our
+    own shipped set would be the worst possible version of this feature."""
+    mine = Strategy(
+        name="Template · mine, actually", template=False,
+        asset_class="stock", universe="custom", symbols="[]",
+        params=json.dumps({"entry": {}, "exit": {"stop_loss_pct": 4}}),
+    )
+    db_session.add(mine)
+    db_session.commit()
+
+    seed_starter_strategies(db_session)
+    db_session.commit()
+    names = [s["name"] for s in client.get("/api/strategies").json()]
+    assert "Template · mine, actually" in names
 
 
 @pytest.mark.parametrize("spec", STARTER_STRATEGIES, ids=lambda s: s["name"])

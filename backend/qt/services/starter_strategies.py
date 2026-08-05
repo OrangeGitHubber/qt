@@ -1,5 +1,12 @@
 """Four shipped strategy TEMPLATES — one per trading style, clone-only.
 
+The four: a dip buyer, a trend follower, an intraday scanner rider, and a basket
+rotation sleeve. An earlier set carried a buy-and-hold DCA baseline instead of
+the rotation one; it was retracted because a sleeve that never sells is the wrong
+shape for a tool built around turning capital over, and because the comparison it
+existed to provide is already drawn on every backtest chart as the buy-and-hold
+line. seed_starter_strategies deletes retracted templates.
+
 WHY THESE EXIST. A long session spent debugging one underperforming strategy
 kept turning up the same root cause: settings that belong to DIFFERENT styles
 had been stacked on top of each other. A dip-buying entry (RSI crossing up out
@@ -154,31 +161,44 @@ EVIDENCE
 None. Coherent design, not a measured result."""
 
 
-DCA_BASELINE_NOTES = """WHAT THIS IS
-Buy the list every N days and hold. No timing, no signals. This is the baseline
-every other strategy has to beat, and it is here so you can actually run it
-rather than assume you would have beaten it.
+ROTATION_NOTES = """WHAT THIS IS
+Owns the strongest few names in your list and swaps them out as leadership
+changes. It never judges a symbol on its own — it ranks the whole pool and holds
+the top 5, so a position is sold because something else got better, not because
+it did anything wrong.
 
-IT WILL BEAT YOUR CLEVER STRATEGIES MORE OFTEN THAN YOU EXPECT
-That is the point of running it. In one measured three-month window the
-equal-weight buy-and-hold line returned +13.9% while an actively-managed
-strategy over the same 19 symbols returned +1.6%. 40% of that came from a single
-stock that a dip-buying entry could never have owned.
+WHY IT REPLACED A BUY-AND-HOLD TEMPLATE
+A DCA sleeve that never sells locks up capital in a tool built for turning it
+over, and the "should I have just held?" question is already answered on every
+backtest chart by the cyan buy-and-hold line — you do not need to run a strategy
+to see it.
 
-WHY IT HAS NO STOP-LOSS
-A DCA sleeve is the only strategy the app allows to run with all exits off — the
-thesis is that you hold through drawdowns, and a stop would sell exactly the
-weakness you are supposed to be buying. If that makes you uncomfortable, that
-discomfort is worth sitting with before you switch on anything riskier.
+THE ROTATION SETTING IS THE ONE TO UNDERSTAND
+"Rotate out when it leaves the top N" is what closes positions here. It is
+independent of "rank & trade only the top N": ranking decides what you may BUY,
+rotation decides what you keep HOLDING. Turning ranking off does NOT turn
+rotation off — that combination once sold winners with no visible control on the
+page, which is why both settings are on and explicit in this template.
 
-THE ONE OPTIONAL EXIT
-"Sell to cash when the market turns down" (SPY below its 200-day average) is off
-by default here. Turning it on makes this a trend-aware hold rather than a true
-baseline — a reasonable thing to want, but then it is no longer the yardstick.
+WHY THE METRIC IS 30-DAY RETURN
+Rotation needs a metric with a MEMORY. Ranking by today's move would reshuffle
+the holdings daily on noise and churn the sleeve to death; 30-day return only
+reorders when leadership genuinely changes. This is also the one place ranking by
+a "how far has it gone" measure is correct — you want what HAS been strong,
+because you are betting it continues.
 
-WHAT TO CHANGE
-The symbol list, and the interval. Nothing else. Every filter you add makes it
-less of a baseline and more of a strategy you have to justify."""
+WHY THERE IS NO TAKE-PROFIT AND NO TRAILING STOP
+Rotation is the exit. A trailing stop would sell a leader during an ordinary
+pullback and then rotation would buy it straight back, paying the spread twice
+for nothing. The hard stop stays as a disaster brake only.
+
+WHAT TO WATCH
+Turnover. If it is trading every few days, your ranking metric is too twitchy —
+lengthen it before touching anything else. And top_n against your symbol count:
+5 of 14 is a real cut, 5 of 6 barely ranks at all.
+
+EVIDENCE
+None. A coherent design, not a measured result."""
 
 
 # name -> the full row. `params` mirrors StrategyParams; anything absent falls
@@ -269,42 +289,69 @@ STARTER_STRATEGIES: list[dict] = [
         },
     },
     {
-        "name": "Template · Long-term DCA baseline",
-        "notes": DCA_BASELINE_NOTES,
+        "name": "Template · Basket rotation",
+        "notes": ROTATION_NOTES,
         "asset_class": "stock",
         "universe": "custom",
         "symbols": _CORE,
-        "rank_by": "momentum_today",
-        "rank_enabled": False,
-        "sizing_usd": 250.0,
-        "sleeve_usd": 10000.0,
-        "max_positions": 20,
+        "rank_by": "return_30d",             # a metric with MEMORY — see the notes
+        "rank_enabled": True,
+        "top_n": 5,
+        "sizing_usd": 800.0,
+        "sleeve_usd": 4000.0,
+        "max_positions": 5,
         "swing_mode": True,
         "params": {
-            "entry": {"min_day_gain_pct": 0},   # no timing at all
-            "exit": {
-                "stop_loss_pct": 0,             # allowed ONLY for a DCA sleeve
-                "trailing_stop_pct": 0,
-                "take_profit_pct": 0,
+            "entry": {
+                "min_day_gain_pct": 0,       # you are buying RANK, not a day move
+                "require_above_vwap": False,
+                "require_macd_bullish": False,
             },
-            "dca": {"interval_days": 14},
+            "exit": {
+                "stop_loss_pct": 10.0,       # disaster brake only
+                "trailing_stop_pct": 0,      # OFF — rotation is the exit
+                "take_profit_pct": 0,        # OFF — ditto
+                "rotate_on_rank_dropout": True,
+            },
+            "atr": {"period": 14, "stop_mult": 3.0},
         },
-    },
+    }
 ]
 
 
 def seed_starter_strategies(session: Session) -> int:
     """Create the shipped templates if absent. Returns how many were created.
 
-    CREATE-ONLY, unlike the starter baskets, which refresh their membership on
-    every boot. A template is inert — it cannot be enabled, edited or deleted —
-    so there is nothing for a refresh to converge, and rewriting rows on every
-    restart would only risk clobbering a database the user is mid-way through
-    reading. A template the user has somehow removed stays removed.
+    CREATE-ONLY for the CONTENT of a template, unlike the starter baskets which
+    refresh their membership on every boot. A template is inert — it cannot be
+    enabled, edited or deleted — so there is nothing for a refresh to converge,
+    and rewriting rows on every restart would only risk clobbering a database the
+    user is mid-way through reading.
+
+    The SET is convergent, though: a template that has been retracted from
+    STARTER_STRATEGIES is deleted. Shipping something and then leaving it behind
+    when we no longer stand behind it is how a starting point becomes a trap.
 
     Matched on (name, template=True), so a user's own strategy that happens to
     share a name is never touched or mistaken for a shipped one.
     """
+    # RETRACTED templates are removed. A shipped template we no longer stand
+    # behind should not sit in someone's list forever: the first set included a
+    # buy-and-hold DCA sleeve, which was wrong for a tool built around turning
+    # capital over, and whose "is holding better?" job is already done by the
+    # buy-and-hold line drawn on every backtest chart. Only rows marked
+    # template=True are touched, so nothing a user made is at risk — and a clone
+    # of a removed template is untouched, it just loses its parent link.
+    wanted = {spec["name"] for spec in STARTER_STRATEGIES}
+    stale = (
+        session.query(Strategy)
+        .filter(Strategy.template.is_(True), Strategy.name.notin_(wanted))
+        .all()
+    )
+    for row in stale:
+        log.info("removing retracted strategy template %r", row.name)
+        session.delete(row)
+
     created = 0
     for spec in STARTER_STRATEGIES:
         existing = (
