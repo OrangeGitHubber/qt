@@ -61,6 +61,14 @@ _KNOB_FIELDS = {
     "exit_rsi_above": "p.exit.exit_rsi_above",
     "atr_stop_mult": "atr.stop_mult",
     "macd_slow": "macd.slow",
+    # Added 2026-08-05 with the ATR trail and the RSI direction rules. A knob the
+    # search can propose but the editor would reject is a draft that opens and
+    # cannot be saved — which is what this whole test exists to prevent, so every
+    # new KNOB_BOUNDS entry needs a mapping here or it KeyErrors rather than
+    # silently going unchecked.
+    "atr_trail_mult": "atr.trail_mult",
+    "rsi_cross_above": "p.entry.rsi_cross_above",
+    "exit_rsi_below": "p.exit.exit_rsi_below",
 }
 
 

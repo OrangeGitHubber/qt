@@ -23,6 +23,29 @@ the line it belongs to, so the figure and the curve identify each other.
 An indicator that isn't defined yet reads "—" rather than a broken number — a
 200-day average has nothing to say on day 40, and now it says so.
 
+## The optimizer was tuning a knob that does nothing (2026-08-05)
+
+Asking for 40 combinations and being told "5 of ~9" is not a bug — the number
+you type is a CEILING, and the search stops early when the grid holds fewer
+distinct combinations than that. But looking into it turned up three real faults,
+all introduced the same day as the rules they concern:
+
+* **The fixed trailing stop was still being searched when the ATR trail is on.**
+  With `trail_mult` set, the trail is a multiple of the symbol's own volatility
+  and the fixed percentage is never read at all — so the search spent a whole
+  dimension of its grid proving a knob does nothing, and reported a "best"
+  trailing stop that had no effect on any result. The same rule already existed
+  for the hard stop; the trail just never got it.
+* **`atr_trail_mult` itself couldn't be searched**, so the setting that actually
+  governs the trail was invisible to the optimizer.
+* **`rsi_cross_above` couldn't be searched**, which meant the defining setting of
+  a dip-buying strategy — the level it crosses up through — was the one thing a
+  parameter search could not tune. `exit_rsi_below` was missing for the same
+  reason.
+
+All three now behave like every other knob: searched when switched on, ignored
+when off (a search tunes what you use, it never turns a rule on for you).
+
 ## MACD ranking was doing the same sum seven times a day (2026-08-05)
 
 An optimizer run on the Trend Follower template over ~30 symbols crawled. The

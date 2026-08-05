@@ -88,6 +88,9 @@ KNOB_BOUNDS: dict[str, tuple[float, float, int]] = {
     "rsi_min": (1.0, 99.0, 1),
     "exit_rsi_above": (1.0, 99.0, 1),
     "atr_stop_mult": (0.1, 20.0, 2),
+    "atr_trail_mult": (0.1, 20.0, 2),
+    "rsi_cross_above": (1.0, 99.0, 1),
+    "exit_rsi_below": (1.0, 99.0, 1),
     "macd_slow": (3, 200, 0),
 }
 
@@ -124,7 +127,7 @@ def _geometric_grid(anchor: float, step: float, bounds: tuple[float, float, int]
 # Where each searchable knob lives in the strategy's params, so one loop can read
 # every anchor. macd_slow is special-cased (it lives in the `macd` block and is
 # only meaningful when a MACD toggle is on).
-_ENTRY_KNOBS = {"min_day_gain_pct", "rsi_max", "rsi_min"}
+_ENTRY_KNOBS = {"min_day_gain_pct", "rsi_max", "rsi_min", "rsi_cross_above"}
 _EXIT_KNOBS = {"trailing_stop_pct", "stop_loss_pct", "take_profit_pct", "exit_rsi_above"}
 # Explicitly ORDERED, never a set union: the key order fixes the order random
 # combos are drawn in, so a set's arbitrary iteration order would make a seeded
@@ -137,6 +140,11 @@ _CORE_KNOBS = (
     "rsi_min",
     "rsi_max",
     "exit_rsi_above",
+    # Added with the RSI direction rules (2026-08-05). Without these the
+    # defining knob of a dip-buying strategy — the level it crosses up
+    # through — was the one thing a search could not tune.
+    "rsi_cross_above",
+    "exit_rsi_below",
 )
 
 
@@ -145,8 +153,8 @@ def _anchor(params: dict, key: str) -> float:
     exit_rules = params.get("exit") or {}
     if key == "macd_slow":
         return float((params.get("macd") or {}).get("slow", 26) or 26)
-    if key == "atr_stop_mult":
-        return float((params.get("atr") or {}).get("stop_mult", 0) or 0)
+    if key in ("atr_stop_mult", "atr_trail_mult"):
+        return float((params.get("atr") or {}).get(key[4:], 0) or 0)
     src = entry if key in _ENTRY_KNOBS else exit_rules
     return float(src.get(key, 0) or 0)
 
@@ -177,6 +185,8 @@ def _active_param_space(
         keys.append("macd_slow")
     if _anchor(params, "atr_stop_mult") > 0:
         keys.append("atr_stop_mult")
+    if _anchor(params, "atr_trail_mult") > 0:
+        keys.append("atr_trail_mult")
 
     space: dict[str, list[float]] = {}
     for key in keys:
@@ -195,6 +205,13 @@ def _active_param_space(
     # does nothing and print a meaningless "best" beside the values that count.
     if "atr_stop_mult" in space:
         space.pop("stop_loss_pct", None)
+    # Same reasoning for the TRAIL, which gained an ATR multiplier on
+    # 2026-08-05: when trail_mult is on, evaluate_exit computes the trail as
+    # trail_mult x ATR% and trailing_stop_pct is never read. Searching it burnt
+    # a whole dimension of the grid proving a knob does nothing, and reported a
+    # "best" trailing stop that had no effect on any result.
+    if "atr_trail_mult" in space:
+        space.pop("trailing_stop_pct", None)
     return space
 
 
@@ -320,12 +337,13 @@ def _apply_combo(base_strategy: dict, combo: dict) -> dict:
             slow = int(value)
             fast = max(2, min(slow - 1, round(slow * ratio)))
             m["fast"], m["slow"], m["signal"] = fast, slow, int(m.get("signal", 9) or 9)
-        elif key == "atr_stop_mult":
-            # Lives in its own params block, alongside the period and risk sizing
-            # the user set — those are left exactly as configured.
+        elif key in ("atr_stop_mult", "atr_trail_mult"):
+            # Both live in their own params block, alongside the period and risk
+            # sizing the user set — those are left exactly as configured. The
+            # key is "atr_" + the field name, so the routing needs no table.
             a = params.get("atr") or {}
             params["atr"] = a
-            a["stop_mult"] = value
+            a[key[4:]] = value
             a.setdefault("period", 14)
             a.setdefault("risk_usd", 0)
         elif key in _ENTRY_KNOBS:
