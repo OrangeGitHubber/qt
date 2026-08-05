@@ -42,6 +42,7 @@ export interface StrategyParams {
     require_macd_bullish?: boolean; // optional daily-MACD entry filter (off by default)
     rsi_min?: number; // RSI entry band floor (0 = off)
     rsi_max?: number; // RSI entry band cap — avoid overbought entries (0 = off)
+    rsi_cross_above?: number; // enter only as RSI crosses UP through this (0 = off)
     entry_window_start: string | null;
     entry_window_end: string | null;
     entry_slippage_pct: number;
@@ -55,6 +56,8 @@ export interface StrategyParams {
     exit_below_vwap: boolean;
     exit_on_macd_bearish?: boolean; // optional daily-MACD exit signal (off by default)
     exit_rsi_above?: number; // sell when RSI >= this (overbought take-profit); 0 = off
+    exit_rsi_below?: number; // sell when RSI drops through this floor; 0 = off
+    exit_rsi_falling?: boolean; // sell as soon as RSI turns down, wherever it is
     exit_on_regime_bear?: boolean; // stocks: sell to cash when SPY < its 200-day MA (live-only)
     rotate_on_rank_dropout?: boolean; // basket rotation: sell when it leaves the top-N
     exit_slippage_pct: number;

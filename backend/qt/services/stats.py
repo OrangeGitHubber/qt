@@ -89,6 +89,29 @@ def rsi_from_closes(closes: list[float], period: int = 14) -> float | None:
     return round(100 - 100 / (1 + rs), 1)
 
 
+# How many completed bars back the RSI *direction* rules look. Three sessions,
+# matching MACD_SLOPE_SPAN: long enough that one noisy close doesn't flip the
+# verdict, short enough to still describe "this week". It is what makes both
+# "crossed up through 30" and "RSI is falling" answerable from two numbers
+# instead of a whole series.
+RSI_SLOPE_SPAN = 3
+
+
+def rsi_back(
+    bars: list[dict], period: int = 14, span: int = RSI_SLOPE_SPAN
+) -> float | None:
+    """RSI as it stood `span` completed bars ago, or None without the history.
+
+    Paired with `rsi`, this is the whole basis of the direction rules:
+        rising      = rsi > rsi_back
+        crossed up  = rsi_back <= threshold < rsi
+    A LEVEL says how far a move has gone; these two together say which way it is
+    going, which is a different question and usually the more useful one."""
+    if span <= 0 or len(bars) <= span:
+        return None
+    return rsi(bars[:-span], period)
+
+
 def rsi(bars: list[dict], period: int = 14, current_price: float | None = None) -> float | None:
     """RSI over daily bars. `current_price` (the live quote), when given, replaces
     the last close so the watchlist reading is up to date intraday. The engine's

@@ -737,14 +737,19 @@ def _annotate_macd(
 
 
 def _rsi_on(params: dict) -> bool:
-    """Whether any RSI rule is set — the entry band (rsi_min/rsi_max) or the
-    overbought exit (exit_rsi_above)."""
+    """Whether any RSI rule is set — the entry band (rsi_min/rsi_max), the entry
+    CROSSING (rsi_cross_above), or any of the RSI exits (above/below/falling).
+    This gate decides whether the RSI series is annotated onto the bars at all,
+    so a rule missing from here is a rule that can never fire in a replay."""
     e = params.get("entry", {})
     x = params.get("exit", {})
     return (
         float(e.get("rsi_min", 0) or 0) > 0
         or float(e.get("rsi_max", 0) or 0) > 0
+        or float(e.get("rsi_cross_above", 0) or 0) > 0
         or float(x.get("exit_rsi_above", 0) or 0) > 0
+        or float(x.get("exit_rsi_below", 0) or 0) > 0
+        or bool(x.get("exit_rsi_falling"))
     )
 
 
@@ -768,13 +773,30 @@ def _annotate_rsi(
             ordered, cutoff = _daily_frontier(series, daily_bars_by_symbol.get(symbol) or [], day_of)
             closes = [float(b["c"]) for b in ordered]
             by_day = {d: stats.rsi_from_closes(closes[:k]) for d, k in cutoff.items()}
+            # …and the reading RSI_SLOPE_SPAN completed DAILY bars earlier, off
+            # the same frontier, so "crossed up" and "falling" mean the same
+            # thing here as they do live.
+            prev_by_day = {
+                # max(0, …): a NEGATIVE bound would slice from the END of the
+                # series (closes[:-3] is nearly everything) and hand the early
+                # bars a reading computed from the future. 0 gives [] -> None,
+                # which is the honest answer before there is enough history.
+                d: stats.rsi_from_closes(closes[: max(0, k - stats.RSI_SLOPE_SPAN)])
+                for d, k in cutoff.items()
+            }
             for bar in series:
                 bar["rsi"] = by_day[bar["day"]]
+                bar["rsi_prev"] = prev_by_day[bar["day"]]
         return
     for series in prepared.values():
         closes = [b["close"] for b in series]
         for i, bar in enumerate(series):
             bar["rsi"] = stats.rsi_from_closes(closes[:i])
+            # max(0, …) — see the note on prev_by_day above; a negative bound
+            # slices from the end and leaks the future into the first bars.
+            bar["rsi_prev"] = stats.rsi_from_closes(
+                closes[: max(0, i - stats.RSI_SLOPE_SPAN)]
+            )
 
 
 # ───────────────────────────── TOP-N RANKING ──────────────────────────────
@@ -1936,6 +1958,7 @@ def run_backtest(
                     macd_bullish=bar.get("macd_bullish"),
                     atr_pct=bar.get("atr_pct"),
                     rsi=bar.get("rsi"),
+                    rsi_prev=bar.get("rsi_prev"),
                     is_crypto=strategy["asset_class"] == "crypto",
                     bar_high=bar["high"], bar_low=bar["low"], out=trigger,
                 )
@@ -2012,6 +2035,7 @@ def run_backtest(
                 price=bar["close"], change_pct=bar["change_pct"], vwap=bar["vwap"],
                 macd_bullish=bar.get("macd_bullish"),
                 rsi=bar.get("rsi"),
+                rsi_prev=bar.get("rsi_prev"),
                 rank=rank_pos, rank_of=rank_of,
             )
             # THE MARKET'S OWN HOURS, checked before the strategy's rules. Not an
@@ -2656,6 +2680,7 @@ def run_portfolio_backtest(
                     macd_bullish=bar.get("macd_bullish"),
                     atr_pct=bar.get("atr_pct"),
                     rsi=bar.get("rsi"),
+                    rsi_prev=bar.get("rsi_prev"),
                     is_crypto=strat["asset_class"] == "crypto",
                     bar_high=bar["high"], bar_low=bar["low"], out=trigger,
                 )
@@ -2722,6 +2747,7 @@ def run_portfolio_backtest(
                 price=bar["close"], change_pct=bar["change_pct"], vwap=bar["vwap"],
                 macd_bullish=bar.get("macd_bullish"),
                 rsi=bar.get("rsi"),
+                rsi_prev=bar.get("rsi_prev"),
                 rank=rank_pos, rank_of=rank_of,
             )
             # The same gate as run_backtest's, and it has to be restated here

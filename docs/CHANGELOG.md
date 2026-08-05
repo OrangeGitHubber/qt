@@ -3,6 +3,35 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## RSI as a turn, not a level (2026-08-05)
+
+Every rule on "Favorites - optimized 4 aug v2" asked the same question — *how
+far has this run* — and none asked *which way is it going now*. Rank by highest
+RSI, then require a 1% up-day, a price above VWAP, and an already-bullish MACD.
+Six of its seventeen trades exited on the hard stop, meaning they fell below the
+entry price without ever setting a high water mark.
+
+A static RSI band doesn't fix that: "min RSI 30" admits a stock sitting at 32
+and rotting there for six weeks. So RSI can now be read as a DIRECTION:
+
+* **Buy as RSI crosses up through** (entry) — takes the trade only in the window
+  where RSI was at or below the level a few sessions ago and is above it now.
+  30 is the classic level: coming up out of oversold. A name that has been above
+  the line for weeks never qualifies.
+* **Sell if RSI drops below** (exit) — the mirror of the existing overbought
+  exit. That one takes profit on froth; this one leaves when momentum is gone.
+* **Exit when RSI turns down** (exit) — sells as soon as RSI is below where it
+  was three sessions ago, wherever it sits. An RSI of 61 that was 68 three days
+  ago still looks healthy and is usually the moment a move stopped working.
+
+Entry fails CLOSED (an unknown RSI is not a green light) and the exits fail
+OPEN (a data blip must never liquidate the book) — the same asymmetry the MACD
+rules already use.
+
+One honest warning, also in the tooltip: the crossing pairs badly with "require
+MACD bullish". MACD lags, so a stock that has just turned up rarely has a
+bullish daily MACD yet, and switching both on can mean almost nothing qualifies.
+
 ## Rank by MACD, as strength or as acceleration (2026-08-05)
 
 "Favorites - optimized 4 aug v2" was ranking its 19 names by RSI, highest first,

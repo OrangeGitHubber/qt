@@ -29,6 +29,12 @@ class EntryRules(BaseModel):
     # 0 = that bound is off. rsi_max caps overbought entries; rsi_min sets a floor.
     rsi_min: float = Field(default=0, ge=0, le=100)
     rsi_max: float = Field(default=0, ge=0, le=100)
+    # RSI as a TURN rather than a level: enter only when RSI has crossed UP
+    # through this value within the last few sessions (0 = off). A band admits
+    # a stock sitting at 32 and rotting there for six weeks; a crossing admits
+    # it only at the moment selling pressure broke. Deliberately a separate
+    # knob from rsi_min/rsi_max, which stay a static filter.
+    rsi_cross_above: float = Field(default=0, ge=0, le=100)
     entry_window_start: str | None = None  # "HH:MM" US/Eastern; None = any time
     entry_window_end: str | None = None
     # Advanced execution: how far THROUGH the market to price the marketable buy
@@ -56,6 +62,11 @@ class ExitRules(BaseModel):
     exit_below_vwap: bool = False
     exit_on_macd_bearish: bool = False  # optional daily-MACD exit signal (off by default)
     exit_rsi_above: float = Field(default=0, ge=0, le=100)  # 0 = off; sell when RSI >= this (overbought)
+    # The two directional exits, mirroring rsi_cross_above on the way in.
+    # exit_rsi_below sells when RSI drops THROUGH a floor; exit_rsi_falling
+    # sells as soon as RSI turns down at all, wherever it happens to be.
+    exit_rsi_below: float = Field(default=0, ge=0, le=100)  # 0 = off
+    exit_rsi_falling: bool = False
     exit_on_regime_bear: bool = False  # stocks: sell to cash when SPY < its 200-day MA (live-only overlay)
     rotate_on_rank_dropout: bool = False  # basket rotation: sell when it leaves the top-N
     # Advanced execution: how far BELOW the market to price the marketable sell

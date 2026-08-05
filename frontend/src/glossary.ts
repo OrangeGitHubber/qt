@@ -349,6 +349,24 @@ export const GLOSSARY: Record<string, GlossaryEntry> = {
       "Sets the stop at a multiple of this symbol's Average True Range — its typical daily move — instead of a fixed %. A volatile stock gets a wider stop, a calm one a tighter stop, so ordinary daily wiggle doesn't shake you out. It's recomputed each bar, so it breathes with the symbol's volatility. While it is on it OVERRIDES the fixed stop-loss (which stays as the fallback if ATR can't be computed). This is the HARD stop only — the trailing stop has its own separate ATR setting. 0 = off.",
     url: "https://www.investopedia.com/terms/a/atr.asp",
   },
+  rsi_cross_above: {
+    term: "Buy as RSI crosses up through",
+    explain:
+      "Buys only in the window where RSI has just risen THROUGH this level — below it a few days ago, above it now. That is a different question from the Min/Max RSI band above: a band lets in a stock sitting at 32 and doing nothing for six weeks, while a crossing only lets it in at the moment selling pressure broke. 30 is the classic level (coming up out of 'oversold'). Set to 0 to switch it off. Note this pairs badly with 'require MACD bullish' — a stock that has just turned up usually does not have a bullish daily MACD yet, because MACD lags, so switching both on can mean almost nothing ever qualifies.",
+    url: "https://www.investopedia.com/terms/r/rsi.asp",
+  },
+  rsi_exit_below: {
+    term: "Sell if RSI drops below",
+    explain:
+      "Sells when RSI falls through this floor — the mirror of the overbought exit above. Where 'sell if RSI above' takes profit on froth, this one gets you out when momentum has genuinely gone rather than merely paused. 0 = off.",
+    url: "https://www.investopedia.com/terms/r/rsi.asp",
+  },
+  rsi_falling: {
+    term: "Exit when RSI turns down",
+    explain:
+      "Sells as soon as RSI is lower than it was three days ago, wherever it happens to sit. This catches the roll-over early: an RSI of 61 that was 68 three days ago is still a perfectly healthy-looking number, and is exactly the point at which a move has stopped working. Use it instead of a fixed level if you would rather leave on the turn than wait for a threshold.",
+    url: "https://www.investopedia.com/terms/r/rsi.asp",
+  },
   macd_strength: {
     term: "Rank by MACD strength",
     explain:

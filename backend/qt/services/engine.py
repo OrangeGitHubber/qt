@@ -85,6 +85,10 @@ class Candidate:
     # Wilder's 14-day RSI from COMPLETED daily closes. Only set when a strategy
     # opts into an RSI entry band; otherwise None and ignored.
     rsi: float | None = None
+    # RSI as it stood RSI_SLOPE_SPAN completed bars ago. Two numbers are all
+    # the direction rules need: rising = rsi > rsi_prev, crossed up through T =
+    # rsi_prev <= T < rsi. Only populated when a direction rule is switched on.
+    rsi_prev: float | None = None
     # Where this symbol placed in its strategy's ranking THIS cycle (1 = best),
     # and how many were ranked. None on an unranked universe (the scanner is
     # already ordered by the scan itself, and a plain watchlist has no order).
@@ -246,6 +250,24 @@ def evaluate_entry(params: dict, candidate: Candidate, now_et: datetime) -> tupl
             return False, f"RSI {candidate.rsi:.0f} < min {rsi_min:g}"
         if rsi_max and candidate.rsi > rsi_max:
             return False, f"RSI {candidate.rsi:.0f} > max {rsi_max:g} (overbought)"
+    # RSI CROSSING UP, which is a different question from the band above: not
+    # "is RSI in a good place" but "has it just turned". Requires BOTH sides —
+    # at or below the level `span` bars ago, above it now — so a name that has
+    # sat above the threshold for weeks never qualifies. Fail-closed on a
+    # missing reading, exactly like MACD and the band.
+    cross_above = entry.get("rsi_cross_above", 0) or 0
+    if cross_above:
+        if candidate.rsi is None or candidate.rsi_prev is None:
+            return False, "RSI unavailable — rule requires an RSI crossing"
+        if candidate.rsi <= cross_above:
+            return False, (
+                f"RSI {candidate.rsi:.0f} still at/below {cross_above:g} — no cross up yet"
+            )
+        if candidate.rsi_prev > cross_above:
+            return False, (
+                f"RSI {candidate.rsi:.0f} above {cross_above:g}, but it already was "
+                f"({candidate.rsi_prev:.0f}) — the cross is not recent"
+            )
     # Every clause names the actual reading AND the bar it cleared, so a buy that
     # scraped in reads differently from one that sailed past — the rejection
     # reasons have always done this; the acceptance reason didn't.
@@ -266,6 +288,11 @@ def evaluate_entry(params: dict, candidate: Candidate, now_et: datetime) -> tupl
     if (rsi_min or rsi_max) and candidate.rsi is not None:
         band = f" (band {rsi_min:g}-{rsi_max:g})" if rsi_min and rsi_max else ""
         parts.append(f"RSI {candidate.rsi:.0f}{band}")
+    if cross_above and candidate.rsi is not None and candidate.rsi_prev is not None:
+        parts.append(
+            f"RSI crossed up through {cross_above:g} "
+            f"({candidate.rsi_prev:.0f} → {candidate.rsi:.0f})"
+        )
     return True, ", ".join(parts)
 
 
@@ -359,6 +386,7 @@ def evaluate_exit(
     macd_bullish: bool | None = None,
     atr_pct: float | None = None,
     rsi: float | None = None,
+    rsi_prev: float | None = None,
     regime_bearish: bool = False,
     is_crypto: bool = False,
     bar_high: float | None = None,
@@ -502,6 +530,19 @@ def evaluate_exit(
     exit_rsi_above = exit_rules.get("exit_rsi_above", 0) or 0
     if exit_rsi_above and rsi is not None and rsi >= exit_rsi_above:
         return True, f"RSI {rsi:.0f} ≥ {exit_rsi_above:g} (overbought)"
+
+    # The two DIRECTIONAL RSI exits, mirroring rsi_cross_above on the way in.
+    # Both need the earlier reading, and both stay silent without it — a
+    # missing signal never forces a sale.
+    exit_rsi_below = exit_rules.get("exit_rsi_below", 0) or 0
+    if exit_rsi_below and rsi is not None and rsi <= exit_rsi_below:
+        return True, f"RSI {rsi:.0f} ≤ {exit_rsi_below:g} (momentum gone)"
+    if exit_rules.get("exit_rsi_falling") and rsi is not None and rsi_prev is not None:
+        if rsi < rsi_prev:
+            return True, (
+                f"RSI falling: {rsi_prev:.0f} → {rsi:.0f} over "
+                f"{stats.RSI_SLOPE_SPAN} bars"
+            )
 
     # Optional market-regime exit (opt-in, stocks): sell into cash when the broad
     # market is in a downtrend (SPY below its 200-day MA). The caller supplies the
@@ -667,12 +708,23 @@ RSI_PERIOD = 14  # standard Wilder period; fixed (not a user knob) to keep the c
 def _entry_rsi_enabled(params: dict) -> bool:
     """The RSI entry band is on when either bound is set (> 0)."""
     e = params.get("entry", {})
-    return float(e.get("rsi_min", 0) or 0) > 0 or float(e.get("rsi_max", 0) or 0) > 0
+    return (
+        float(e.get("rsi_min", 0) or 0) > 0
+        or float(e.get("rsi_max", 0) or 0) > 0
+        or float(e.get("rsi_cross_above", 0) or 0) > 0
+    )
 
 
 def _exit_rsi_enabled(params: dict) -> bool:
-    """The RSI overbought exit is on when its threshold is set (> 0)."""
-    return float((params.get("exit") or {}).get("exit_rsi_above", 0) or 0) > 0
+    """Any RSI-based exit: the overbought ceiling, the momentum-gone floor, or
+    the "RSI turned down" direction rule. This is the gate every daily-bars FETCH
+    asks, so a rule missing from here is a rule that silently never fires."""
+    x = params.get("exit") or {}
+    return (
+        float(x.get("exit_rsi_above", 0) or 0) > 0
+        or float(x.get("exit_rsi_below", 0) or 0) > 0
+        or bool(x.get("exit_rsi_falling"))
+    )
 
 
 def _wants_regime_exit(strategy: Strategy | None) -> bool:
@@ -784,11 +836,15 @@ async def _apply_daily_signals(
             cand.atr_pct = stats.atr_pct(daily, period, current_price=cand.price)
         if want_rsi:
             cand.rsi = stats.rsi(daily, RSI_PERIOD)
+            cand.rsi_prev = stats.rsi_back(daily, RSI_PERIOD)
 
 
 async def _daily_exit_signals(
     session: Session, client: AlpacaClient, open_trades: list[Trade]
-) -> tuple[dict[int, bool | None], dict[int, float | None], dict[int, float | None]]:
+) -> tuple[
+    dict[int, bool | None], dict[int, float | None],
+    dict[int, float | None], dict[int, float | None],
+]:
     """For every open trade whose strategy opted into exit_on_macd_bearish and/or
     the ATR stop, return ({trade_id: macd_bullish}, {trade_id: atr_pct}). Computed
     once up front — mirroring _rotation_dropout_reasons — with one batched
@@ -821,6 +877,9 @@ async def _daily_exit_signals(
     macd_flags: dict[int, bool | None] = {}
     atr_pcts: dict[int, float | None] = {}
     rsi_flags: dict[int, float | None] = {}
+    # The reading RSI_SLOPE_SPAN bars back, for exit_rsi_falling. Computed in
+    # the same pass off the same bars — no extra fetch.
+    rsi_prevs: dict[int, float | None] = {}
     for sid, (s, params, symbols) in grouped.items():
         fast, slow, signal = _macd_periods(params)
         period = _atr_period(params)
@@ -850,7 +909,8 @@ async def _daily_exit_signals(
                 atr_pcts[t.id] = stats.atr_pct(daily, period)
             if want_rsi:
                 rsi_flags[t.id] = stats.rsi(daily, RSI_PERIOD)
-    return macd_flags, atr_pcts, rsi_flags
+                rsi_prevs[t.id] = stats.rsi_back(daily, RSI_PERIOD)
+    return macd_flags, atr_pcts, rsi_flags, rsi_prevs
 
 
 async def tick(leverage_unlocked: bool = False) -> None:
@@ -964,7 +1024,9 @@ async def _manage_exits(
     # Daily-MACD exit signal AND the ATR stop's current ATR%, both computed once up
     # front for the strategies that opted in (one shared batched daily-bars call
     # each). Empty dicts when nobody opted in.
-    macd_exit_flags, atr_exit_pcts, rsi_exit_flags = await _daily_exit_signals(session, client, open_trades)
+    macd_exit_flags, atr_exit_pcts, rsi_exit_flags, rsi_exit_prevs = await _daily_exit_signals(
+        session, client, open_trades
+    )
 
     # Market-regime exit (opt-in, stocks): compute the regime ONCE, and only if
     # some open stock position's strategy wants it (otherwise zero extra work — and
@@ -1013,6 +1075,7 @@ async def _manage_exits(
                 macd_bullish=macd_exit_flags.get(trade.id),
                 atr_pct=atr_exit_pcts.get(trade.id),
                 rsi=rsi_exit_flags.get(trade.id),
+                rsi_prev=rsi_exit_prevs.get(trade.id),
                 regime_bearish=regime_bearish and trade.asset_class == "stock",
                 # No swing deferral for a 24/7 asset — see evaluate_exit.
                 is_crypto=trade.asset_class == "crypto",

@@ -71,6 +71,7 @@ const EMPTY: Partial<StrategyRow> = {
       require_above_vwap: true,
       rsi_min: 0,
       rsi_max: 0,
+      rsi_cross_above: 0,
       // A US-equity-hours default, and it only makes sense because a NEW
       // strategy starts as a stock. Crypto has no session to be inside of, so
       // switching the asset class to crypto clears these (see setAssetClass) —
@@ -87,6 +88,8 @@ const EMPTY: Partial<StrategyRow> = {
       flatten_before_close: false,
       exit_below_vwap: false,
       exit_rsi_above: 0,
+      exit_rsi_below: 0,
+      exit_rsi_falling: false,
       exit_on_regime_bear: false,
       exit_slippage_pct: 1,
       exit_slippage_max_pct: 1,
@@ -983,6 +986,10 @@ function Editor({
               <NumberField step="any" min="0" max="100" value={p.entry.rsi_max ?? 0}
                 onChange={(n) => setEntry("rsi_max", n)} />
             </Param>
+            <Param label="Buy as RSI crosses up through (0 = off)" tip="rsi_cross_above">
+              <NumberField step="any" min="0" max="100" value={p.entry.rsi_cross_above ?? 0}
+                onChange={(n) => setEntry("rsi_cross_above", n)} />
+            </Param>
             <Param label={marketMode ? "Entry slippage — n/a at market" : "Entry slippage (%)"} tip="entry_slippage">
               <NumberField step="any" min="0" max="5" value={p.entry.entry_slippage_pct ?? 0.5}
                 onChange={(n) => setEntry("entry_slippage_pct", n)} disabled={marketMode} />
@@ -1117,6 +1124,10 @@ function Editor({
               <NumberField step="any" min="0" max="100" value={p.exit.exit_rsi_above ?? 0}
                 onChange={(n) => setExit("exit_rsi_above", n)} />
             </Param>
+            <Param label="Sell if RSI drops below (0 = off)" tip="rsi_exit_below">
+              <NumberField step="any" min="0" max="100" value={p.exit.exit_rsi_below ?? 0}
+                onChange={(n) => setExit("exit_rsi_below", n)} />
+            </Param>
           </div>
           <div className="check-row">
             <label className="check">
@@ -1128,6 +1139,11 @@ function Editor({
               <input type="checkbox" checked={!!p.exit.exit_on_macd_bearish}
                 onChange={(e) => setExit("exit_on_macd_bearish", e.target.checked)} />
               Exit when MACD turns bearish <InfoTip k="macd" />
+            </label>
+            <label className="check">
+              <input type="checkbox" checked={!!p.exit.exit_rsi_falling}
+                onChange={(e) => setExit("exit_rsi_falling", e.target.checked)} />
+              Exit when RSI turns down <InfoTip k="rsi_falling" />
             </label>
             {s.asset_class === "stock" && (
               <label className="check">
