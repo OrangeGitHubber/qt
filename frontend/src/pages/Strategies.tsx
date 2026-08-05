@@ -945,17 +945,9 @@ function Editor({
         <h4 className="builder-head">Entry criteria</h4>
         <p className="sec-sub">When the strategy is allowed to buy.</p>
         <div className="param-grid">
-          <Param
-            label={
-              Number(p.entry.min_day_gain_pct) === 0
-                ? "Min gain today (%) — 0 still means “not down”"
-                : "Min gain today (%)"
-            }
-            tip="min_day_gain"
-          >
-            {/* min="-100": zero is a real threshold here, not an off switch,
-                so refusing negatives left no way to ignore the day's
-                direction — which is what a buy-the-dip entry needs. */}
+          <Param label="Min gain today (%, 0 = off)" tip="min_day_gain">
+            {/* min="-100": a negative value is a real threshold ("down, but no
+                worse than this"), which a dip-buying entry needs. 0 is off. */}
             <NumberField step="any" min="-100" value={p.entry.min_day_gain_pct}
               onChange={(n) => setEntry("min_day_gain_pct", n)} />
           </Param>
@@ -1836,7 +1828,11 @@ export default function Strategies() {
             <div>
               <dt>Entry</dt>
               <dd>
-                +{r.params.entry.min_day_gain_pct}% day{r.params.entry.require_above_vwap ? ", above VWAP" : ""}
+                {/* 0 = off, so "+0% day" would advertise a rule that isn't there. */}
+                {Number(r.params.entry.min_day_gain_pct) !== 0
+                  ? `${Number(r.params.entry.min_day_gain_pct) > 0 ? "+" : ""}${r.params.entry.min_day_gain_pct}% day`
+                  : "any day move"}
+                {r.params.entry.require_above_vwap ? ", above VWAP" : ""}
               </dd>
             </div>
             <div>

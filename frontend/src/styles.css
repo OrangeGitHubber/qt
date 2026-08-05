@@ -2317,7 +2317,9 @@ details.lastrun[open] > summary::before {
   background: color-mix(in srgb, var(--accent) 12%, transparent);
 }
 
-/* Legend under the readout: active price-panel overlays + their hovered value. */
+/* Legend under the readout: every enabled overlay + its hovered value. With all
+   overlays ticked this is a dozen entries, so it wraps onto as many lines as it
+   needs rather than overflowing the modal. */
 .chart-legend {
   display: flex;
   flex-wrap: wrap;
@@ -2339,6 +2341,13 @@ details.lastrun[open] > summary::before {
   height: 3px;
   border-radius: 2px;
   display: inline-block;
+}
+
+/* The number is the thing being read; the label beside it is the caption. */
+.legend-value {
+  color: var(--text);
+  font-weight: 600;
+  white-space: nowrap;
 }
 
 button.linklike {

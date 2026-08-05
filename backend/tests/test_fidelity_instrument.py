@@ -294,12 +294,20 @@ def test_the_naive_24h_baseline_really_did_flip_a_zero_gain_gate():
     assert naive > 0 > live_like, f"{naive=} {live_like=}"
 
 
+# Any minimum above zero and below the naive baseline's fake gain works here; the
+# gate just has to be able to tell a negative change from a positive one. It was
+# 0.0 until 2026-08-05, when min_day_gain_pct: 0 became OFF (matching every other
+# optional entry rule) and a zero gate stopped rejecting anything. The claim
+# below is unchanged — only the number expressing it.
+TINY_GAIN_GATE = 0.01
+
+
 def test_the_replay_no_longer_buys_what_the_engine_never_saw_a_gain_on():
-    """The observed symptom, end to end: a 0% gain gate, a coin whose real 24h
-    change was negative, and a replay that bought it anyway and had the trade
-    filed as one the backtest INVENTED."""
+    """The observed symptom, end to end: a gain gate a hair above zero, a coin
+    whose real 24h change was negative, and a replay that bought it anyway and
+    had the trade filed as one the backtest INVENTED."""
     result = run_backtest(
-        _strategy(min_gain=0.0), {"BAT/USD": _minute_bars(_reference_tape)},
+        _strategy(min_gain=TINY_GAIN_GATE), {"BAT/USD": _minute_bars(_reference_tape)},
         dict(RISK), starting_cash=1000, spread_pct=0, market="crypto",
         sim_start=DROP,
     )

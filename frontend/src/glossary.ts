@@ -286,7 +286,7 @@ export const GLOSSARY: Record<string, GlossaryEntry> = {
   min_day_gain: {
     term: "Min gain today (%)",
     explain:
-      "The stock must be up at least this much today before it can be bought. IMPORTANT: unlike the other optional rules here, 0 does NOT switch this off — it means 'must not be down today', because the test is 'today's move is at least this number'. To ignore the day's direction entirely, set a negative value: -100 accepts anything. That matters for a buy-the-dip entry like the RSI crossing, where the stock has usually just stopped falling and is often still red on the day.",
+      "The stock must be up at least this much today before it can be bought — the classic momentum filter. 0 switches it off, so the day's direction stops mattering at all, which is what a buy-the-dip entry (like the RSI crossing) needs: a stock that has just stopped falling is usually still red. You can also set a NEGATIVE value, which is a real limit rather than off — '-5' means 'it may be down today, but no worse than 5%'.",
     url: "https://www.investopedia.com/terms/m/momentum.asp",
   },
   entry_window: {

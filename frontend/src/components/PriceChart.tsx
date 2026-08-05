@@ -210,6 +210,52 @@ export default function PriceChart({
   // Active-legend values at the hovered index (or the last bar when not hovering).
   const li = hover ?? n - 1;
 
+  // ----- legend readout: EVERY enabled overlay reports its value at `li` -----
+  // An overlay that is switched off contributes nothing — the legend is a
+  // readout of what you asked to see, not a dump of every indicator. Indicators
+  // are null over their leading bars (an MA200 needs 200 of them), so an
+  // undefined value reads "—" rather than NaN.
+  const fmtNum = (v: Num, digits = 2) => (v == null ? "—" : v.toFixed(digits));
+  const fmtShares = (v: number | null | undefined) => {
+    if (v == null) return "—";
+    if (v >= 1e9) return `${(v / 1e9).toFixed(2)}B`;
+    if (v >= 1e6) return `${(v / 1e6).toFixed(2)}M`;
+    if (v >= 1e3) return `${(v / 1e3).toFixed(1)}k`;
+    return `${Math.round(v)}`;
+  };
+  // Each entry's swatch colour is the colour that series is actually drawn in,
+  // so the number and the line on the chart identify each other.
+  const legend: { key: string; color: string; label: string; value: string }[] = [];
+  for (const ln of overlays.priceLines ?? []) {
+    legend.push({ key: ln.key, color: ln.color, label: ln.label, value: fmtNum(ln.values[li]) });
+  }
+  if (overlays.bollinger) {
+    // One entry, three levels — the bands share a colour and are read together.
+    const bb = overlays.bollinger;
+    legend.push({
+      key: "bb", color: SERIES_COLORS.bollinger, label: "Bollinger (20, 2σ)",
+      value: `${fmtNum(bb.upper[li])} / ${fmtNum(bb.mid[li])} / ${fmtNum(bb.lower[li])}`,
+    });
+  }
+  if (overlays.volume) {
+    const barUp = li === 0 || points[li].c >= points[li - 1].c;
+    legend.push({ key: "volume", color: barUp ? "var(--ok)" : "var(--err)", label: "Vol", value: fmtShares(points[li].v) });
+  }
+  if (overlays.macd) {
+    const m = overlays.macd;
+    const h = m.hist[li];
+    legend.push({ key: "macd", color: SERIES_COLORS.macd, label: "MACD", value: fmtNum(m.macd[li], 3) });
+    legend.push({ key: "macdSignal", color: SERIES_COLORS.signal, label: "Signal", value: fmtNum(m.signal[li], 3) });
+    legend.push({
+      key: "macdHist", color: h == null || h >= 0 ? "var(--ok)" : "var(--err)", label: "Hist",
+      value: h == null ? "—" : `${h >= 0 ? "+" : ""}${h.toFixed(3)}`,
+    });
+  }
+  if (overlays.rsi) legend.push({ key: "rsi", color: SERIES_COLORS.ema9, label: "RSI (14)", value: fmtNum(overlays.rsi[li], 1) });
+  if (overlays.rs) {
+    legend.push({ key: "rs", color: SERIES_COLORS.rs, label: `RS ${overlays.rs.label}`, value: fmtNum(overlays.rs.values[li], 3) });
+  }
+
   return (
     <div className="pricechart">
       {zoom && (
@@ -235,22 +281,16 @@ export default function PriceChart({
         </div>
       </div>
 
-      {/* Legend: active price-panel overlays + their value at the hovered bar. */}
-      {(overlays.priceLines?.length || overlays.bollinger) && (
+      {/* Legend: every enabled overlay + its value at the hovered bar. */}
+      {legend.length > 0 && (
         <div className="chart-legend">
-          {(overlays.priceLines ?? []).map((ln) => (
-            <span key={ln.key} className="legend-item">
-              <span className="legend-swatch" style={{ background: ln.color }} />
-              {ln.label}
-              {ln.values[li] != null ? ` ${(ln.values[li] as number).toFixed(2)}` : ""}
+          {legend.map((it) => (
+            <span key={it.key} className="legend-item">
+              <span className="legend-swatch" style={{ background: it.color }} />
+              {it.label}
+              <span className="legend-value">{it.value}</span>
             </span>
           ))}
-          {overlays.bollinger && (
-            <span className="legend-item">
-              <span className="legend-swatch" style={{ background: SERIES_COLORS.bollinger }} />
-              Bollinger (20, 2σ)
-            </span>
-          )}
         </div>
       )}
 

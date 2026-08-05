@@ -15,11 +15,13 @@ means **must not be down today**. Invisible on a momentum strategy, which wants
 that anyway. Fatal on a buy-the-dip one, where the stock has just stopped
 falling and is usually still red.
 
-The floor is now -100 rather than 0, so "I don't care which way it went today"
-is finally expressible. 0 keeps its old meaning on purpose: redefining it as
-"off" would quietly loosen every existing strategy sitting at 0, and that is a
-live-trading change nobody asked for. The field label now says so when it is set
-to zero, and the tooltip explains the negative.
+**0 now means OFF**, like every other optional rule on that page. The first fix
+kept 0's old meaning to avoid loosening existing strategies, but there are none
+using it, so the trap is gone rather than documented.
+
+A NEGATIVE value is still a real threshold — "-5" means "it may be down today,
+but no worse than 5%" — which is why the floor is -100 and why the rule tests
+"is anything set" rather than "is it positive".
 
 ## The RSI crossing needs daily bars, and said so in the wrong words (2026-08-05)
 

@@ -211,8 +211,13 @@ def _money(v: float) -> str:
 
 def evaluate_entry(params: dict, candidate: Candidate, now_et: datetime) -> tuple[bool, str]:
     entry = params.get("entry", {})
-    min_gain = entry.get("min_day_gain_pct", 0)
-    if candidate.change_pct < min_gain:
+    # 0 = OFF, like every other optional rule here. It used to be an unguarded
+    # comparison, so 0 quietly meant "must not be down today" — invisible on a
+    # momentum strategy, fatal on a buy-the-dip one, and impossible to switch
+    # off at all. A NEGATIVE value is still a live threshold ("down, but no
+    # worse than this"), which is why the test is truthiness and not `> 0`.
+    min_gain = entry.get("min_day_gain_pct", 0) or 0
+    if min_gain and candidate.change_pct < min_gain:
         return False, f"day gain {candidate.change_pct:.2f}% < required {min_gain:g}%"
     max_gain = entry.get("max_day_gain_pct", 0)
     if max_gain and candidate.change_pct > max_gain:
