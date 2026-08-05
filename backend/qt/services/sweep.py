@@ -38,6 +38,13 @@ TEMPLATE_SIZING = {"sizing_usd": 1000.0, "sleeve_usd": 5000.0, "max_positions": 
 
 
 def _template_strategy() -> dict:
+    """The plain-momentum fallback, used only when no strategy is supplied.
+
+    Kept because it is a defensible default for "which themes have momentum at
+    all", but it is no longer what the sweep does by default: sweeping a fixed
+    template answered a question nobody asked. The point of the feature is
+    testing YOUR strategy against every basket without editing its universe
+    fifteen times, so `sweep_baskets` now takes the strategy to sweep."""
     return {
         "asset_class": "stock",
         "swing_mode": True,  # daily bars → hold overnight; stops still always apply
@@ -102,6 +109,7 @@ def sweep_baskets(
     min_symbols: int = 2,
     progress: Callable[[int, int, str], None] | None = None,
     optimize_fn: Callable[..., dict] = optimizer.optimize,
+    strategy: dict | None = None,
 ) -> dict:
     """Run the parameter search over each basket and rank by out-of-sample margin
     over SPY.
@@ -110,7 +118,23 @@ def sweep_baskets(
     symbols); `bars_by_symbol` holds daily bars for every basket symbol PLUS SPY.
     Pure sync — the caller fetches bars and runs this in a worker thread.
     `optimize_fn` is injectable for tests (same pattern as optimizer.backtest_fn).
+
+    `strategy` is the config to sweep — YOUR strategy, so the answer is "which
+    basket suits what I actually trade" rather than "which basket suits a plain
+    momentum template". Its universe/basket_id are irrelevant here (the caller
+    supplies the bars for each basket in turn), but its ranking, sizing and every
+    entry/exit rule are exactly what gets searched. None falls back to the plain
+    template, which is the old behaviour and still a reasonable "do any of these
+    themes have momentum at all" question.
     """
+    base = strategy or _template_strategy()
+    # Whatever the strategy's own universe was, each iteration is scored on ONE
+    # basket's bars — so a basket universe pointing at some OTHER basket would be
+    # a stale label on every row. Ranking config is untouched: it is a genuine
+    # part of the strategy being tested.
+    base = {**base, "universe": "custom"}
+    sizing = {k: base.get(k) for k in ("sizing_usd", "sleeve_usd", "max_positions")
+              if base.get(k) is not None}
     spy_bars = bars_by_symbol.get("SPY") or []
     rows: list[dict] = []
     skipped: list[dict] = []
@@ -129,7 +153,7 @@ def sweep_baskets(
             # seed = basket id → each basket samples its own (stable) corner of the
             # grid, and a re-run of the sweep reproduces the same leaderboard.
             res = optimize_fn(
-                _template_strategy(), bars, risk,
+                base, bars, risk,
                 iterations=iterations, starting_cash=starting_cash,
                 spread_pct=spread_pct, market="stock", seed=basket["id"],
             )
@@ -190,5 +214,8 @@ def sweep_baskets(
         "skipped": skipped,
         "iterations": iterations,
         "spy_available": bool(spy_bars),
-        "template_sizing": dict(TEMPLATE_SIZING),
+        # The sizing every row was scored with — the swept strategy's own, or the
+        # fallback template's. Named for the UI, which prints it as a caveat.
+        "template_sizing": {**TEMPLATE_SIZING, **sizing},
+        "swept_strategy": base.get("name"),
     }

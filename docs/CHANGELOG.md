@@ -23,6 +23,29 @@ the line it belongs to, so the figure and the curve identify each other.
 An indicator that isn't defined yet reads "—" rather than a broken number — a
 200-day average has nothing to say on day 40, and now it says so.
 
+## The basket sweep now sweeps YOUR strategy (2026-08-05)
+
+Sweeping the trend-follower template returned "Health Care looks good", and
+clicking **Create draft** produced a strategy with no ATR settings and a
+stop-loss nobody recognised.
+
+The reason: the sweep never looked at your strategy. It ran a hardcoded
+plain-momentum config — 2% min day gain, 5% trail, 4% stop, no ATR block at all —
+against every basket, and the draft saved *that*. So it answered "which basket
+suits a momentum template you never configured", which is a different question
+with different entries, different ranking and different stops.
+
+The sweep now takes the strategy you have selected and searches **its** rules
+against every basket, which is the point of the feature: one test of one strategy
+across every theme, instead of editing the universe fifteen times. The bar
+download is extended by that strategy's own warm-up, so a MACD or ATR strategy
+has a defined signal on day one rather than being blind for its first ~35 bars.
+
+**Create draft** now clones the swept strategy with the winning basket and the
+tuned values, carrying across everything the search didn't touch — ranking,
+sizing, swing mode, the regime setting. And like cloning, it asks what to call it
+rather than inventing a name you then have to find and change.
+
 ## The optimizer was tuning a knob that does nothing (2026-08-05)
 
 Asking for 40 combinations and being told "5 of ~9" is not a bug — the number

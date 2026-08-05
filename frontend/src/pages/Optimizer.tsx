@@ -15,6 +15,7 @@ import {
   SweepRow,
   SweepStatus,
 } from "../api";
+import ConfirmDialog from "../components/ConfirmDialog";
 import InfoTip from "../components/InfoTip";
 import NumberField from "../components/NumberField";
 import { IconWarn } from "../components/icons";
@@ -285,6 +286,10 @@ export default function Optimizer() {
   const [sweepDays, setSweepDays] = useState(365);
   const [sweepIterations, setSweepIterations] = useState(60);
   const [sweepSaved, setSweepSaved] = useState<Record<number, string>>({}); // basket_id → draft name
+  // The sweep row whose "Create draft" was pressed — the naming dialog is open
+  // while this is set. Named at creation for the same reason clones are: hunting
+  // the list afterwards to rename is a step you already knew the answer to.
+  const [draftTarget, setDraftTarget] = useState<SweepRow | null>(null);
   const sweepPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const strategy = strategies.find((s) => s.id === strategyId);
@@ -420,36 +425,52 @@ export default function Optimizer() {
     setSweepSaved({});
     setSweepStatus(null);
     try {
-      await startBasketSweep({ days: sweepDays, iterations: sweepIterations });
+      if (strategyId === null) {
+        setSweepError("Pick a strategy first — the sweep tests THAT strategy against every basket.");
+        return;
+      }
+      await startBasketSweep({ strategy_id: strategyId, days: sweepDays, iterations: sweepIterations });
       startSweepPolling();
     } catch (err) {
       setSweepError((err as Error).message);
     }
   }
 
-  async function saveSweepDraft(row: SweepRow) {
-    const sizing = sweepStatus?.result?.template_sizing;
+  async function saveSweepDraft(row: SweepRow, chosenName: string) {
+    const src = strategies.find((s) => s.id === strategyId);
     try {
-      // Mirror what was actually tested: the whole basket eligible (top_n = its
-      // size, so ranking doesn't gate) with the sweep's template sizing. Created
-      // DISABLED — a hypothesis to review and walk up the shadow → paper ladder.
+      // A CLONE of the strategy that was swept, with the basket swapped in and
+      // the search's tuned knobs applied. It used to build a strategy from
+      // scratch with hardcoded momentum defaults, which is why a draft came back
+      // with no ATR settings and a stop-loss nobody recognised — it was the
+      // sweep's own internal template, not the strategy on screen.
+      //
+      // Everything not searched comes across untouched: ranking, sizing, swing
+      // mode, the regime setting. A draft that quietly changed one of those
+      // would not be a test of the strategy you swept.
       const draft = await createStrategy({
-        name: `${row.basket_name} (sweep draft)`,
-        asset_class: "stock",
+        ...(src ? (JSON.parse(JSON.stringify({
+          asset_class: src.asset_class,
+          rank_by: src.rank_by,
+          rank_enabled: src.rank_enabled,
+          top_n: src.top_n,
+          sizing_usd: src.sizing_usd,
+          sleeve_usd: src.sleeve_usd,
+          max_positions: src.max_positions,
+          swing_mode: src.swing_mode,
+          ignore_regime: src.ignore_regime,
+          allow_concurrent_symbol: src.allow_concurrent_symbol,
+        })) as Partial<StrategyRow>) : {}),
+        name: chosenName.slice(0, 80),
         universe: "basket",
         basket_id: row.basket_id,
         symbols: [],
-        rank_by: "momentum_today",
-        top_n: Math.min(row.symbols.length, 50),
         preset: "custom",
         params: row.best_draft_params,
-        sizing_usd: sizing?.sizing_usd ?? 1000,
-        sleeve_usd: sizing?.sleeve_usd ?? 5000,
-        max_positions: sizing?.max_positions ?? 5,
-        swing_mode: true,
-        ignore_regime: false,
+        optimized_from_id: src?.id ?? null,
       });
       setSweepSaved((m) => ({ ...m, [row.basket_id]: draft.name }));
+      setDraftTarget(null);
     } catch (err) {
       setSweepError((err as Error).message);
     }
@@ -561,6 +582,32 @@ export default function Optimizer() {
 
   return (
     <>
+      {/* Name the sweep draft up front, exactly as cloning a strategy does. */}
+      <ConfirmDialog
+        open={draftTarget != null}
+        title="Create a draft from this basket"
+        facts={
+          draftTarget
+            ? [
+                { label: "Basket", value: draftTarget.basket_name },
+                { label: "Strategy", value: strategies.find((s) => s.id === strategyId)?.name ?? "—" },
+                { label: "Out-of-sample vs SPY", value: pct(draftTarget.margin_vs_spy) },
+              ]
+            : []
+        }
+        prompt={{
+          label: "Name the new strategy",
+          defaultValue: draftTarget
+            ? `${
+                strategies.find((s) => s.id === strategyId)?.name.replace(/^Template · /, "") ?? "Sweep"
+              } — ${draftTarget.basket_name}`.slice(0, 80)
+            : "",
+          placeholder: "e.g. Trend follower — Health Care",
+        }}
+        confirmLabel="Create draft"
+        onConfirm={(name) => draftTarget && saveSweepDraft(draftTarget, name)}
+        onCancel={() => setDraftTarget(null)}
+      />
       <div className="toolbar">
         <h2>
           Strategy optimizer <InfoTip k="parameter_search" />
@@ -1070,11 +1117,14 @@ export default function Optimizer() {
         {/* The template sizing is run-specific and stays inline; the standing
             caveats about what the ranking means fold away. */}
         <p className="hint">
-          The <strong>same parameter search across every basket</strong>, with one identical momentum template
+          The <strong>same parameter search across every basket</strong>, using{" "}
+          <strong>{strategies.find((s) => s.id === strategyId)?.name ?? "the strategy selected above"}</strong>{" "}
+          — its entry rules, exits, ranking and sizing
           {sweepResult
             ? ` ($${sweepResult.template_sizing.sizing_usd.toLocaleString()}/trade, $${sweepResult.template_sizing.sleeve_usd.toLocaleString()} sleeve, max ${sweepResult.template_sizing.max_positions} positions, daily bars)`
-            : " ($1,000/trade, $5,000 sleeve, max 5 positions, daily bars)"}
-          , ranked by <strong>out-of-sample margin over SPY</strong>.
+            : ""}
+          , ranked by <strong>out-of-sample margin over SPY</strong>. It saves editing the universe once per
+          basket; “Create draft” then copies that strategy with the winning basket and tuned values.
         </p>
         <details className="prose-fold">
           <summary>What that ranking does and doesn't tell you</summary>
@@ -1185,7 +1235,7 @@ export default function Optimizer() {
                         {sweepSaved[r.basket_id] ? (
                           <span className="hint">saved ✓</span>
                         ) : (
-                          <button type="button" className="small" onClick={() => saveSweepDraft(r)}>
+                          <button type="button" className="small" onClick={() => setDraftTarget(r)}>
                             Save draft
                           </button>
                         )}

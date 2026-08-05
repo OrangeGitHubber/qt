@@ -988,10 +988,14 @@ export interface SweepStatus {
   started_at: string | null;
   finished_at: string | null;
   error: string | null;
+  /** Which strategy the sweep is testing. */
+  strategy_name?: string;
   result: SweepResult | null;
 }
 
-export const startBasketSweep = (body: { days: number; iterations: number; spread_pct?: number }) =>
+export const startBasketSweep = (
+  body: { strategy_id: number; days: number; iterations: number; spread_pct?: number },
+) =>
   fetch("/api/optimizer/sweep", json(body)).then(
     (r) => handle<{ ok: boolean; started: boolean; baskets: number; iterations: number }>(r),
   );

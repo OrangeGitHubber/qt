@@ -652,6 +652,9 @@ class SweepProgress:
     baskets_total: int = 0
     baskets_done: int = 0
     current_basket: str = ""
+    # Which strategy is being swept — the status view has to name it, or a run
+    # left going overnight is a table of numbers with no idea what produced them.
+    strategy_name: str = ""
     started_at: str | None = None
     finished_at: str | None = None
     error: str | None = None
@@ -667,6 +670,10 @@ SWEEP_BASKET_CAP = 25
 
 
 class SweepBody(BaseModel):
+    # WHICH strategy to sweep. The point of the feature is testing one config
+    # against every basket without editing its universe fifteen times, so the
+    # strategy is the input, not a fixed internal template.
+    strategy_id: int
     days: int = Field(default=365, ge=90, le=730)
     iterations: int = Field(default=60, ge=5, le=200)  # per basket
     spread_pct: float = Field(default=0.1, ge=0, le=2)
@@ -674,14 +681,25 @@ class SweepBody(BaseModel):
 
 async def _run_sweep(
     client: AlpacaClient, baskets: list[dict], risk: dict,
-    days: int, iterations: int, spread_pct: float,
+    days: int, iterations: int, spread_pct: float, strategy: dict,
 ) -> None:
     """Background worker: ONE batched daily-bar download for the union of every
     basket's symbols (+ SPY for the margin), then the whole sweep in a worker
-    thread. Plain-momentum template → no indicator warm-up needed."""
+    thread.
+
+    The download window is EXTENDED by the swept strategy's own warm-up: a
+    strategy using MACD, RSI or ATR needs history before the window to have a
+    defined signal on day one, and without it every basket would be scored on a
+    strategy that was blind for its first ~35 bars. The old fixed template used
+    no daily indicators, so this did not arise."""
     try:
         _sweep_progress.phase = "downloading bars"
-        start = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        from qt.api.backtest import warmup_days_for
+
+        warmup = warmup_days_for(strategy["params"], strategy.get("asset_class", "stock"))
+        start = (
+            datetime.now(timezone.utc) - timedelta(days=days + warmup)
+        ).strftime("%Y-%m-%dT%H:%M:%SZ")
         union = sorted({sym for b in baskets for sym in b["symbols"]} | {"SPY"})
         bars: dict[str, list] = {}
         for i in range(0, len(union), 50):  # same 50-symbol batch cap as the search
@@ -697,6 +715,7 @@ async def _run_sweep(
         result = await asyncio.to_thread(
             sweep.sweep_baskets, baskets, bars, risk,
             iterations=iterations, spread_pct=spread_pct, progress=on_progress,
+            strategy=strategy,
         )
         result["days"] = days
         _sweep_progress.result = result
@@ -742,9 +761,29 @@ async def start_sweep(
     if not baskets:
         raise HTTPException(status_code=422, detail="No baskets with at least 2 stock symbols to sweep.")
 
+    strategy = session.get(Strategy, body.strategy_id)
+    if strategy is None:
+        raise HTTPException(status_code=404, detail="Strategy not found.")
+    # Same shape the single search builds — including the ranking cut, which is a
+    # real part of the strategy and must be scored, not silently dropped.
+    strategy_dict = {
+        "name": strategy.name,
+        "asset_class": strategy.asset_class,
+        "universe": strategy.universe,
+        "rank_enabled": strategy.rank_enabled,
+        "rank_by": strategy.rank_by,
+        "top_n": strategy.top_n,
+        "swing_mode": strategy.swing_mode,
+        "sizing_usd": strategy.sizing_usd,
+        "sleeve_usd": strategy.sleeve_usd,
+        "max_positions": strategy.max_positions,
+        "params": json.loads(strategy.params),
+    }
+
     risk = get_risk(session)
     _sweep_progress.running = True
     _sweep_progress.phase = "starting"
+    _sweep_progress.strategy_name = strategy.name
     _sweep_progress.baskets_total = len(baskets)
     _sweep_progress.baskets_done = 0
     _sweep_progress.current_basket = ""
@@ -753,7 +792,10 @@ async def start_sweep(
     _sweep_progress.error = None
     _sweep_progress.result = None
     _sweep_task = asyncio.create_task(
-        _run_sweep(client, baskets, risk, body.days, body.iterations, body.spread_pct)
+        _run_sweep(
+            client, baskets, risk, body.days, body.iterations, body.spread_pct,
+            strategy_dict,
+        )
     )
     return {"ok": True, "started": True, "baskets": len(baskets), "iterations": body.iterations}
 
