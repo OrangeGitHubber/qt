@@ -1,7 +1,9 @@
 """Engine control endpoints: mode ladder, risk rails, journal, scoreboard."""
 
 import logging
+import os
 from datetime import datetime, timedelta, timezone
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
@@ -91,6 +93,9 @@ async def engine_state(session: Session = Depends(get_session)) -> dict:
         "mode": mode,
         "modes": list(ENGINE_MODES),
         "risk": risk,
+        # The bounds the form must render — see RISK_LIMITS. Sent as lists
+        # because JSON has no tuples; the page reads [min, max] per field.
+        "risk_limits": {k: list(v) for k, v in RISK_LIMITS.items()},
         "regime": regime_info,
         "regime_filter_enabled": get_setting(session, "regime_filter_enabled") is not False,
         "leverage": {"unlockable": unlockable, "enabled": bool(risk.get("leverage_enabled"))},
@@ -126,13 +131,65 @@ def set_mode(body: ModeBody, session: Session = Depends(get_session)) -> dict:
     return {"mode": body.mode}
 
 
+def _positions_ceiling() -> int:
+    """How many open positions the account may be configured to hold at once.
+
+    HARDCODED AT 1000, and the number is a sanity bound rather than a risk
+    control. The real limits are the exposure cap and the per-position size:
+    against a $15,000 exposure cap, 1000 positions is $15 each, so the exposure
+    rail binds long before the count ever could. What this stops is a typo —
+    a stray zero that would otherwise let one strategy shred the account into
+    dust positions.
+
+    It was 50 before 2026-08-04, which was arbitrary (it arrived in the Phase 2
+    scaffolding with no comment) and out of step with its neighbours: 200 trades
+    a day and $10M of exposure were allowed while the position count was pinned
+    at 50. Werner asked for 1000 after hitting it.
+
+    `QT_MAX_TOTAL_POSITIONS` moves it for anyone who wants something else — a
+    CONTAINER-level act like `QT_ALLOW_LEVERAGE`, deliberately not a click in
+    the UI, because widening what the account may do should take more
+    deliberation than a form field. Junk or a non-positive value falls back to
+    the default rather than refusing to boot: a container that will not start
+    because of a typo in an optional override is a worse outcome than one that
+    ignores it."""
+    try:
+        value = int(os.environ.get("QT_MAX_TOTAL_POSITIONS", ""))
+    except ValueError:
+        return 1000
+    return value if value > 0 else 1000
+
+
+# THE ONE DEFINITION of every risk bound: {field: (minimum, maximum)}.
+#
+# The validators below are built from this, and `/api/engine/state` publishes it
+# so the Settings form can render both its `max` attribute and the range printed
+# under each input from the same numbers the server enforces. The first version
+# of that hint hardcoded "1-50" in the page, which is precisely the drift that
+# produced the confusion this table exists to prevent: a form that refuses a
+# value it never told you about.
+RISK_LIMITS: dict[str, tuple[float, float]] = {
+    "max_daily_loss_usd": (10, 1_000_000),
+    "max_daily_loss_pct": (0.5, 50),
+    "max_total_positions": (1, _positions_ceiling()),
+    "max_total_exposure_usd": (10, 10_000_000),
+    "max_trades_per_day": (1, 200),
+    "cooldown_hours_after_loss": (0, 720),
+}
+
+
+def _bounds(name: str) -> Any:
+    low, high = RISK_LIMITS[name]
+    return Field(ge=low, le=high)
+
+
 class RiskBody(BaseModel):
-    max_daily_loss_usd: float = Field(ge=10, le=1_000_000)
-    max_daily_loss_pct: float = Field(ge=0.5, le=50)
-    max_total_positions: int = Field(ge=1, le=50)
-    max_total_exposure_usd: float = Field(ge=10, le=10_000_000)
-    max_trades_per_day: int = Field(ge=1, le=200)
-    cooldown_hours_after_loss: float = Field(ge=0, le=720)
+    max_daily_loss_usd: float = _bounds("max_daily_loss_usd")
+    max_daily_loss_pct: float = _bounds("max_daily_loss_pct")
+    max_total_positions: int = _bounds("max_total_positions")
+    max_total_exposure_usd: float = _bounds("max_total_exposure_usd")
+    max_trades_per_day: int = _bounds("max_trades_per_day")
+    cooldown_hours_after_loss: float = _bounds("cooldown_hours_after_loss")
     wash_sale_guard: str = Field(pattern="^(block|warn|off)$")
     leverage_enabled: bool = False
     leverage_confirm: str = ""

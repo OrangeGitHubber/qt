@@ -3,6 +3,7 @@ GLOBAL rails on a merged timeline. Synthetic bars whose correct behaviour is
 known by construction — same style as test_backtest.py."""
 
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -144,10 +145,26 @@ def test_no_bars_returns_an_error_not_a_crash():
 # --------------------------------------------------------------------------
 
 
-def hourly(closes: list[float], symbol_days: int = 6) -> list[dict]:
-    start = datetime.now(timezone.utc) - timedelta(days=symbol_days)
+ET = ZoneInfo("America/New_York")
+
+
+def hourly(closes: list[float], symbol_days: int | None = None) -> list[dict]:
+    """One bar per day, stamped 11:05 New York — MID-SESSION, deliberately.
+
+    Anchored on the clock rather than on `datetime.now()`'s hour because the
+    replay now refuses stock entries outside 09:30-16:00 ET
+    (backtest._in_trading_session). With six-hour steps from "now", whether the
+    qualifying bar fell inside the session depended on what time of day the
+    suite ran — green in the afternoon, red at 2am. See the twin in
+    test_backtest_api.py."""
+    days = symbol_days if symbol_days is not None else len(closes)
+    start = datetime.now(timezone.utc) - timedelta(days=days)
     return [
-        {"t": (start + timedelta(hours=i * 6)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        {"t": (start + timedelta(days=i))
+              .astimezone(ET)
+              .replace(hour=11, minute=5, second=0, microsecond=0)
+              .astimezone(timezone.utc)
+              .strftime("%Y-%m-%dT%H:%M:%SZ"),
          "o": c, "h": c * 1.01, "l": c * 0.99, "c": c, "v": 1000, "vw": c}
         for i, c in enumerate(closes)
     ]

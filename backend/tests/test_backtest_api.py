@@ -2,6 +2,7 @@
 symbol twice."""
 
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -16,11 +17,32 @@ from qt.models import Strategy, StrategyConfigVersion, Trade, WatchlistItem
 from qt.services import barcache, barsweep
 
 
-def hourly(closes: list[float], symbol_days: int = 6) -> list[dict]:
-    start = datetime.now(timezone.utc) - timedelta(days=symbol_days)
+ET = ZoneInfo("America/New_York")
+
+
+def hourly(closes: list[float], symbol_days: int | None = None) -> list[dict]:
+    """One bar per day, stamped 14:05 UTC — MID-SESSION, deliberately.
+
+    This used to anchor on `datetime.now()` and step six hours, so the bars fell
+    at whatever clock times the suite happened to run at. That was harmless
+    until the replay learned to refuse stock entries outside 09:30-16:00 New
+    York (backtest._in_trading_session): from then on, whether the qualifying
+    bar was inside the session depended on the hour of day the tests ran, and
+    the suite passed in the afternoon and failed at 2am.
+
+    14:05 UTC is 10:05 ET in summer and 09:05 in winter... so it is stamped in
+    ET terms instead, which is the calendar the gate actually uses. One bar per
+    day also matches what the assertions are about: a day-gain from 100 to 104,
+    not an intraday move."""
+    days = symbol_days if symbol_days is not None else len(closes)
+    start = datetime.now(timezone.utc) - timedelta(days=days)
     return [
         {
-            "t": (start + timedelta(hours=i * 6)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "t": (start + timedelta(days=i))
+            .astimezone(ET)
+            .replace(hour=11, minute=5, second=0, microsecond=0)
+            .astimezone(timezone.utc)
+            .strftime("%Y-%m-%dT%H:%M:%SZ"),
             "o": c, "h": c * 1.01, "l": c * 0.99, "c": c, "v": 1000, "vw": c,
         }
         for i, c in enumerate(closes)

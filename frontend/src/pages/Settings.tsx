@@ -202,6 +202,9 @@ export default function Settings() {
   // Which inputs the rejection actually named. The risk form sends every field
   // at once, so the offending one is routinely NOT the one under the cursor.
   const badFields = noteIsError && note ? offendingFields(note) : [];
+  /** [min, max] for a field, from the server's own validators. */
+  const lim = (key: string): [number, number] =>
+    (engine?.risk_limits?.[key] as [number, number]) ?? [0, 0];
   /** The part of a rejection that concerns one field, without repeating its name. */
   const fieldError = (key: string): string | undefined => {
     if (!note || !badFields.includes(key)) return undefined;
@@ -563,33 +566,33 @@ export default function Settings() {
         <div className="filter-grid">
           <label data-field="max_daily_loss_usd" className={badFields.includes("max_daily_loss_usd") ? "bad" : undefined}>
             Max daily loss ($) <InfoTip k="daily_loss_limit" />
-            <NumberField min={10} max={1_000_000} step="any" {...num("max_daily_loss_usd")} />
-            <Limits min={10} max={1000000} unit="$" error={fieldError("max_daily_loss_usd")} />
+            <NumberField min={lim("max_daily_loss_usd")[0]} max={lim("max_daily_loss_usd")[1]} step="any" {...num("max_daily_loss_usd")} />
+            <Limits min={lim("max_daily_loss_usd")[0]} max={lim("max_daily_loss_usd")[1]} unit="$" error={fieldError("max_daily_loss_usd")} />
           </label>
           <label data-field="max_daily_loss_pct" className={badFields.includes("max_daily_loss_pct") ? "bad" : undefined}>
             Max daily loss (% of account) <InfoTip k="daily_loss_limit" />
-            <NumberField min={0.5} max={50} step={0.5} {...num("max_daily_loss_pct")} />
-            <Limits min={0.5} max={50} unit="%" error={fieldError("max_daily_loss_pct")} />
+            <NumberField min={lim("max_daily_loss_pct")[0]} max={lim("max_daily_loss_pct")[1]} step={0.5} {...num("max_daily_loss_pct")} />
+            <Limits min={lim("max_daily_loss_pct")[0]} max={lim("max_daily_loss_pct")[1]} unit="%" error={fieldError("max_daily_loss_pct")} />
           </label>
           <label data-field="max_total_positions" className={badFields.includes("max_total_positions") ? "bad" : undefined}>
             Max open positions (total) <InfoTip k="max_positions" />
-            <NumberField min={1} max={50} step={1} {...num("max_total_positions")} />
-            <Limits min={1} max={50} error={fieldError("max_total_positions")} />
+            <NumberField min={lim("max_total_positions")[0]} max={lim("max_total_positions")[1]} step={1} {...num("max_total_positions")} />
+            <Limits min={lim("max_total_positions")[0]} max={lim("max_total_positions")[1]} error={fieldError("max_total_positions")} />
           </label>
           <label data-field="max_total_exposure_usd" className={badFields.includes("max_total_exposure_usd") ? "bad" : undefined}>
             Max total exposure ($) <InfoTip k="max_exposure" />
-            <NumberField min={10} max={10_000_000} step="any" {...num("max_total_exposure_usd")} />
-            <Limits min={10} max={10000000} unit="$" error={fieldError("max_total_exposure_usd")} />
+            <NumberField min={lim("max_total_exposure_usd")[0]} max={lim("max_total_exposure_usd")[1]} step="any" {...num("max_total_exposure_usd")} />
+            <Limits min={lim("max_total_exposure_usd")[0]} max={lim("max_total_exposure_usd")[1]} unit="$" error={fieldError("max_total_exposure_usd")} />
           </label>
           <label data-field="max_trades_per_day" className={badFields.includes("max_trades_per_day") ? "bad" : undefined}>
             Max new trades per day <InfoTip k="trade_rate" />
-            <NumberField min={1} step={1} max={200} {...num("max_trades_per_day")} />
-            <Limits min={1} max={200} unit="per day" error={fieldError("max_trades_per_day")} />
+            <NumberField min={lim("max_trades_per_day")[0]} max={lim("max_trades_per_day")[1]} step={1} {...num("max_trades_per_day")} />
+            <Limits min={lim("max_trades_per_day")[0]} max={lim("max_trades_per_day")[1]} unit="per day" error={fieldError("max_trades_per_day")} />
           </label>
           <label data-field="cooldown_hours_after_loss" className={badFields.includes("cooldown_hours_after_loss") ? "bad" : undefined}>
             Cooldown after a loss (hours) <InfoTip k="cooldown" />
-            <NumberField min={0} step="any" max={720} {...num("cooldown_hours_after_loss")} />
-            <Limits min={0} max={720} unit="hours" error={fieldError("cooldown_hours_after_loss")} />
+            <NumberField min={lim("cooldown_hours_after_loss")[0]} max={lim("cooldown_hours_after_loss")[1]} step="any" {...num("cooldown_hours_after_loss")} />
+            <Limits min={lim("cooldown_hours_after_loss")[0]} max={lim("cooldown_hours_after_loss")[1]} unit="hours" error={fieldError("cooldown_hours_after_loss")} />
           </label>
           <label>
             Wash-sale guard <InfoTip k="wash_sale" />

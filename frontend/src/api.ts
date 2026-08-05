@@ -138,6 +138,12 @@ export interface EngineState {
   mode: string;
   modes: string[];
   risk: RiskConfig;
+  // [min, max] per risk field, straight from the server's own validators
+  // (api/engine.RISK_LIMITS). The form renders both its `max` attribute and the
+  // range printed under each input from these, so the number it enforces and
+  // the number it shows cannot drift apart — which is what let 1000 be typed
+  // into a field the API capped at 50.
+  risk_limits?: Record<string, [number, number]>;
   regime: { ok: boolean; detail: string; insufficient_data?: boolean } | null;
   regime_filter_enabled: boolean;
   leverage: { unlockable: boolean; enabled: boolean };

@@ -3,6 +3,27 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Max open positions is now 1,000 (2026-08-04)
+
+It was 50, which arrived in the original scaffolding with no reasoning attached
+and sat oddly beside its neighbours — 200 trades a day and $10M of exposure were
+allowed, but only 50 positions.
+
+The count was never really the safety rail anyway. Against a $15,000 exposure
+cap, 1,000 positions is $15 each, so the exposure limit binds long before the
+count could. What the ceiling actually prevents is a typo — a stray zero that
+would shred the account into dust positions.
+
+If you want something other than 1,000, set `QT_MAX_TOTAL_POSITIONS` on the
+container. That is deliberately a server-level act rather than a click in the
+app, the same treatment leverage gets: widening what the account may do should
+take more deliberation than a form field. A nonsense value falls back to 1,000
+rather than stopping the container from starting.
+
+Every limit now comes from one definition in the code, and the Settings page
+reads it from the server — so the number a field enforces and the number printed
+under it can no longer drift apart.
+
 ## Settings tells you the limits before you hit them (2026-08-04)
 
 Typing 1000 into "Max open positions" produced *"max_total_positions: Input
