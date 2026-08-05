@@ -1121,6 +1121,30 @@ def _strategy_symbols(session: Session, strategy: Strategy) -> list[str]:
     )
 
 
+def _uses_rsi(params: dict) -> bool:
+    """Every RSI rule, in ONE place. The entry band, the entry CROSSING, and all
+    three RSI exits.
+
+    This existed as three separate copies in this module and the new direction
+    rules were added to none of them. A strategy whose only RSI rule was the
+    crossing therefore did not count as using a daily signal, so no daily bars
+    were fetched, so _annotate_rsi fell back to computing RSI off the REPLAY's
+    own bars — hourly ones. "RSI three bars ago" then meant three HOURS ago
+    rather than three sessions, which is not the signal live evaluates, and the
+    strategy sat out the entire window. Measured on "Favorites - optimized 4 aug
+    v2 no macd", which took four trades and returned 0%."""
+    entry = params.get("entry") or {}
+    exit_rules = params.get("exit") or {}
+    return (
+        float(entry.get("rsi_min", 0) or 0) > 0
+        or float(entry.get("rsi_max", 0) or 0) > 0
+        or float(entry.get("rsi_cross_above", 0) or 0) > 0
+        or float(exit_rules.get("exit_rsi_above", 0) or 0) > 0
+        or float(exit_rules.get("exit_rsi_below", 0) or 0) > 0
+        or bool(exit_rules.get("exit_rsi_falling"))
+    )
+
+
 def _uses_daily_only_signals(params: dict) -> bool:
     """MACD, RSI or ATR on, and NOT the (intraday-only) VWAP rule. The live engine
     computes all three from COMPLETED DAILY bars, so an intraday backtest computes
@@ -1142,11 +1166,7 @@ def _uses_daily_only_signals(params: dict) -> bool:
     if entry.get("require_above_vwap"):
         return False
     macd = bool(entry.get("require_macd_bullish") or exit_rules.get("exit_on_macd_bearish"))
-    rsi = (
-        float(entry.get("rsi_min", 0) or 0) > 0
-        or float(entry.get("rsi_max", 0) or 0) > 0
-        or float(exit_rules.get("exit_rsi_above", 0) or 0) > 0
-    )
+    rsi = _uses_rsi(params)
     # ANY ATR feature: the volatility stop, the volatility TRAIL, or ATR-based
     # position sizing. All three read the same daily-bar ATR series.
     atr_on = (
@@ -1190,11 +1210,7 @@ def daily_signal_names(params: dict) -> str:
     names: list[str] = []
     if entry.get("require_macd_bullish") or exit_rules.get("exit_on_macd_bearish"):
         names.append("MACD")
-    if (
-        float(entry.get("rsi_min", 0) or 0) > 0
-        or float(entry.get("rsi_max", 0) or 0) > 0
-        or float(exit_rules.get("exit_rsi_above", 0) or 0) > 0
-    ):
+    if _uses_rsi(params):
         names.append("RSI")
     if float(atr.get("stop_mult", 0) or 0) > 0:
         names.append("the ATR stop")
@@ -1320,9 +1336,7 @@ def _needs_warmup(params: dict) -> bool:
     return bool(
         entry.get("require_macd_bullish")
         or exit_rules.get("exit_on_macd_bearish")
-        or float(entry.get("rsi_min", 0) or 0) > 0
-        or float(entry.get("rsi_max", 0) or 0) > 0
-        or float(exit_rules.get("exit_rsi_above", 0) or 0) > 0
+        or _uses_rsi(params)
         or float(atr.get("stop_mult", 0) or 0) > 0
         or float(atr.get("trail_mult", 0) or 0) > 0
         or float(atr.get("risk_usd", 0) or 0) > 0

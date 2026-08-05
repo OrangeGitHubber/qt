@@ -1278,6 +1278,7 @@ _REJECT_LABELS = {
     "window": "outside the entry-time window",
     "macd": "MACD not bullish",
     "rsi": "RSI outside the entry band",
+    "rsi_cross": "RSI has not crossed up through the level",
     "funds": "not enough funds for a full position (no-leverage cap)",
     "sleeve_full": "sleeve budget already fully deployed",
     "cooldown": "in cooldown after a loss",
@@ -1308,7 +1309,11 @@ def _reject_category(reason: str) -> str:
     if "MACD" in reason:
         return "macd"
     if "RSI" in reason:
-        return "rsi"
+        # The band and the CROSSING are different rules and must not share a
+        # label: the chart told Werner "RSI outside the entry band" on a
+        # strategy that had no band set, sending him looking for a setting
+        # that was not there.
+        return "rsi_cross" if "cross" in reason else "rsi"
     return "other"
 
 

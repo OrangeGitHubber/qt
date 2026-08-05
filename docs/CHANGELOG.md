@@ -3,6 +3,30 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## The RSI crossing needs daily bars, and said so in the wrong words (2026-08-05)
+
+"Favorites - optimized 4 aug v2 no macd" was built around the new RSI crossing,
+run over three months, and took four trades for 0%. The chart blamed "279x RSI
+outside the entry band" — on a strategy with no band configured.
+
+One cause, two symptoms. The backtest API asked "does this strategy need daily
+bars?" in three separate hand-written places, and the new RSI direction rules
+were in none of them. So no daily bars were fetched, and the replay fell back to
+computing RSI from its OWN bars — hourly ones. "RSI three bars ago" then meant
+three HOURS ago instead of three sessions, which is not the signal the live
+engine evaluates, and the crossing effectively never fired.
+
+The wrong words were separate: every rejection mentioning RSI was filed under one
+label, so the crossing's own "hasn't crossed up yet" was reported as a band that
+did not exist. It now has its own.
+
+This is the third time in two days that a new rule has been added to the engine
+and quietly ignored by a gate that decides what data to fetch. The other two were
+the ATR trailing stop and the RSI exits on the live side. Each was invisible —
+the feature is configurable, the tests pass, and it simply never fires. The RSI
+test is now written once and called from all three places, rather than being a
+fourth copy waiting for the next rule.
+
 ## RSI as a turn, not a level (2026-08-05)
 
 Every rule on "Favorites - optimized 4 aug v2" asked the same question — *how
