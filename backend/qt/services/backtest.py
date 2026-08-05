@@ -819,6 +819,36 @@ _RS_VS_SPY_DAYS = 90        # engine._pool_metrics.RS_VS_SPY_WINDOW
 _DAILY_BAR_SECONDS = 82800  # 23h
 
 
+def rotation_config(strategy: dict) -> tuple[str, int] | None:
+    """(rank_by, top_n) when this config ROTATES — a different question from
+    whether it ranks its ENTRIES, and the two must not be conflated.
+
+    `rank_enabled` cuts entries to the top N. `rotate_on_rank_dropout` sells
+    holdings that fall out of it. Live treats them separately:
+    `engine._rotation_exits` collects every strategy carrying the rotation flag
+    and ranks `_strategy_pool`, which returns the custom list, the watchlist or
+    the basket whatever `rank_enabled` says — so a strategy with entry-ranking
+    OFF and rotation ON still rotates live.
+
+    The replay did not, because its gate asked `ranking_config`. Measured on
+    strategy 29, whose live config is exactly that combination: a
+    live-vs-replay divergence inside the feature built to detect them, and one
+    introduced by the rotation exit itself — the gate was written against the
+    entry ranker without asking whether that was the same question.
+
+    Scanner and "both" universes still return None: those have no fixed pool to
+    rank, which is the same thing `_strategy_pool` says by returning empty."""
+    if not (strategy.get("params") or {}).get("exit", {}).get("rotate_on_rank_dropout"):
+        return None
+    if strategy.get("universe") in (None, "scanner", "both"):
+        return None
+    rank_by = strategy.get("rank_by") or "momentum_today"
+    top_n = int(strategy.get("top_n") or 10)
+    if rank_by not in ranking.RANK_METRICS or top_n <= 0:
+        return None
+    return rank_by, top_n
+
+
 def ranking_config(strategy: dict) -> tuple[str, int] | None:
     """(rank_by, top_n) when this config's universe is one the LIVE engine ranks,
     else None. Mirrors qt.api.strategies.StrategyBody._sanity, which is what
@@ -1693,6 +1723,13 @@ def run_backtest(
     # which _apply_poller_view rewrites, but the ordering makes that a fact rather
     # than a coincidence.
     rank_cfg = ranking_config(strategy)
+    # A rotating strategy needs the pool ranked even when its ENTRIES are not
+    # cut to the top N — see rotation_config. `rank_cfg` stays the entry
+    # question, so `order` below still offers every name when entry-ranking is
+    # off; only the rotation check reads the ranking in that case.
+    rotate_cfg = rotation_config(strategy)
+    ranks_entries = rank_cfg is not None
+    rank_cfg = rank_cfg or rotate_cfg
     ranker = (
         _PoolRanker(
             rank_cfg[0], rank_cfg[1], prepared,
@@ -1822,13 +1859,15 @@ def run_backtest(
         # Entries have always used it to take only the top-N; EXITS need the same
         # answer at the same instant, and ranking twice would double every
         # counter in `ranker.report()`.
-        if ranker is not None and ranker.applied:
-            order = ranker.rank(bars, ts)
-        else:
-            order = [(symbol, None, None) for symbol in bars]
+        ranked = ranker.rank(bars, ts) if (ranker is not None and ranker.applied) else []
+        # `rank_enabled` governs ENTRIES and keeps doing so: a strategy that
+        # ranks only in order to ROTATE still offers every name as a candidate.
+        # Conflating the two would be a second divergence in the other
+        # direction, silently cutting an entry pool live never cut.
+        order = ranked if (ranks_entries and ranked) else [(sym, None, None) for sym in bars]
         # Empty means the pool could not be ranked at all on this bar — see
         # `_rotation_top`, which holds rather than liquidating on that.
-        rotation_top = _rotation_top(params, ranker, order)
+        rotation_top = _rotation_top(params, ranker, ranked)
 
         # ---- exits first ----
         for symbol, trade in list(state.open_trades.items()):

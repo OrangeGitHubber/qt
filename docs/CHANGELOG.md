@@ -3,6 +3,23 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Rotation follows the rotation setting, not the ranking one (2026-08-05)
+
+Found on "Favorites - optimized 4 aug v2", which has ranking switched OFF and
+rotation switched ON — a combination the settings page lets you make.
+
+Live rotates in that case: it ranks your symbol list and sells anything that
+falls out of the top N, whatever the ranking checkbox says. The backtester,
+which only learned to rotate last night, refused to — it was asking whether
+ENTRIES were ranked, which is a different question from whether the strategy
+rotates. So a backtest of that configuration simulated a strategy that holds
+where the real one would sell.
+
+The two settings are genuinely separate — one cuts which names you may BUY, the
+other sells what you already HOLD when it drops out — and the replay now treats
+them separately, as live always has. Turning ranking off still means every name
+is a buy candidate; it no longer means rotation quietly stops.
+
 ## Max open positions is now 1,000 (2026-08-04)
 
 It was 50, which arrived in the original scaffolding with no reasoning attached
