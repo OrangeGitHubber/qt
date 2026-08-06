@@ -232,6 +232,34 @@ def held_spans(result: dict) -> dict[str, tuple[str, str]]:
     return spans
 
 
+def daily_filled_held_days(result: dict, ds) -> int:
+    """How many daily-filled symbol-days fell inside a span where a position was
+    actually OPEN.
+
+    `daily_filled_days` counts the whole universe — every symbol-day anywhere in
+    the scanner pool that fell back to a daily bar (see _fill_intraday_gaps). The
+    caveat printed beside it, though, is about HELD positions: "no chance for a
+    stop to fire". Those are different populations, and the gap between them is
+    large: a 720-day crypto replay reported 1,737 daily-resolution symbol-days
+    while holding a position on none of them, which reads as 1,737 days of
+    unwatched positions and is not what happened.
+
+    A day with nothing open costs an entry's timing at worst. A day with a
+    position open costs a stop the chance to fire at the moment it was hit. Only
+    the second is worth alarming anyone about, so it gets its own number."""
+    spans = held_spans(result)
+    if not spans:
+        return 0
+    held = 0
+    for symbol, (first, last) in spans.items():
+        for bar in ds.bars.get(symbol) or []:
+            # `daily_fill` is the explicit tag _fill_intraday_gaps leaves; the
+            # timestamp cannot be trusted to identify a stand-in (see its note).
+            if bar.get("daily_fill") and first <= bar["t"][:10] <= last:
+                held += 1
+    return held
+
+
 async def fetch_held_position_bars(
     client: AlpacaClient,
     result: dict,
@@ -2176,6 +2204,8 @@ async def _scanner_replay(
     result["scanner_config_is_current"] = True
     result["intraday_covered"] = ds.intraday_covered
     result["daily_filled_days"] = ds.daily_filled_days
+    # …and how many of those actually mattered. See the function.
+    result["daily_filled_held_days"] = daily_filled_held_days(result, ds)
     result["days_replayed"] = ds.days_replayed
     timeframe = ds.timeframe
     # The names actually replayed. This used to be [] with "too many to list" —

@@ -23,6 +23,29 @@ the line it belongs to, so the figure and the curve identify each other.
 An indicator that isn't defined yet reads "—" rather than a broken number — a
 200-day average has nothing to say on day 40, and now it says so.
 
+## "1,737 symbol-days at daily resolution" was scaring you about nothing (2026-08-05)
+
+A 720-day crypto scanner replay reported that number, with a caveat beneath it
+about held positions — "no chance for a stop to fire". Read together, that says
+1,737 days of positions going unwatched, and the obvious conclusion is that the
+bar cache is broken.
+
+It wasn't. The two halves of that sentence count different things. The NUMBER
+covers the whole scanner pool — every symbol-day anywhere in the universe that
+fell back to a daily bar, most of them days you held nothing in that name. The
+CAVEAT is about days a position was actually open, which is the only case where
+a stop is left waiting for a daily close.
+
+On that run those were zero. Verified independently: the replay's held-position
+fill pass, which runs after the first replay and has no request cap, downloaded
+not a single bar, because every day a position was open already had 15-minute
+bars.
+
+So the caveat now reports both, and says which is which: "1,737 symbol-days were
+checked at daily resolution — none of them while you held a position." When that
+second number is zero it says so plainly instead of implying the opposite; when
+it isn't, that is the number worth reading.
+
 ## A trailing stop wider than the gain can only lose (2026-08-05)
 
 Looking at where the give-back actually happens turned up something worse than a

@@ -1151,13 +1151,37 @@ export default function Backtest() {
               <p className="hint">
                 <strong>
                   {result.daily_filled_days!.toLocaleString()} symbol-days were checked at daily resolution, not
-                  15-minute.
+                  15-minute
+                  {result.daily_filled_held_days != null && (
+                    <>
+                      {" "}
+                      — {result.daily_filled_held_days === 0
+                        ? "none of them while you held a position"
+                        : `${result.daily_filled_held_days.toLocaleString()} of them while a position was open`}
+                    </>
+                  )}
+                  .
                 </strong>{" "}
-                The cache stores 15-minute bars around the days a symbol was a top riser, so a position held after its
-                symbol dropped off the list has no intraday bars for those days. Rather than leave it unwatched — no
-                mark, and no chance for a stop to fire — the day's daily bar is used, so the position is valued at that
-                close and its stops are checked against that day's high and low. That's the same fidelity a daily-bar
-                backtest gives, on those days only.
+                {/* The two numbers count different populations and only the second one
+                    is worth worrying about. The first covers the WHOLE scanner pool;
+                    printing the held-position caveat beside it made a 720-day crypto
+                    run read as 1,737 days of unwatched positions when the answer was
+                    none. See api/backtest.daily_filled_held_days. */}
+                The cache stores 15-minute bars around the days a symbol was a top riser, so a day it wasn't a riser
+                may have only a daily bar. On a day you held <em>nothing</em> in that symbol, that costs at most the
+                timing of an entry.{" "}
+                {result.daily_filled_held_days === 0 ? (
+                  <>
+                    Every day you actually held a position had 15-minute bars, so no stop was left waiting for a daily
+                    close.
+                  </>
+                ) : (
+                  <>
+                    On a day a position <em>was</em> open, the daily bar is used instead — the position is valued at
+                    that close and its stops are checked against the day's high and low. That's the same fidelity a
+                    daily-bar backtest gives, on those days only.
+                  </>
+                )}
               </p>
             )}
 
