@@ -56,6 +56,26 @@ function money(v: unknown): string {
   return `$${Number(v).toLocaleString("en-US", { maximumFractionDigits: 2 })}`;
 }
 
+/** "MACD bullish" or "MACD bullish (5/13/4)".
+ *
+ * The periods are shown only when they are NOT 12/26/9, so the common case stays
+ * short and a non-default is impossible to miss. They were invisible entirely
+ * until 2026-08-07: `require_macd_bullish` rendered as a bare "MACD bullish", so
+ * a 5/13/4 strategy and a 12/26/9 one had identical cards while trading on
+ * different signals.
+ *
+ * They also stopped being cosmetic that same day — `_daily_lookback_days` now
+ * sizes the daily-bars fetch from `slow + signal`, so a long MACD changes how
+ * much history is loaded and how long the warm-up runs. A setting that decides
+ * that much should not be a thing you have to open the editor to discover. */
+function macdLabel(base: string, macd?: { fast?: number; slow?: number; signal?: number }): string {
+  const fast = Number(macd?.fast ?? 12);
+  const slow = Number(macd?.slow ?? 26);
+  const signal = Number(macd?.signal ?? 9);
+  if (fast === 12 && slow === 26 && signal === 9) return base;
+  return `${base} (${num(fast)}/${num(slow)}/${num(signal)})`;
+}
+
 /** What `entrySummary` reads. Like `SizingInputs`, wider than `params`: the
  *  regime gate is a column on the strategy, not an entry rule, and it decides
  *  entries all the same. `StrategyRow` satisfies it structurally. */
@@ -99,7 +119,7 @@ export function entrySummary(s: EntryInputs): string {
   else if (maxPx > 0) parts.push(`under $${num(maxPx)}`);
 
   if (e.require_above_vwap) parts.push("above VWAP");
-  if (e.require_macd_bullish) parts.push("MACD bullish");
+  if (e.require_macd_bullish) parts.push(macdLabel("MACD bullish", params.macd));
 
   const rsiMin = Number(e.rsi_min) || 0;
   const rsiMax = Number(e.rsi_max) || 0;
@@ -161,7 +181,7 @@ export function exitSummary(params: StrategyParams, topN?: number): string {
   if (x.exit_rsi_falling) parts.push("RSI turns down");
 
   if (x.exit_below_vwap) parts.push("below VWAP");
-  if (x.exit_on_macd_bearish) parts.push("MACD bearish");
+  if (x.exit_on_macd_bearish) parts.push(macdLabel("MACD bearish", params.macd));
   if (x.exit_on_regime_bear) parts.push("SPY below 200-day");
   if (x.rotate_on_rank_dropout) {
     parts.push(topN && topN > 0 ? `out of top ${topN}` : "out of the top N");

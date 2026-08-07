@@ -3,6 +3,28 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## The card now shows which MACD you're actually using (2026-08-07)
+
+`require_macd_bullish` rendered as a bare **"MACD bullish"** with no numbers, so
+a strategy on 5/13/4 and one on the default 12/26/9 had identical cards while
+trading on different signals. A non-default MACD reads **"MACD bullish
+(5/13/4)"** now; the default stays short, because printing "(12/26/9)" on every
+strategy would bury the one case worth noticing.
+
+The exit signal gets the same treatment — entry and exit read the same periods,
+and labelling one but not the other is how a pair drifts apart.
+
+This also stopped being cosmetic earlier today: the daily-bars fetch is now
+sized from your MACD's `slow + signal`, so those numbers decide how much history
+loads and how long the warm-up runs. A setting with that much reach should not
+be something you have to open the editor to discover.
+
+**The durable half.** The card already had a test asserting that every entry and
+exit rule which can be switched on changes the summary. The periods slipped past
+it because they are not rules — they live in their own config block, and the
+invariant never looked there. It does now, one period at a time, so changing only
+`signal` has to show up.
+
 ## Three form decisions that got the asset class wrong (2026-08-07)
 
 All three were written inline, all three looked obviously right, and each was

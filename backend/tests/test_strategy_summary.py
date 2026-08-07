@@ -39,6 +39,7 @@ import pytest
 from qt.api.strategies import (
     ATRConfig,
     DCAConfig,
+    MACDConfig,
     EntryRules,
     ExecutionConfig,
     ExitRules,
@@ -536,3 +537,60 @@ def test_a_sleeve_with_no_exits_says_so(summarise):
     off = _params(**{"exit.trailing_stop_pct": 0, "exit.stop_loss_pct": 0})
     (got,) = summarise([{"params": off}])
     assert got["exit"] == "no exit rules — held"
+
+
+# --- Indicator PERIODS, which are not rules but change what the rule means ----
+#
+# `require_macd_bullish` is one EntryRules field and it passed the invariant
+# above from the day it was written — the card said "MACD bullish" and that was
+# a visible change. What the invariant could not see is that the SIGNAL behind
+# those words is configurable: `MACDConfig` allows fast/slow/signal anywhere in
+# 1-100 / 2-200 / 1-100, so a 5/13/4 strategy and a 12/26/9 one produced
+# identical cards while trading on different indicators.
+#
+# They stopped being cosmetic on 2026-08-07: `_daily_lookback_days` now sizes the
+# daily-bars fetch from `slow + signal`, so the periods decide how much history
+# is loaded and how long the warm-up runs.
+_MACD_ON = {"fast": 5, "slow": 13, "signal": 4}
+
+
+@pytest.mark.parametrize("field", sorted(MACDConfig.model_fields))
+def test_every_macd_period_reaches_the_card(summarise, field):
+    """Each period on its own, not all three at once: changing only `signal`
+    must show, and a label built from `fast`/`slow` alone would hide it."""
+    assert field in _MACD_ON, (
+        f"MACDConfig.{field} is new. Render it in macdLabel(), or decide "
+        f"explicitly that it cannot change what the signal means."
+    )
+    on = {"require_macd_bullish": True}
+    base, changed = summarise([
+        {"params": _params(**{"entry.require_macd_bullish": True})},
+        {"params": _params(**{"entry.require_macd_bullish": True,
+                              f"macd.{field}": _MACD_ON[field]})},
+    ])
+    assert changed["entry"] != base["entry"], (
+        f"macd.{field} can be set without the card saying so")
+
+
+def test_the_default_periods_are_not_spelled_out(summarise):
+    """The common case stays short. Printing "(12/26/9)" on every MACD strategy
+    would bury the one case worth noticing in noise."""
+    (got,) = summarise([{"params": _params(**{"entry.require_macd_bullish": True})}])
+    assert "MACD bullish" in got["entry"]
+    assert "12/26/9" not in got["entry"]
+
+
+def test_a_non_default_period_set_is_spelled_out(summarise):
+    (got,) = summarise([{"params": _params(**{
+        "entry.require_macd_bullish": True,
+        "macd.fast": 5, "macd.slow": 13, "macd.signal": 4})}])
+    assert "MACD bullish (5/13/4)" in got["entry"], got["entry"]
+
+
+def test_the_exit_signal_names_its_periods_too(summarise):
+    """Entry and exit read the SAME `params.macd`. Labelling one and not the
+    other is how the pair drifts apart."""
+    (got,) = summarise([{"params": _params(**{
+        "exit.exit_on_macd_bearish": True,
+        "macd.fast": 5, "macd.slow": 13, "macd.signal": 4})}])
+    assert "MACD bearish (5/13/4)" in got["exit"], got["exit"]
