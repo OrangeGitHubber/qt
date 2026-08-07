@@ -3,6 +3,29 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## "Today" and "Day" now say which "today" they mean (2026-08-07)
+
+The same column meant two different things depending on what you were looking
+at, with one label and no explanation anywhere near it:
+
+- a **stock** is measured from the previous session's **close**, so the number
+  resets at 09:30 ET and sits still overnight;
+- **crypto never closes**, so there is no previous close to measure from — it is
+  a **rolling 24-hour** change, always comparing against this moment yesterday,
+  and it keeps moving all night.
+
+A stock at +3% and a coin at +3% are therefore not the same claim, and the entry
+rule that reads this column (*Min gain today*) inherits the split. The
+explanation existed, buried in the glossary with nothing linking to it. All three
+headers — Scanner's "Today" and both "Day" columns on a strategy — now carry the
+usual **?**.
+
+**And a check that was missing entirely.** An `InfoTip` pointing at a glossary
+entry that doesn't exist renders *nothing* — no error, no empty box, just a
+missing "?" that looks exactly like a deliberate choice. Nothing tested that.
+Now every tooltip key in the app is checked against the glossary the app really
+builds, including the ~30 that reach it indirectly through wrapper components.
+
 ## The card now shows which MACD you're actually using (2026-08-07)
 
 `require_macd_bullish` rendered as a bare **"MACD bullish"** with no numbers, so

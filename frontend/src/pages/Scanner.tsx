@@ -88,7 +88,9 @@ function MoversTable({
             <tr>
               <th>Symbol</th>
               <th>Price</th>
-              <th>Today</th>
+              <th>
+                Today <InfoTip k="day_change" />
+              </th>
               <th>
                 $ Vol (feed) <InfoTip k="dollar_volume" />
               </th>

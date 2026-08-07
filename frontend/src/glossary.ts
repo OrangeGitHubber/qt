@@ -283,6 +283,12 @@ export const GLOSSARY: Record<string, GlossaryEntry> = {
       "A self-imposed cap on how many new positions the bot may open per day, across all strategies. Overtrading — trading too often, paying the spread each time — is one of the most reliable ways retail traders lose.",
     url: "https://www.investopedia.com/terms/o/overtrading.asp",
   },
+  day_change: {
+    term: "Today / Day (% change)",
+    explain:
+      "How much the symbol has moved — but measured from a DIFFERENT starting point depending on what it is, because the two markets do not have the same shape. A stock is measured from the previous session's CLOSE, so the number resets at 09:30 ET and holds still overnight. Crypto never closes, so there is no previous close to measure from; it is a ROLLING 24-HOUR change instead, always comparing against the price at this same moment yesterday, and it keeps moving all night. That means a stock at +3% and a coin at +3% are not the same claim, and the entry rule that reads this column (Min gain today) inherits the same split. It is one label over two measurements on purpose — there is no third definition that is honest for both.",
+    url: "https://www.investopedia.com/terms/c/closingprice.asp",
+  },
   min_day_gain: {
     term: "Min gain today (%)",
     explain:

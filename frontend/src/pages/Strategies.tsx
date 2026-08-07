@@ -333,7 +333,9 @@ function LastRunView({ strategyId }: { strategyId: number }) {
                         strictly best-first, so a buy far down the list means
                         everything above it was already held or failed a rule. */}
                     <th>Rank</th>
-                    <th>Day</th>
+                    <th>
+                      Day <InfoTip k="day_change" />
+                    </th>
                     <th>Decision</th>
                     <th className="why">Why</th>
                   </tr>
@@ -405,7 +407,9 @@ function RankingView({ strategyId }: { strategyId: number }) {
                   <th>#</th>
                   <th>Symbol</th>
                   <th>{data.rank_label}</th>
-                  <th>Day</th>
+                  <th>
+                      Day <InfoTip k="day_change" />
+                    </th>
                   <th>
                     MACD <InfoTip k="macd" />
                   </th>
