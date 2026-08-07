@@ -3,6 +3,36 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## A DCA sleeve's backtest was replaying a different strategy (2026-08-07)
+
+`DCA baseline sleeve (weekly)` is one of the presets in the dropdown. Backtest
+one and you got a number. That number described a strategy you were not running.
+
+Live, a DCA sleeve buys its fixed symbol list **on a calendar** — the engine
+hands it to a separate path and never looks at the momentum rules at all, so the
+"+3% day · above VWAP" on the card is dead, and each scheduled buy is an
+independent lot. The backtester has no such path. It evaluated the momentum
+rules the engine ignores, and never bought on the schedule that is the whole
+point of a sleeve.
+
+The optimizer made it worse: it would happily spend an hour **tuning rules that
+do nothing**, then write the winner back onto the strategy.
+
+**It now refuses, and says why.** Backtest, parameter search and basket sweep
+all decline a DCA sleeve with an explanation of what would otherwise have been
+wrong. Refusing is not the finished job — simulating the cadence is — but a
+number that quietly describes a different strategy is worse than no number.
+
+**Why not just simulate it?** Because of the lots. A sleeve can hold several
+lots of one symbol at once, and both bar loops in the backtester store open
+positions keyed *by symbol* — one per symbol, by construction. Every exposure
+total, exit walk and safety-rail check reads that shape. So this is a structural
+change rather than a missing branch, and it is written down rather than
+attempted at the end of a long day.
+
+One thing worth knowing: a daily-bar DCA backtest used to "work". It returned a
+result and no warning. That is the case this removes.
+
 ## Delete now asks first, and three smaller papercuts (2026-08-07)
 
 **Delete had no confirmation.** It sat next to Pause and Clone and fired on the

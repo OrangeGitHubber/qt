@@ -30,6 +30,7 @@ from qt.models import Basket, BasketItem, Strategy, WatchlistItem
 from qt.services import barfetch, optimizer, sweep
 from qt.services.engine import get_risk
 from qt.timeutil import iso_utc
+from qt.api.backtest import refuse_if_dca, replay_strategy
 
 log = logging.getLogger("qt.api.optimizer")
 
@@ -472,6 +473,9 @@ async def start_optimize(
     strategy = session.get(Strategy, body.strategy_id)
     if not strategy:
         raise HTTPException(status_code=404, detail="Strategy not found.")
+    # A search over rules the live engine never reads would be worse than a
+    # single wrong backtest — it would tune them. Same guard, same reason.
+    refuse_if_dca(replay_strategy(strategy).get("params") or {})
 
     # Scanner-replay mode reads its universe (each past day's top-N risers) +
     # their bars OFFLINE from the bar cache; the fixed-universe mode resolves a
@@ -746,6 +750,15 @@ async def start_sweep(
     if _progress.running:
         raise HTTPException(status_code=409, detail="A parameter search is already running — wait for it to finish.")
 
+    # The STRATEGY is validated before the environment. Refusing a DCA sleeve
+    # only when baskets happen to exist would make the guard depend on unrelated
+    # account state — and it hid the check from its own test, which is how the
+    # gap surfaced.
+    strategy = session.get(Strategy, body.strategy_id)
+    if strategy is None:
+        raise HTTPException(status_code=404, detail="Strategy not found.")
+    refuse_if_dca(replay_strategy(strategy).get("params") or {})
+
     baskets: list[dict] = []
     for b in session.query(Basket).order_by(Basket.name).all():
         symbols = sorted(
@@ -761,9 +774,6 @@ async def start_sweep(
     if not baskets:
         raise HTTPException(status_code=422, detail="No baskets with at least 2 stock symbols to sweep.")
 
-    strategy = session.get(Strategy, body.strategy_id)
-    if strategy is None:
-        raise HTTPException(status_code=404, detail="Strategy not found.")
     # Same shape the single search builds — including the ranking cut, which is a
     # real part of the strategy and must be scored, not silently dropped.
     strategy_dict = {

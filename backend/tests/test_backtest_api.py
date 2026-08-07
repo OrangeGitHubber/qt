@@ -546,7 +546,15 @@ def _no_price_exits(strat: dict) -> dict:
     one there is nothing an intraday replay could simulate that a daily one
     can't, so such a strategy stays locked to daily bars. A hard stop is
     mandatory for every strategy EXCEPT a buy-and-hold DCA sleeve, so this is
-    the one shape that can legitimately have no price exit at all."""
+    the one shape that can legitimately have no price exit at all.
+
+    THEREFORE every strategy built here IS a DCA sleeve, and since 2026-08-07
+    the backtest and optimizer refuse those outright (400) — the live engine
+    never calls `evaluate_entry` for one, so a replay would describe a different
+    strategy. The daily-lock guard's "no price exits" branch is consequently
+    unreachable: the only shape that could enter it is turned away one step
+    earlier. Its other branches stay live and are covered by the with-stops
+    tests."""
     strat["params"]["exit"].update(
         {"stop_loss_pct": 0, "trailing_stop_pct": 0, "take_profit_pct": 0}
     )
@@ -554,10 +562,10 @@ def _no_price_exits(strat: dict) -> dict:
     return strat
 
 
-def test_macd_strategy_with_no_stops_rejects_intraday_bars(client, configured):
-    """MACD is a DAILY signal live. With no price-triggered exit there's nothing
-    to gain from an intraday replay — it would just compute a twitchy intraday
-    MACD unlike live — so the endpoint still rejects 15Min/1Hour, and 1Day works."""
+def test_a_macd_sleeve_is_refused_before_the_resolution_guard(client, configured):
+    """Was: "MACD with no price exit rejects intraday (422)". A strategy with no
+    price exit is necessarily a DCA sleeve, and those are refused outright now —
+    a stronger guarantee that arrives earlier, so the 422 is never reached."""
     strat = _no_price_exits(_strategy("stock"))
     strat["params"]["entry"]["require_macd_bullish"] = True
     sid = client.post("/api/strategies", json=strat).json()["id"]
@@ -565,31 +573,33 @@ def test_macd_strategy_with_no_stops_rejects_intraday_bars(client, configured):
     r = client.post("/api/backtest", json={
         "strategy_id": sid, "symbols": ["NVDA"], "days": 30,
         "timeframe": "1Hour", "starting_cash": 5000, "spread_pct": 0})
-    assert r.status_code == 422
-    detail = r.json()["detail"]
-    assert "macd" in detail.lower() and "daily" in detail.lower()
+    assert r.status_code == 400, r.text
+    assert "DCA sleeve" in r.json()["detail"]
 
+    # And 1Day is refused too. This half used to assert 200 — which WAS the bug:
+    # the daily run "worked" and handed back a number for a strategy the replay
+    # cannot express. A DCA sleeve is wrong at every resolution, because the
+    # problem is the strategy shape, not the bar size.
     fetch = AsyncMock(side_effect=[{"NVDA": BARS}, {"SPY": BARS}])
     with patch.object(AlpacaClient, "historical_bars", new=fetch):
-        ok = client.post("/api/backtest", json={
+        daily = client.post("/api/backtest", json={
             "strategy_id": sid, "symbols": ["NVDA"], "days": 30,
             "timeframe": "1Day", "starting_cash": 5000, "spread_pct": 0})
-    assert ok.status_code == 200, ok.text
-    assert ok.json()["timeframe"] == "1Day"
-    assert ok.json()["mixed_resolution"] is False
+    assert daily.status_code == 400, daily.text
+    assert fetch.await_count == 0, "bars were downloaded for a refused backtest"
 
 
-def test_rsi_exit_strategy_with_no_stops_rejects_intraday_bars(client, configured):
-    """The RSI overbought exit is likewise a daily signal — and with no stop to
-    simulate, intraday stays rejected."""
+def test_an_rsi_sleeve_is_refused_before_the_resolution_guard(client, configured):
+    """Same shape as the MACD one above: no price exit means DCA sleeve, and a
+    DCA sleeve is refused whatever the resolution."""
     strat = _no_price_exits(_strategy("stock"))
     strat["params"]["exit"]["exit_rsi_above"] = 70
     sid = client.post("/api/strategies", json=strat).json()["id"]
     r = client.post("/api/backtest", json={
         "strategy_id": sid, "symbols": ["NVDA"], "days": 30,
         "timeframe": "15Min", "starting_cash": 5000, "spread_pct": 0})
-    assert r.status_code == 422
-    assert "daily" in r.json()["detail"].lower()
+    assert r.status_code == 400, r.text
+    assert "DCA sleeve" in r.json()["detail"]
 
 
 def test_macd_strategy_with_stops_runs_mixed_resolution(client, configured):
@@ -833,10 +843,16 @@ def test_no_download_for_a_strategy_that_gains_nothing_from_intraday(client, con
     sid = client.post("/api/strategies", json=strat).json()["id"]
     fetch = AsyncMock(side_effect=Exception("no benchmark"))
     with patch.object(AlpacaClient, "historical_bars", new=fetch):
-        body = client.post("/api/backtest", json={
+        r = client.post("/api/backtest", json={
             "strategy_id": sid, "scanner_replay": True, "days": 30,
-            "starting_cash": 5000, "spread_pct": 0}).json()
-    assert body["intraday_topped_up"] is False
+            "starting_cash": 5000, "spread_pct": 0})
+    # A STRONGER version of the original guarantee. This used to assert
+    # `intraday_topped_up is False` — no bar sweep for a sleeve that gains
+    # nothing from intraday. The sleeve is now refused before any replay runs,
+    # so no bandwidth is spent at all, and the fetch assertion below still
+    # proves it.
+    assert r.status_code == 400, r.text
+    assert "DCA sleeve" in r.json()["detail"]
     # The only call that may have happened is the benchmark — never a bar sweep.
     assert all("15Min" not in str(c) for c in fetch.await_args_list)
 

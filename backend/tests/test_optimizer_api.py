@@ -72,23 +72,32 @@ def _optimize(client, sid, timeframe):
     )
 
 
-def test_optimizer_rejects_intraday_for_a_macd_strategy(client, configured):
-    """MACD with NO price-triggered exit: an intraday search would only buy a
-    twitchy intraday MACD, so it stays locked to daily bars."""
+# THE "no price exits" SHAPE IS NOW REFUSED EARLIER, and by a stronger guard.
+#
+# `price_exits=False` has to set `dca.interval_days` — StrategyParams makes a
+# hard stop mandatory for everything EXCEPT a DCA sleeve, so a strategy with no
+# price exit IS a DCA sleeve, necessarily. Since 2026-08-07 the optimizer
+# refuses those outright (400), because the live engine never calls
+# `evaluate_entry` for one and a search would be tuning rules that do nothing.
+#
+# So these two now assert the 400. The daily-lock branch they used to cover is
+# unreachable in its no-price-exits form for the same reason — it can only be
+# entered by a strategy that is turned away one step earlier. Its OTHER branches
+# stay reachable and are covered by the mixed-resolution tests below.
+def test_a_macd_dca_sleeve_is_refused_before_the_resolution_guard(client, configured):
     sid = client.post("/api/strategies", json=_strategy(macd=True, price_exits=False)).json()["id"]
     r = _optimize(client, sid, "1Hour")
-    assert r.status_code == 422
-    detail = r.json()["detail"].lower()
-    assert "macd" in detail and "daily" in detail
+    assert r.status_code == 400, r.text
+    assert "DCA sleeve" in r.json()["detail"]
 
 
-def test_optimizer_rejects_intraday_for_an_rsi_strategy(client, configured):
+def test_an_rsi_dca_sleeve_is_refused_too(client, configured):
     sid = client.post(
         "/api/strategies", json=_strategy(rsi_exit=True, price_exits=False)
     ).json()["id"]
     r = _optimize(client, sid, "15Min")
-    assert r.status_code == 422
-    assert "daily" in r.json()["detail"].lower()
+    assert r.status_code == 400, r.text
+    assert "DCA sleeve" in r.json()["detail"]
 
 
 def test_optimizer_runs_mixed_resolution_for_a_macd_strategy_with_stops(client, configured, monkeypatch):

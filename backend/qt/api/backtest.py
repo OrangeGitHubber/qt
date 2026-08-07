@@ -1669,6 +1669,45 @@ def replay_strategy(config) -> dict:
     }
 
 
+DCA_UNSUPPORTED = (
+    "This is a DCA sleeve, and the backtester cannot replay one yet — so rather "
+    "than hand you a number that describes a different strategy, it refuses."
+    "\n\n"
+    "Live, a DCA sleeve buys its fixed symbol list on a calendar: "
+    "`_consider_entries` hands it to `_consider_dca_entries` and skips "
+    "`evaluate_entry` entirely, so the momentum rules on the card are dead, "
+    "and each scheduled buy is an independent LOT — several lots of one "
+    "symbol can be open at once. The replay has no such branch: it would "
+    "evaluate the momentum rules live never reads, and never buy on the "
+    "schedule that is the sleeve's whole point."
+    "\n\n"
+    "Simulating it properly needs the replay to hold more than one open lot "
+    "per symbol, and both bar loops key their open positions BY symbol — so "
+    "this is a structural change, not a missing branch."
+)
+
+
+def dca_interval_days(params: dict) -> int:
+    """`> 0` means the live engine takes the DCA path and never calls
+    `evaluate_entry`. Tolerates a malformed params blob the way every other
+    reader here does: unreadable means "not a DCA sleeve", never a crash."""
+    try:
+        return int((params.get("dca") or {}).get("interval_days", 0) or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def refuse_if_dca(params: dict) -> None:
+    """Refuse rather than silently replay the wrong strategy.
+
+    The queue's phrasing, and it is the right one: simulate the cadence or
+    refuse loudly — silence is the one wrong answer. Until the lot model exists
+    this is the honest half, and it is enforced at the API rather than in the
+    page so the Optimizer cannot walk around it."""
+    if dca_interval_days(params) > 0:
+        raise HTTPException(status_code=400, detail=DCA_UNSUPPORTED)
+
+
 @router.post("")
 async def run(
     body: BacktestBody,
@@ -1684,6 +1723,7 @@ async def run(
     strategy = session.get(Strategy, body.strategy_id)
     if not strategy:
         raise HTTPException(status_code=404, detail="Strategy not found.")
+    refuse_if_dca(replay_strategy(strategy).get("params") or {})
 
     return await replay(
         body,
