@@ -342,7 +342,18 @@ def create_strategy(body: StrategyBody, session: Session = Depends(get_session))
         allow_concurrent_symbol=body.allow_concurrent_symbol,
         optimized_from_id=body.optimized_from_id,
         optimized_days=body.optimized_days,
-        optimized_at=datetime.now(timezone.utc) if body.optimized_from_id else None,
+        # `optimized_from_id` is NOT evidence of a search. A CLONE sets it too,
+        # to hang the copy in its family tree, and the clone already nulls
+        # `optimized_days` for exactly this reason ("no search produced this
+        # one"). Stamping the timestamp off the parent link alone therefore gave
+        # every copy an optimisation date it never had, and `optimizer_lineage`
+        # reads it straight into the ancestry chain. The two fields now agree:
+        # both are set only when a real search stands behind the row.
+        optimized_at=(
+            datetime.now(timezone.utc)
+            if body.optimized_from_id and body.optimized_days
+            else None
+        ),
     )
     session.add(strategy)
     session.flush()

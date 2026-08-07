@@ -3,6 +3,32 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Delete now asks first, and three smaller papercuts (2026-08-07)
+
+**Delete had no confirmation.** It sat next to Pause and Clone and fired on the
+first click — on rows that may be armed and holding positions. It now shows what
+you are about to lose: the name, whether it is enabled, and how many positions
+are open. Verified against a live row that was enabled with an open position,
+which is exactly the misclick that used to cost you something. If the server
+refuses (a strategy with trade history is never deletable — that rail is
+deliberate) the dialog stays open so you can read why.
+
+**Fourteen pills were pulsing at once.** The "enabled" badge had a breathing
+glow, which works when one item differs from its neighbours and becomes noise
+when every armed row does it. Now a steady glow — what reduced-motion users
+already got, and it turns out to be the better default for everyone.
+
+**"Newest first" now says "Recently added"**, because it sorts by when a
+strategy was created and the old label could equally have meant "recently
+armed".
+
+**A copy no longer claims it was optimised.** Cloning a strategy links it to its
+parent so the family tree works, and the app was reading that link as "an
+optimizer search produced this" — stamping every copy with an optimisation date
+for a search that never ran, which then showed up in the lineage panel. The
+clone already refused to copy the search *length* for exactly this reason; the
+date now follows the same rule.
+
 ## "Today" and "Day" now say which "today" they mean (2026-08-07)
 
 The same column meant two different things depending on what you were looking

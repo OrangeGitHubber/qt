@@ -1524,7 +1524,12 @@ const SORT_LABELS: Record<SortKey, string> = {
   state: "Enabled first",
   name: "Name (A–Z)",
   open: "Open positions",
-  new: "Newest first",
+  // Sorted by id, which IS creation order and is never null. `enabled_at` was
+  // the other candidate and is worse for this: a long-standing strategy you
+  // just re-armed would jump to the top of "newest", and a strategy that has
+  // never been enabled has no value at all. The label now says which it is
+  // rather than leaving the reader to guess.
+  new: "Recently added",
 };
 
 export default function Strategies() {
@@ -1628,11 +1633,18 @@ export default function Strategies() {
   }
 
   async function remove(row: StrategyRow) {
+    setDeletingId(row.id);
     try {
       await deleteStrategy(row.id);
+      setDeleteTarget(null);
       refresh();
     } catch (e) {
+      // The server refuses to delete a strategy with trade history — that rail
+      // is by design. Keep the dialog open so the reason is read rather than
+      // flashing past behind a closing panel.
       setNote((e as Error).message);
+    } finally {
+      setDeletingId(null);
     }
   }
 
@@ -1721,6 +1733,11 @@ export default function Strategies() {
   // The row whose Clone button was pressed — the naming dialog is open while
   // this is set, and it carries the row so the dialog can suggest a name.
   const [cloneTarget, setCloneTarget] = useState<StrategyRow | null>(null);
+  // Delete is the one irreversible button on this page and it fired on the
+  // first click, next to Pause and Clone, on rows that may hold open positions.
+  // ConfirmDialog already existed and was used for smaller things.
+  const [deleteTarget, setDeleteTarget] = useState<StrategyRow | null>(null);
+  const [deletingId, setDeletingId] = useState<number | null>(null);
 
   /** Copy a strategy so a variant can be TRIED instead of retyped. Verbatim
    *  params, born disabled (the create endpoint forces `enabled=False`, it is
@@ -1968,7 +1985,7 @@ export default function Strategies() {
               </button>
             )}
             {!r.template && (
-              <button className="small btn-icon danger" onClick={() => remove(r)} title="Delete this strategy permanently">
+              <button className="small btn-icon danger" onClick={() => setDeleteTarget(r)} title="Delete this strategy permanently">
                 <IconDelete />
                 Delete
               </button>
@@ -2012,6 +2029,27 @@ export default function Strategies() {
       {/* Name the copy up front. The old behaviour appended " (copy)" and left
           you to find the row and rename it, which is two extra steps for
           something you already knew the answer to when you clicked. */}
+      {/* SHOW, don't shout: the facts are the warning. What it holds and what it
+          has already done decide whether this is a throwaway draft or a row
+          with history behind it. */}
+      <ConfirmDialog
+        open={deleteTarget != null}
+        title="Delete this strategy?"
+        facts={
+          deleteTarget
+            ? [
+                { label: "Strategy", value: deleteTarget.name },
+                { label: "Status", value: deleteTarget.enabled ? "ENABLED — armed to trade" : "paused" },
+                { label: "Open positions", value: String(deleteTarget.open_trades ?? 0) },
+              ]
+            : []
+        }
+        confirmLabel="Delete"
+        danger
+        busy={deletingId != null}
+        onConfirm={() => deleteTarget && remove(deleteTarget)}
+        onCancel={() => setDeleteTarget(null)}
+      />
       <ConfirmDialog
         open={cloneTarget != null}
         title={cloneTarget?.template ? "Make a strategy from this template" : "Copy this strategy"}

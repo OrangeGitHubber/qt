@@ -167,29 +167,21 @@ dd {
 }
 
 /* Enabled strategies must be unmistakable — the pill glows and the card gets
-   a green edge so "which strategies are armed" reads at a glance. */
+   a green edge so "which strategies are armed" reads at a glance.
+
+   A STEADY glow, not a pulse. The animation ran on every armed row at once, and
+   with fourteen of them the page had fourteen things independently demanding
+   attention — which is the same as none of them having it. Motion earns its
+   place when one item differs from its neighbours; here they are all the same,
+   so colour does the work and the movement was only cost. The reduced-motion
+   block below used to be the exception and is now what everybody gets. */
 .pill-live {
-  animation: pill-live-pulse 1.8s ease-in-out infinite;
-}
-@keyframes pill-live-pulse {
-  0%,
-  100% {
-    box-shadow: 0 0 0 0 rgba(46, 204, 113, 0);
-  }
-  50% {
-    box-shadow: 0 0 10px 1px rgba(46, 204, 113, 0.6);
-  }
+  box-shadow: 0 0 8px 1px rgba(46, 204, 113, 0.5);
 }
 .card-live {
   border-color: rgba(46, 204, 113, 0.55);
 }
-/* Respect reduced-motion: keep a steady glow instead of pulsing. */
-@media (prefers-reduced-motion: reduce) {
-  .pill-live {
-    animation: none;
-    box-shadow: 0 0 8px 1px rgba(46, 204, 113, 0.5);
-  }
-}
+
 
 /* ---- Strategy list ------------------------------------------------------
    Was an auto-fill card grid, which forced one column width on two states that
