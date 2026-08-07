@@ -35,7 +35,7 @@ import {
 } from "../components/icons";
 import { fmtClock, fmtDateTime, zoneAbbr } from "../lib/datetime";
 import { consumeNav, requestNav } from "../lib/nav";
-import { entrySummary, exitSummary } from "../lib/strategySummary";
+import { entrySummary, exitSummary, sizingSummary } from "../lib/strategySummary";
 
 const RANK_LABELS: Record<RankBy, string> = {
   momentum_today: "Today's % move (momentum)",
@@ -1867,9 +1867,10 @@ export default function Strategies() {
             </div>
             <div>
               <dt>Sizing</dt>
-              <dd>
-                ${r.sizing_usd} / trade, ${r.sleeve_usd} sleeve, max {r.max_positions}
-              </dd>
+              {/* Was "$100 / trade" even when atr.risk_usd decided the size and
+                  the $100 was only the fallback — the same substitution bug the
+                  Exit row had, one row down. */}
+              <dd>{sizingSummary(r)}</dd>
             </div>
             <div>
               <dt>Config</dt>

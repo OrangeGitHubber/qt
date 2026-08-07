@@ -1,4 +1,4 @@
-/** The one-line ENTRY / EXIT summaries on a strategy card.
+/** The one-line ENTRY / EXIT / SIZING summaries on a strategy card.
  *
  *  Pulled out of Strategies.tsx and given its own file for one reason: the
  *  summary kept falling behind the rules. It is written once, next to the
@@ -24,6 +24,12 @@
  *     whether to trade, so they belong to execution, not to entry/exit.
  *     `test_strategy_summary.py` enforces that list — any OTHER field that can
  *     be switched on without changing the summary fails the suite.
+ *
+ *  SIZING is the same story a third time, and property 1 is why: `atr.risk_usd`
+ *  displaces `sizing_usd` exactly as the ATR multiples displace the exit
+ *  percentages, and the row still read "$100 / trade" for a strategy sized by a
+ *  risk budget. See `sizingSummary` for the one wrinkle the exits don't have —
+ *  ATR sizing needs TWO fields on, so one of them can be set and inert.
  */
 import type { StrategyParams } from "../api";
 
@@ -34,6 +40,14 @@ const SEP = " · ";
  *  becomes 6) without imposing a fixed number of decimals on either. */
 function num(v: unknown): string {
   return String(Number(v));
+}
+
+/** Grouped dollars, no trailing ".00" — "$1,000", "$62.50". The locale is
+ *  pinned rather than left to the browser because these are US-market dollars
+ *  either way, and a summary that reads differently per machine can't be
+ *  asserted on. */
+function money(v: unknown): string {
+  return `$${Number(v).toLocaleString("en-US", { maximumFractionDigits: 2 })}`;
 }
 
 export function entrySummary(params: StrategyParams): string {
@@ -117,4 +131,65 @@ export function exitSummary(params: StrategyParams, topN?: number): string {
   // A DCA sleeve is allowed to run with every exit off. Saying so is the point;
   // "trail 0% · stop 0%" said the opposite while looking like a configuration.
   return parts.length ? parts.join(SEP) : "no exit rules — held";
+}
+
+/** What `sizingSummary` reads. `StrategyRow` satisfies it structurally, so the
+ *  card passes the row straight through; the shape is named separately because
+ *  sizing is the one summary that needs fields from OUTSIDE `params`. */
+export interface SizingInputs {
+  params: StrategyParams;
+  sizing_usd: number;
+  sleeve_usd: number;
+  max_positions: number;
+  asset_class?: "stock" | "crypto";
+  allow_concurrent_symbol?: boolean;
+  ignore_regime?: boolean;
+}
+
+export function sizingSummary(s: SizingInputs): string {
+  const atr = s.params.atr;
+  const riskUsd = Number(atr?.risk_usd) || 0;
+  const stopMult = Number(atr?.stop_mult) || 0;
+  // The engine's own gate, `_atr_sizing_enabled`: the position size is derived
+  // FROM the ATR stop distance (risk_usd ÷ stop_mult × ATR%), so a risk budget
+  // with no stop multiple computes nothing and sizing falls back to the fixed
+  // dollar amount. Two fields, one rule — and the only summary here where a
+  // field can be set and still not be what's running.
+  const atrSizing = riskUsd > 0 && stopMult > 0;
+  const parts: string[] = [];
+
+  if (atrSizing) {
+    // Same substitution as trail/stop above: the ATR form replaces the fixed
+    // number outright, and sizing_usd survives only as the fallback for when
+    // ATR can't be computed. The row used to show that fallback as the rule.
+    parts.push(`risk ${money(riskUsd)} / trade (${num(stopMult)}×ATR stop)`);
+  } else {
+    parts.push(`${money(s.sizing_usd)} / trade`);
+    // Half-configured ATR sizing is worth a line of its own. Silence here reads
+    // as "the risk budget you typed is in force", which is the failure this
+    // whole file exists to stop.
+    if (riskUsd > 0) parts.push(`ATR risk ${money(riskUsd)} unused — needs an ATR stop`);
+  }
+
+  // With ATR sizing on the sleeve does double duty: atr_position_size caps every
+  // computed size at it, so on a calm name the sleeve IS the per-trade size.
+  parts.push(atrSizing ? `${money(s.sleeve_usd)} sleeve & per-trade cap` : `${money(s.sleeve_usd)} sleeve`);
+  parts.push(`max ${num(s.max_positions)} positions`);
+
+  // Not a dollar figure, but it decides how many shares a dollar figure buys:
+  // off, a stock buy is rounded down to WHOLE shares, so $100 / trade buys none
+  // of a $400 name and the order is skipped. Crypto is fractional either way, so
+  // there only the order type changes.
+  if (s.params.execution?.market_orders) {
+    parts.push(s.asset_class === "crypto" ? "market orders" : "market orders, fractional shares");
+  }
+
+  // Both rails live under the editor's "volatility stops & sizing" section, and
+  // both change how much money is exposed rather than which rule fires.
+  if (s.allow_concurrent_symbol) parts.push("may double up on a symbol held elsewhere");
+  // Stock-only in the engine (crypto has no SPY regime), so saying it on a
+  // crypto card would advertise a rule that cannot fire.
+  if (s.ignore_regime && s.asset_class === "stock") parts.push("buys regardless of market regime");
+
+  return parts.join(SEP);
 }

@@ -3,6 +3,41 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## The strategy card now says how a position is actually sized (2026-08-07)
+
+The Sizing row said **$100 / trade** for a strategy that was not using $100 per
+trade. With **Risk $ per trade** switched on in the ATR section, the size is
+worked out from your risk budget instead — $50 of risk, spread over however far
+away that symbol's ATR stop sits — and the $100 is only the fallback for when
+ATR can't be worked out. Exactly the same substitution the trailing stop had one
+row up, found in the same place a day later.
+
+The row now names whichever mode is running:
+
+    risk $50 / trade (1.5×ATR stop) · $1,000 sleeve & per-trade cap · max 3 positions
+
+The sleeve gets the extra words because with risk-based sizing it does a second
+job: every computed size is capped at it, so on a calm, steady name the sleeve
+**is** the trade size.
+
+Four more things that were set and invisible now show up:
+
+- **A risk budget with no ATR stop does nothing.** Risk-based sizing divides by
+  the stop distance, so without an ATR stop there is nothing to divide by and
+  the engine quietly falls back to the fixed dollar amount. The row now says
+  `ATR risk $50 unused — needs an ATR stop` rather than letting the editor imply
+  it is in force.
+- **Market orders + fractional shares.** Off, a stock buy is rounded down to
+  whole shares — $100 per trade buys none of a $400 name and the buy is skipped.
+  On, it buys about a quarter of a share. Same $100 on the card, opposite
+  outcomes. (For crypto only the order type changes, so that is all it claims.)
+- **Letting a strategy double up on a symbol another one holds** — your real
+  exposure to that name is then the sum of both positions.
+- **Ignoring the market-regime filter**, on stock strategies, where it fires.
+
+As with the entry and exit rows, the suite now fails if a new sizing or risk
+field is added to the backend and nobody decides whether the card should say so.
+
 ## The strategy card now names every rule that is actually running (2026-08-07)
 
 "max $20 swing trader" summarised itself as **trail 6% · stop 1.5×ATR · target

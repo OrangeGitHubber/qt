@@ -36,7 +36,14 @@ from pathlib import Path
 
 import pytest
 
-from qt.api.strategies import EntryRules, ExitRules, StrategyParams
+from qt.api.strategies import (
+    ATRConfig,
+    EntryRules,
+    ExecutionConfig,
+    ExitRules,
+    StrategyBody,
+    StrategyParams,
+)
 
 SUMMARY_TS = (
     Path(__file__).resolve().parents[2] / "frontend" / "src" / "lib" / "strategySummary.ts"
@@ -94,13 +101,19 @@ _TOGETHER = {"entry_window_start": "entry_window_end", "entry_window_end": "entr
 
 _DRIVER = """
 import { readFileSync } from "node:fs";
-import { entrySummary, exitSummary } from %(module)s;
+import { entrySummary, exitSummary, sizingSummary } from %(module)s;
 
 const cases = JSON.parse(readFileSync(process.argv[2], "utf8"));
-const out = cases.map((c) => ({
-  entry: entrySummary(c.params),
-  exit: exitSummary(c.params, c.top_n),
-}));
+const out = cases.map((c) => {
+  // Sizing reads fields from outside `params` (the sleeve, the rails), so it
+  // needs a whole row. Cases that only assert on entry/exit don't build one.
+  const params = c.params ?? c.row.params;
+  return {
+    entry: entrySummary(params),
+    exit: exitSummary(params, c.top_n),
+    sizing: c.row ? sizingSummary(c.row) : null,
+  };
+});
 process.stdout.write(JSON.stringify(out));
 """
 
@@ -234,6 +247,187 @@ def test_both_atr_multipliers_reach_the_summary(summarise, mult):
     )
     assert "2.5×ATR" in changed["exit"]
     assert changed["exit"] != base["exit"]
+
+
+# --- Sizing -----------------------------------------------------------------
+#
+# The same bug a third time. The row rendered "$100 / trade" from `sizing_usd`
+# while `atr.risk_usd` was what actually decided the size — sizing_usd being, as
+# with trailing_stop_pct, only the fallback for when ATR can't be computed. A
+# reader of the card could not tell which of the two modes was running.
+#
+# One thing here has no analogue in the exits: ATR sizing needs BOTH risk_usd
+# and stop_mult (the size is derived from the stop distance). So risk_usd alone
+# is set, saved, shown in the editor — and inert.
+
+# The knobs that decide how much money goes into a position, and what may be
+# exposed at once. Everything else on StrategyBody picks WHICH symbols or WHICH
+# rules, and is named by another row of the same card.
+_SIZING_MODELS = {
+    "": StrategyBody,
+    "params.atr.": ATRConfig,
+    "params.execution.": ExecutionConfig,
+}
+
+_SIZING_EXCLUDED = {
+    # Identity and provenance — not settings the engine acts on.
+    "name": "the card's title",
+    "notes": "shown in full under the card; never read by the engine",
+    "preset": "a provenance label; changes no behaviour",
+    "optimized_from_id": "the Lineage row",
+    "optimized_days": "the Lineage row",
+    # WHICH symbols, not how much of them.
+    "asset_class": "the Trades row",
+    "universe": "the Trades row",
+    "basket_id": "the Trades row",
+    "symbols": "the Trades row",
+    "rank_by": "the Trades row",
+    "rank_enabled": "the Trades row",
+    "top_n": "the Trades row, and the Exit row's rank rotation",
+    "swing_mode": "the Trades row",
+    # WHICH rules, not how much.
+    "params": "the Entry and Exit rows; its sizing blocks are enumerated above",
+    # ATR knobs that aren't about size.
+    "params.atr.trail_mult": "the trailing stop — the Exit row shows it",
+    "params.atr.period": "how ATR is measured, not how much is bought",
+}
+
+_SIZING_ON = {
+    "sizing_usd": 250.0,  # default 200
+    "sleeve_usd": 5000.0,  # default 1000
+    "max_positions": 7,  # default 3
+    "allow_concurrent_symbol": True,
+    "ignore_regime": True,
+    "params.atr.risk_usd": 50.0,
+    "params.atr.stop_mult": 1.5,
+    "params.execution.market_orders": True,
+}
+
+# risk_usd and stop_mult are ONE rule wearing two fields, like the entry window:
+# a risk budget with no stop multiple sizes nothing, so they switch on together.
+_SIZING_TOGETHER = {
+    "params.atr.risk_usd": "params.atr.stop_mult",
+    "params.atr.stop_mult": "params.atr.risk_usd",
+}
+
+
+def _row(**overrides) -> dict:
+    """A default StrategyBody as JSON, with dotted overrides applied at any depth.
+
+    This is what the card hands to sizingSummary — StrategyRow in the frontend,
+    StrategyBody here, and the point of building it from the pydantic model is
+    that a field added there shows up in these tests without anyone editing them.
+    """
+    row = StrategyBody(name="s", asset_class="stock").model_dump(mode="json")
+    for key, value in overrides.items():
+        node = row
+        *path, leaf = key.split(".")
+        for step in path:
+            if node.get(step) is None:
+                node[step] = {}
+            node = node[step]
+        node[leaf] = value
+    return row
+
+
+# A strategy sized by risk, not by a fixed dollar amount: $50 of risk per trade,
+# stopped out at 1.5x the symbol's own ATR. The $100 is the fallback.
+ATR_SIZED = _row(
+    **{
+        "sizing_usd": 100,
+        "sleeve_usd": 1000,
+        "max_positions": 3,
+        "params.atr.period": 14,
+        "params.atr.stop_mult": 1.5,
+        "params.atr.risk_usd": 50,
+    }
+)
+
+
+def test_atr_sizing_displaces_the_fixed_dollar_amount(summarise):
+    """The reported row, end to end.
+
+    Two claims, because the row made two mistakes at once: it named a number
+    that decides nothing, and it never named the one that does.
+    """
+    (got,) = summarise([{"row": ATR_SIZED}])
+    assert got["sizing"] == (
+        "risk $50 / trade (1.5×ATR stop) · $1,000 sleeve & per-trade cap · max 3 positions"
+    )
+    assert "$100 / trade" not in got["sizing"]
+
+
+def test_the_fixed_dollar_amount_stays_while_atr_sizing_is_off(summarise):
+    """The fallback is not a lie when it is the thing in use.
+
+    The obvious over-correction — dropping sizing_usd whenever an `atr` block
+    exists — would blank the size for every strategy using only an ATR stop.
+    """
+    (got,) = summarise([{"row": _row(**{"sizing_usd": 100, "params.atr.stop_mult": 1.5})}])
+    assert "$100 / trade" in got["sizing"]
+    assert "ATR stop)" not in got["sizing"]
+
+
+def test_a_risk_budget_with_no_atr_stop_is_named_as_unused(summarise):
+    """risk_usd alone sizes nothing — the engine needs stop_mult to divide by.
+
+    Saying nothing would leave the editor showing "Risk $ per trade: 50" beside
+    a card implying it is in force, which is the failure this file exists for.
+    """
+    (got,) = summarise([{"row": _row(**{"sizing_usd": 100, "params.atr.risk_usd": 50})}])
+    assert "$100 / trade" in got["sizing"]
+    assert "ATR risk $50 unused — needs an ATR stop" in got["sizing"]
+
+
+def test_market_orders_are_named_because_they_change_the_share_count(summarise):
+    """Off, a $100 trade buys ZERO whole shares of a $400 stock and is skipped;
+    on, it buys a quarter of one. Same $100 on the card, opposite outcomes.
+
+    Crypto is fractional either way, so only the order type is claimed there —
+    promising "fractional shares" would describe nothing.
+    """
+    on = {"params.execution.market_orders": True}
+    stock, crypto = summarise(
+        [{"row": _row(**on)}, {"row": _row(asset_class="crypto", **on)}]
+    )
+    assert "market orders, fractional shares" in stock["sizing"]
+    assert "market orders" in crypto["sizing"]
+    assert "fractional" not in crypto["sizing"]
+
+
+def test_the_regime_override_is_claimed_only_where_it_can_fire(summarise):
+    """Stock-only in the engine — crypto has no SPY regime to ignore."""
+    stock, crypto = summarise(
+        [
+            {"row": _row(ignore_regime=True)},
+            {"row": _row(asset_class="crypto", ignore_regime=True)},
+        ]
+    )
+    assert "regardless of market regime" in stock["sizing"]
+    assert "regime" not in crypto["sizing"]
+
+
+@pytest.mark.parametrize(
+    "field",
+    sorted(
+        f"{prefix}{name}"
+        for prefix, model in _SIZING_MODELS.items()
+        for name in model.model_fields
+    ),
+)
+def test_every_sizing_field_that_is_switched_on_is_visible(summarise, field):
+    if field in _SIZING_EXCLUDED:
+        pytest.skip(f"deliberately omitted: {_SIZING_EXCLUDED[field]}")
+    assert field in _SIZING_ON, (
+        f"{field} is a new sizing/risk field. Render it in sizingSummary(), or "
+        f"add it to _SIZING_EXCLUDED with the reason it does not size a position."
+    )
+    overrides = {field: _SIZING_ON[field]}
+    partner = _SIZING_TOGETHER.get(field)
+    if partner:
+        overrides[partner] = _SIZING_ON[partner]
+    base, changed = summarise([{"row": _row()}, {"row": _row(**overrides)}])
+    assert changed["sizing"] != base["sizing"], f"{field} can be set without the card saying so"
 
 
 def test_a_sleeve_with_no_exits_says_so(summarise):
