@@ -3,6 +3,39 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## The strategy card now names every rule that is actually running (2026-08-07)
+
+"max $20 swing trader" summarised itself as **trail 6% · stop 1.5×ATR · target
+100%**. One of those numbers was wrong and one whole rule was missing.
+
+The trail was not 6%. With the ATR trail switched on at 1.5×, the fixed 6% is
+only the **fallback** for when ATR can't be worked out — the editor's own help
+text says exactly that, one click away. The card substituted the ATR multiple
+for the hard stop and then didn't do the same for the trail, so the two halves
+of the same line disagreed about the same idea.
+
+And **"give back at most 20% of the gain" was nowhere on the card at all.** That
+rule sells your position; it had been running unmentioned since the day it was
+added, because the summary was written by hand and nothing made it keep up.
+
+Both are fixed, and the class of bug is fixed with them. The summary now names
+every entry and exit rule that is switched on — the price band, the RSI band and
+the RSI cross, the entry time window, max holding time, flatten-before-close,
+the VWAP and MACD exits, the RSI exits, the SPY-regime exit, and rank rotation —
+each appearing only when it is on, so a simple strategy still reads in one line:
+
+    trail 1.5×ATR · stop 1.5×ATR · target 100% · give back 20%
+
+A buy-and-hold DCA sleeve, which is allowed to run with every exit off, now says
+"no exit rules — held" instead of "trail 0% · stop 0%", which read like a stop
+set at the worst possible level.
+
+Slippage stays off the line on purpose: it prices an order once the decision is
+already made, and never decides whether to trade.
+
+The suite now fails if a **new** rule is added to the backend without the card
+learning about it — which is the only reason the give-back went missing.
+
 ## Ticking an overlay now puts its number in the readout (2026-08-05)
 
 SPCE's detail chart with **RSI** and **Rel. strength vs SPY** ticked showed both

@@ -14,6 +14,12 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      # test_strategy_summary.py EXECUTES the frontend's summary builders (node
+      # strips the TypeScript and runs the .ts module as-is), which is the only
+      # way a backend test can hold the card and the rule model side by side.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
       - run: pip install ./backend[dev]
       - run: pytest backend/tests -v
 

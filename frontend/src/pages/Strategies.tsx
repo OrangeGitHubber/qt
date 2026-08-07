@@ -35,6 +35,7 @@ import {
 } from "../components/icons";
 import { fmtClock, fmtDateTime, zoneAbbr } from "../lib/datetime";
 import { consumeNav, requestNav } from "../lib/nav";
+import { entrySummary, exitSummary } from "../lib/strategySummary";
 
 const RANK_LABELS: Record<RankBy, string> = {
   momentum_today: "Today's % move (momentum)",
@@ -1854,23 +1855,15 @@ export default function Strategies() {
             </div>
             <div>
               <dt>Entry</dt>
-              <dd>
-                {/* 0 = off, so "+0% day" would advertise a rule that isn't there. */}
-                {Number(r.params.entry.min_day_gain_pct) !== 0
-                  ? `${Number(r.params.entry.min_day_gain_pct) > 0 ? "+" : ""}${r.params.entry.min_day_gain_pct}% day`
-                  : "any day move"}
-                {r.params.entry.require_above_vwap ? ", above VWAP" : ""}
-              </dd>
+              {/* Both summaries live in lib/strategySummary.ts — see the header
+                  there for why. In short: written inline, they stopped tracking
+                  the rules, and a rule the card omits is a rule the user cannot
+                  know is running. */}
+              <dd>{entrySummary(r.params)}</dd>
             </div>
             <div>
               <dt>Exit</dt>
-              <dd>
-                trail {r.params.exit.trailing_stop_pct}% · stop{" "}
-                {Number(r.params.atr?.stop_mult || 0) > 0
-                  ? `${Number(r.params.atr!.stop_mult)}×ATR`
-                  : `${r.params.exit.stop_loss_pct}%`}
-                {r.params.exit.take_profit_pct ? ` · target ${r.params.exit.take_profit_pct}%` : ""}
-              </dd>
+              <dd>{exitSummary(r.params, r.top_n)}</dd>
             </div>
             <div>
               <dt>Sizing</dt>
