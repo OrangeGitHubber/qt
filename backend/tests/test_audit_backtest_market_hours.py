@@ -15,12 +15,17 @@ and at 16:00:00 ET it is. The simulator had no equivalent gate: it buckets days
 by the ET session but never asked whether a bar sat inside trading hours, so it
 got one decision point per day that the engine never has — and it spent it.
 
-EXITS ARE NOT GATED HERE, and that is a known remaining difference rather than
-an oversight: live skips stock EXITS when the market is shut too (see
-engine._manage_exits), so a stop hit on the closing print does not fire live
-until the next open. Changing that moves every stop, target and trailing exit in
-the suite, and it deserves its own measurement rather than riding along with a
-fix for entries. Named here so the gap is on the record.
+EXITS ARE NOW GATED TOO, as of 2026-08-07 — see `test_audit_exit_market_hours`.
+This file covers the ENTRY half only; the two are separate because they were
+fixed a session apart, and because the exit half needed `last_of_day` moved onto
+the last bar the market was open for or `flatten_before_close` would have
+stopped firing entirely.
+
+The prediction made here, that gating exits "moves every stop, target and
+trailing exit in the suite", turned out to be wrong: it moved none of them. Every
+existing fixture already sits inside 09:30–16:00, so the change was invisible to
+the suite and had to be pinned by tests written for it. Worth remembering the
+next time cost is estimated from a fixture's blast radius rather than measured.
 """
 
 from datetime import datetime, timedelta, timezone

@@ -3,6 +3,44 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## The backtest no longer sells when the market is shut (2026-08-07)
+
+A backtest could stop out at 08:15 in the morning or flatten at 16:30 in the
+evening. The live engine cannot do either — it checks the broker's clock and
+skips stock exits outright while the market is closed — so every one of those
+sales was a trade the report showed you and your account never made.
+
+The entry side was fixed back on 2026-08-04. The exit side was left, on the
+reasoning that changing it "moves every stop, target and trailing exit in the
+suite". That estimate turned out to be wrong: it moved none of them, because
+every existing test already sat inside trading hours. The real cost was one
+afternoon.
+
+**How big is it?** Measured against your own cached bars, not guessed: the
+15-minute stock series runs **08:00 to 16:45 New York time, 36 bars a day**, of
+which only 26 are inside the 09:30–16:00 session. **Ten bars a day — 28% of
+every decision the backtest makes — were moments the engine was switched off.**
+
+Two halves, because the obvious fix breaks something quietly:
+
+- Exits are now refused outside the session, in both the single-strategy and
+  the portfolio backtester. The high-water mark used by trailing stops stops
+  updating there too: the engine cannot trail a stop against a price it never
+  looked at.
+- **"Flatten before close" had to be moved with it.** It fires on the last bar
+  of the day, and the last bar of an 08:00–16:45 series is 16:45 — outside the
+  session. Gate the exits without moving it and the rule silently never fires
+  again, leaving positions overnight, which is the exact opposite of what it
+  promises. It now fires on the last bar the market was actually open for.
+
+Crypto is untouched: a 24/7 book has no session to be outside of. Daily
+backtests are untouched: a daily bar is a whole session rather than an instant
+inside one, and it is stamped outside trading hours by design.
+
+**What this means for your old results.** Any intraday stock backtest run before
+today may show exits that could not have happened. Re-run anything you were
+relying on. Crypto and daily-resolution results are unaffected.
+
 ## A DCA sleeve's card no longer claims entry rules it never uses (2026-08-07)
 
 Same audit, third row — and this one was not a wrong number, it was a wrong

@@ -1274,6 +1274,17 @@ def _in_trading_session(ts: datetime, asset_class: str, bar: dict) -> bool:
     # somebody chose, not a free trade every day, and it is the smaller error.
     if bar.get("first_of_day") and bar.get("last_of_day"):
         return True
+    return _in_session_ts(ts)
+
+
+def _in_session_ts(ts: datetime) -> bool:
+    """09:30 <= t < 16:00 ET. The bar's stamp is its OPENING minute, so 15:45 is
+    the last bar inside the session and 16:00 is already outside it.
+
+    Split out of `_in_trading_session` so `_move_last_of_day_into_session` asks
+    the identical question. Two copies of "what are trading hours" is exactly
+    how the entry gate and the exit gate would drift apart, and this file's own
+    history is mostly fixes that landed on one of two paths."""
     et = ts.astimezone(ET)
     return (9, 30) <= (et.hour, et.minute) < (16, 0)
 
@@ -1502,7 +1513,10 @@ def _rolling_ref_at(ts: datetime) -> datetime:
     return ts.replace(minute=0, second=0, microsecond=0) - timedelta(hours=23)
 
 
-def _prepare(bars: list[dict], day_of=_et_day, rolling_24h: bool = False) -> list[dict]:
+def _prepare(
+    bars: list[dict], day_of=_et_day, rolling_24h: bool = False,
+    stock_session: bool = False,
+) -> list[dict]:
     """Annotate each bar with day-gain and a running intraday VWAP. `day_of`
     buckets bars into trading days (ET for stocks, UTC for crypto).
 
@@ -1511,7 +1525,15 @@ def _prepare(bars: list[dict], day_of=_et_day, rolling_24h: bool = False) -> lis
     live engine's rolling 24h figure measures from — see _rolling_ref_at, which
     is where the "~24h" is pinned down exactly. On DAILY crypto bars that lands on
     the previous daily bar either way, so daily backtests are unchanged; on
-    intraday bars it is what makes the replay's day-gain the engine's day-gain."""
+    intraday bars it is what makes the replay's day-gain the engine's day-gain.
+
+    `stock_session` moves `last_of_day` onto the last bar the market was OPEN
+    for. Measured 2026-08-07: the cached stock series spans 08:00-16:45 ET, so
+    ten of every thirty-six bars sit outside regular hours. Once exits are gated
+    to the session (see `_in_trading_session`), the naive "last bar of the day"
+    lands at 16:45 — a bar nothing may act on — and `flatten_before_close` would
+    silently stop firing altogether. This is the half of the gate that is not
+    the gate, and leaving it out is why the fix was deferred once already."""
     out = []
     prev_day_close: float | None = None
     cur_day: str | None = None
@@ -1569,7 +1591,36 @@ def _prepare(bars: list[dict], day_of=_et_day, rolling_24h: bool = False) -> lis
             }
         )
         last_close = float(bar["c"])
+    if stock_session:
+        _move_last_of_day_into_session(out)
     return out
+
+
+def _move_last_of_day_into_session(prepared: list[dict]) -> None:
+    """Re-point `last_of_day` at the last bar of each day the market was OPEN.
+
+    In place, and only for stocks. A day whose bars are ALL outside the session
+    keeps its original last bar: `flatten_before_close` firing on the wrong bar
+    is bad, but a held position with no flatten bar at all is worse, and a
+    window clipped to pre-market only is a boundary the caller chose. A day of
+    exactly one bar is a DAILY bar and is left alone entirely — the same
+    exemption `_in_trading_session` makes, for the same reason."""
+    by_day: dict[str, list[dict]] = {}
+    for bar in prepared:
+        by_day.setdefault(bar["day"], []).append(bar)
+    for day_bars in by_day.values():
+        # No `len(day_bars) < 2` guard, deliberately. A DAILY bar is exempt
+        # either way and there is no fixture that can tell the two apart: alone
+        # and inside the session it is re-flagged True, which it already was;
+        # alone and outside it, `not tradable` below keeps it untouched. The
+        # guard was there and survived every mutation, which is the definition
+        # of a branch no test can reach.
+        tradable = [b for b in day_bars if _in_session_ts(b["ts"])]
+        if not tradable:
+            continue                      # keep whatever the day already had
+        for bar in day_bars:
+            bar["last_of_day"] = False
+        tradable[-1]["last_of_day"] = True
 
 
 def _max_drawdown(equity: list[float]) -> float:
@@ -1771,7 +1822,8 @@ def run_backtest(
         # portfolio backtester all used the rolling 24h baseline. Same bars, a
         # 2.4x different number. run_portfolio_backtest already keyed off the
         # asset class for exactly this reason; this path never caught up.
-        s: _prepare(b, day_of, rolling_24h=strategy["asset_class"] == "crypto")
+        s: _prepare(b, day_of, rolling_24h=strategy["asset_class"] == "crypto",
+                    stock_session=strategy["asset_class"] == "stock")
         for s, b in bars_by_symbol.items()
         if b
     }
@@ -1963,6 +2015,18 @@ def run_backtest(
             # It supplies no trigger level, so `_fill_price` fills at the bar's
             # close — which is right: a rotation is a market sell on a ranking
             # decision, not a level being breached.
+            # THE MARKET'S OWN HOURS, on the way OUT as well as in. The entry
+            # side has been gated since `dcefd01`; this side never was, so the
+            # replay could stop out at 08:15 or flatten at 16:30 on bars the
+            # live engine refuses -- `engine._manage_exits` returns early for a
+            # stock while the market is shut. Measured 2026-08-07: ten of every
+            # thirty-six cached stock bars (08:00-16:45 ET) sit outside the
+            # session, so this was 28 percent of the decision points.
+            #
+            # `continue` skips the high-water update too, deliberately: live
+            # cannot trail a stop against a price it never acted on.
+            if not _in_trading_session(ts, strategy["asset_class"], bar):
+                continue
             rotated = rotation_top is not None and symbol not in rotation_top
             price = bar["close"]
             # The peak is the bar's HIGH, not its close — a trailing stop trails
@@ -2538,7 +2602,9 @@ def run_portfolio_backtest(
             # Rolling 24h day-gain for a CRYPTO strategy's bars (its own asset
             # class, not the portfolio's day-bucketing market — a mixed book
             # keeps each side's own baseline).
-            s: _prepare(b, day_of, rolling_24h=strat_by_id[sid]["asset_class"] == "crypto")
+            s: _prepare(b, day_of,
+                        rolling_24h=strat_by_id[sid]["asset_class"] == "crypto",
+                        stock_session=strat_by_id[sid]["asset_class"] == "stock")
             for s, b in (bars_by_strategy.get(sid) or {}).items()
             if b
         }
@@ -2671,6 +2737,18 @@ def run_portfolio_backtest(
             if not bar:
                 continue
             strat = strat_by_id[trade.strategy_id]
+            # THE MARKET'S OWN HOURS, on the way OUT as well as in. The entry
+            # side has been gated since `dcefd01`; this side never was, so the
+            # replay could stop out at 08:15 or flatten at 16:30 on bars the
+            # live engine refuses -- `engine._manage_exits` returns early for a
+            # stock while the market is shut. Measured 2026-08-07: ten of every
+            # thirty-six cached stock bars (08:00-16:45 ET) sit outside the
+            # session, so this was 28 percent of the decision points.
+            #
+            # `continue` skips the high-water update too, deliberately: live
+            # cannot trail a stop against a price it never acted on.
+            if not _in_trading_session(ts, strat["asset_class"], bar):
+                continue
             price = bar["close"]
             trade.high_water = max(trade.high_water, bar["high"])
             trigger = {}
