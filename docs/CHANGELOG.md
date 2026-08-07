@@ -3,6 +3,33 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## The pre-search generation warning now says which history was already used (2026-08-07)
+
+Picking a strategy on the Optimizer already warns you, before you start, that it
+came out of an earlier search — "Generation 3: this strategy came out of 2
+earlier searches". That warning was missing its most useful sentence, the one
+the result-side version has: whether those earlier searches used **the same
+window you have set right now**.
+
+It was half-built rather than absent. The count existed, it was just never
+displayed, and it was counting the wrong thing — every ancestor with a recorded
+day count, instead of the ones matching the History (days) box sitting three
+lines above the warning. So it would have claimed a match no matter what you
+typed there.
+
+Now the warning ends with one of:
+
+- *That earlier run used the same 180-day window.*
+- *2 of those earlier runs used the same 180-day window.*
+- *The earlier runs used different spans (200, 180 days).*
+
+The last one is not a reprieve, and the sentence after it still says so: every
+window ends today, so a 200-day run contains the 180-day one. Changing the day
+count is not fresh data. New symbols, or waiting, is.
+
+The wording now matches what the result prints when the run finishes, because
+the two were computed by different code that disagreed about the same question.
+
 ## The strategy card now says how a position is actually sized (2026-08-07)
 
 The Sizing row said **$100 / trade** for a strategy that was not using $100 per

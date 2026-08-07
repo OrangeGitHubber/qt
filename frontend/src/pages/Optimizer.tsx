@@ -144,9 +144,14 @@ function deriveSearchTimeframe(s: StrategyRow | undefined): "1Day" | "15Min" {
 // The out-of-sample split is honest exactly once per slice of history: optimize a
 // draft that came out of an earlier search and you are choosing settings while
 // already knowing how they scored on the supposedly held-out part.
-function generationOf(strategy: StrategyRow | undefined, all: StrategyRow[]): {
+function generationOf(
+  strategy: StrategyRow | undefined,
+  all: StrategyRow[],
+  days: number,
+): {
   generation: number;
   sameWindow: number;
+  windows: number[];
   root: string | null;
 } {
   const byId = new Map(all.map((s) => [s.id, s]));
@@ -154,16 +159,42 @@ function generationOf(strategy: StrategyRow | undefined, all: StrategyRow[]): {
   let current = strategy;
   let generation = 1;
   let sameWindow = 0;
+  const windows: number[] = [];
   let root: string | null = null;
   while (current?.optimized_from_id != null && !seen.has(current.id)) {
     seen.add(current.id);
     generation += 1;
-    if (current.optimized_days != null) sameWindow += 1;
+    if (current.optimized_days != null) {
+      windows.push(current.optimized_days);
+      // Against the day count the form has set RIGHT NOW, which is the whole
+      // point of saying it here: it's the one field on this page that changes
+      // the answer, and it's sitting a few lines above the warning.
+      if (current.optimized_days === days) sameWindow += 1;
+    }
     const parent = byId.get(current.optimized_from_id);
     root = parent?.name ?? root;
     current = parent;
   }
-  return { generation, sameWindow, root };
+  return { generation, sameWindow, windows, root };
+}
+
+// Which history the earlier searches in this line actually used. Worth a sentence
+// because the two cases feel different and only one of them is: re-running the
+// same window is obviously picking against data already picked against, but so is
+// changing 180 to 200, because every window ends today and the short one sits
+// inside the long one. Neither buys fresh history — say which it is, then say so.
+function sameWindowNote(line: { sameWindow: number; windows: number[] }, days: number): string | null {
+  if (line.sameWindow > 0) {
+    if (line.sameWindow === line.windows.length)
+      return line.windows.length === 1
+        ? `That earlier run used the same ${days}-day window.`
+        : `All ${line.sameWindow} of those earlier runs used the same ${days}-day window.`;
+    return `${line.sameWindow} of those earlier runs used the same ${days}-day window.`;
+  }
+  if (line.windows.length === 0) return null; // ancestry with no recorded window
+  return line.windows.length === 1
+    ? `The earlier run used a different span (${line.windows[0]} days).`
+    : `The earlier runs used different spans (${line.windows.join(", ")} days).`;
 }
 
 function Stat({ label, value, tone, sub }: { label: string; value: string; tone?: "up" | "down"; sub?: string }) {
@@ -782,8 +813,9 @@ export default function Optimizer() {
             // Shown BEFORE the run, not only on the result: a search takes
             // minutes, and being told afterwards that the number was never
             // independent is the wrong moment to learn it.
-            const line = generationOf(strategy, strategies);
+            const line = generationOf(strategy, strategies, days);
             if (!strategy || line.generation < 2) return null;
+            const note = sameWindowNote(line, days);
             return (
               <p className="hint warn">
                 <IconWarn className="icon-inline" />{" "}
@@ -794,9 +826,9 @@ export default function Optimizer() {
                 </strong>{" "}
                 The out-of-sample figure is only independent the <em>first</em> time a slice of history is searched.
                 Searching a draft that came out of an earlier search means choosing settings while already knowing how
-                they scored on the held-out part — so it isn't held out any more, and the result will flatter itself.
-                Changing the <strong>symbols</strong>, or waiting for new history, is what buys data this line hasn't
-                been fitted to; a different day count doesn't, because every window ends today.
+                they scored on the held-out part — so it isn't held out any more, and the result will flatter itself.{" "}
+                {note} Changing the <strong>symbols</strong>, or waiting for new history, is what buys data this line
+                hasn't been fitted to; a different day count doesn't, because every window ends today.
               </p>
             );
           })()}
