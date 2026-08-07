@@ -1859,7 +1859,7 @@ export default function Strategies() {
                   there for why. In short: written inline, they stopped tracking
                   the rules, and a rule the card omits is a rule the user cannot
                   know is running. */}
-              <dd>{entrySummary(r.params)}</dd>
+              <dd>{entrySummary(r)}</dd>
             </div>
             <div>
               <dt>Exit</dt>

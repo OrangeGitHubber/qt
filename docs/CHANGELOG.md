@@ -3,6 +3,39 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## A DCA sleeve's card no longer claims entry rules it never uses (2026-08-07)
+
+Same audit, third row — and this one was not a wrong number, it was a wrong
+row. A dollar-cost-averaging sleeve buys its fixed symbol list **on a calendar**;
+the engine hands it to its own path and never once looks at the momentum rules.
+The Entry row rendered them anyway, so a sleeve that buys every Monday come
+what may described itself as
+
+    +3% day · above VWAP
+
+Two rules named, neither of them running. It now reads
+
+    every 7 days on schedule — entry rules don't apply
+
+The exit half of the card already knew DCA sleeves were different ("no exit
+rules — held"); the entry half didn't.
+
+The same override reaches the **Sizing** row, which was fixed only hours ago:
+scheduled lots are always bought at the fixed dollar amount, so a sleeve with
+ATR risk-sizing switched on says `ATR risk $50 unused — DCA lots buy the fixed
+size` rather than pretending the risk budget is in force.
+
+**The market-regime filter moved to the Entry row**, where it belongs — it
+blocks *buys* when the S&P 500 is under its 200-day average. Only the override
+is named (`buys even when SPY is below its 200-day`), because leaving it alone
+is the default and whether the filter runs at all also depends on the
+account-wide setting, which a card can't see. Stock strategies only; crypto has
+no S&P regime to ignore.
+
+One thing found and deliberately **not** changed: the MACD periods (12/26/9 by
+default) still don't appear next to "MACD bullish". They tune how the signal is
+measured rather than which rule fires, same as the ATR period — but if you ever
+run a non-standard MACD, the card won't tell you.
 ## The pre-search generation warning now says which history was already used (2026-08-07)
 
 Picking a strategy on the Optimizer already warns you, before you start, that it

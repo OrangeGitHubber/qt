@@ -38,6 +38,7 @@ import pytest
 
 from qt.api.strategies import (
     ATRConfig,
+    DCAConfig,
     EntryRules,
     ExecutionConfig,
     ExitRules,
@@ -105,12 +106,13 @@ import { entrySummary, exitSummary, sizingSummary } from %(module)s;
 
 const cases = JSON.parse(readFileSync(process.argv[2], "utf8"));
 const out = cases.map((c) => {
-  // Sizing reads fields from outside `params` (the sleeve, the rails), so it
-  // needs a whole row. Cases that only assert on entry/exit don't build one.
-  const params = c.params ?? c.row.params;
+  // Entry and sizing both read fields from outside `params` — the regime gate,
+  // the sleeve, the rails — so both take a row. A case that only asserts on the
+  // exits passes bare params and gets a row with nothing else set.
+  const row = c.row ?? { params: c.params };
   return {
-    entry: entrySummary(params),
-    exit: exitSummary(params, c.top_n),
+    entry: entrySummary(row),
+    exit: exitSummary(row.params, c.top_n),
     sizing: c.row ? sizingSummary(c.row) : null,
   };
 });
@@ -249,6 +251,113 @@ def test_both_atr_multipliers_reach_the_summary(summarise, mult):
     assert changed["exit"] != base["exit"]
 
 
+# --- Entry gates that live outside EntryRules --------------------------------
+#
+# The test above pins every field of EntryRules, which is what evaluate_entry
+# reads. But evaluate_entry is not the only thing that decides an entry, and the
+# two gates ABOVE it in _consider_entries were both invisible:
+#
+#   dca.interval_days  a DCA sleeve is handed to _consider_dca_entries and the
+#                      loop `continue`s, so evaluate_entry is NEVER CALLED. Every
+#                      EntryRules field is dead, and the row rendered them all.
+#                      Not one number wrong — the whole row wrong.
+#   ignore_regime      a column on the strategy, checked in the same loop, which
+#                      blocks stock buys while SPY is under its 200-day.
+#
+# A summary built only from `params.entry` could not see either one, which is
+# why entrySummary now takes the row.
+
+# Entry-deciding fields that are NOT in EntryRules. StrategyBody is enumerated
+# by the sizing property test, so only DCAConfig needs a source here — the
+# regime gate is asserted directly below.
+_ENTRY_GATE_EXCLUDED: dict[str, str] = {}
+
+_ENTRY_GATE_ON = {"params.dca.interval_days": 7}
+
+
+def test_a_dca_sleeve_does_not_pretend_to_have_entry_rules(summarise):
+    """The sleeve buys on a calendar; the momentum rules never run.
+
+    Two claims: the cadence is named, and the dead rules are gone. The second is
+    the one that matters — "+3% day · above VWAP" on a strategy that ignores both
+    is the most confident kind of wrong this file exists to prevent.
+    """
+    # The defaults are +3% day and above-VWAP, so a sleeve built from them is
+    # exactly the card the bug produced: two rules named, neither one running.
+    plain, dca = summarise(
+        [{"row": _row()}, {"row": _row(**{"params.dca.interval_days": 7})}]
+    )
+    assert plain["entry"] == "+3% day · above VWAP"
+    assert dca["entry"] == "every 7 days on schedule — entry rules don't apply"
+
+
+def test_a_daily_dca_sleeve_reads_as_english(summarise):
+    """`every 1 days` is the kind of detail that makes a card look generated."""
+    (got,) = summarise([{"row": _row(**{"params.dca.interval_days": 1})}])
+    assert got["entry"].startswith("every day on schedule")
+
+
+def test_a_dca_sleeve_is_not_claimed_to_use_atr_sizing(summarise):
+    """_consider_dca_entries calls open_trade WITHOUT the sizing_usd override.
+
+    So a scheduled lot is the fixed dollar amount even with ATR sizing fully
+    configured — the same branch that kills the entry rules reaches the Sizing
+    row too, and the two dead-ATR reasons are not the same problem.
+    """
+    row = _row(
+        **{
+            "sizing_usd": 100,
+            "params.atr.stop_mult": 1.5,
+            "params.atr.risk_usd": 50,
+            "params.dca.interval_days": 7,
+        }
+    )
+    (got,) = summarise([{"row": row}])
+    assert "$100 / trade" in got["sizing"]
+    assert "ATR risk $50 unused — DCA lots buy the fixed size" in got["sizing"]
+
+
+def test_the_regime_override_is_named_on_the_entry_row(summarise):
+    """It blocks buys, so it belongs beside the other things that block buys.
+
+    Stock-only, matching the engine — crypto has no SPY regime to ignore, and a
+    crypto card claiming otherwise would advertise a rule that cannot fire.
+    """
+    stock, crypto = summarise(
+        [
+            {"row": _row(ignore_regime=True)},
+            {"row": _row(asset_class="crypto", ignore_regime=True)},
+        ]
+    )
+    assert "buys even when SPY is below its 200-day" in stock["entry"]
+    assert "SPY" not in crypto["entry"]
+
+
+def test_the_regime_filter_left_on_says_nothing(summarise):
+    """Only the override is named.
+
+    Leaving it off is the default, and whether the filter then runs at all also
+    depends on the account-wide `regime_filter_enabled` setting, which no card
+    can see. Claiming the rule from the strategy alone would sometimes be false.
+    """
+    (got,) = summarise([{"row": _row(ignore_regime=False)}])
+    assert "SPY" not in got["entry"]
+
+
+@pytest.mark.parametrize("field", sorted(f"params.dca.{n}" for n in DCAConfig.model_fields))
+def test_every_entry_gate_outside_entryrules_is_visible(summarise, field):
+    if field in _ENTRY_GATE_EXCLUDED:
+        pytest.skip(f"deliberately omitted: {_ENTRY_GATE_EXCLUDED[field]}")
+    assert field in _ENTRY_GATE_ON, (
+        f"{field} is new. If it can decide whether a buy happens, render it in "
+        f"entrySummary(); otherwise add it to _ENTRY_GATE_EXCLUDED with the reason."
+    )
+    base, changed = summarise(
+        [{"row": _row()}, {"row": _row(**{field: _ENTRY_GATE_ON[field]})}]
+    )
+    assert changed["entry"] != base["entry"], f"{field} can be set without the card saying so"
+
+
 # --- Sizing -----------------------------------------------------------------
 #
 # The same bug a third time. The row rendered "$100 / trade" from `sizing_usd`
@@ -287,6 +396,7 @@ _SIZING_EXCLUDED = {
     "swing_mode": "the Trades row",
     # WHICH rules, not how much.
     "params": "the Entry and Exit rows; its sizing blocks are enumerated above",
+    "ignore_regime": "it blocks BUYS — the Entry row shows it",
     # ATR knobs that aren't about size.
     "params.atr.trail_mult": "the trailing stop — the Exit row shows it",
     "params.atr.period": "how ATR is measured, not how much is bought",
@@ -297,7 +407,6 @@ _SIZING_ON = {
     "sleeve_usd": 5000.0,  # default 1000
     "max_positions": 7,  # default 3
     "allow_concurrent_symbol": True,
-    "ignore_regime": True,
     "params.atr.risk_usd": 50.0,
     "params.atr.stop_mult": 1.5,
     "params.execution.market_orders": True,
@@ -393,18 +502,6 @@ def test_market_orders_are_named_because_they_change_the_share_count(summarise):
     assert "market orders, fractional shares" in stock["sizing"]
     assert "market orders" in crypto["sizing"]
     assert "fractional" not in crypto["sizing"]
-
-
-def test_the_regime_override_is_claimed_only_where_it_can_fire(summarise):
-    """Stock-only in the engine — crypto has no SPY regime to ignore."""
-    stock, crypto = summarise(
-        [
-            {"row": _row(ignore_regime=True)},
-            {"row": _row(asset_class="crypto", ignore_regime=True)},
-        ]
-    )
-    assert "regardless of market regime" in stock["sizing"]
-    assert "regime" not in crypto["sizing"]
 
 
 @pytest.mark.parametrize(

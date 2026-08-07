@@ -16,6 +16,12 @@
  *     read "trail 6% · stop 1.5×ATR" for a strategy whose trail was 1.5×ATR,
  *     contradicting the editor's own help text one click away.
  *
+ *  1b. A RULE CAN BE OVERRIDDEN WHOLESALE, not just substituted. `dca.interval_days`
+ *     is the extreme case: the engine hands a DCA sleeve to its own entry path
+ *     and never calls evaluate_entry, so every EntryRules field is dead and the
+ *     row said "+3% day · above VWAP" about a strategy that buys on a calendar.
+ *     The same branch skips the ATR-derived size, so it reaches sizing too.
+ *
  *  2. EVERY RULE THAT IS ON IS NAMED. Rules that are off contribute nothing, so
  *     a plain strategy still reads in one line; a strategy with ten rules on is
  *     long because it IS long. The only deliberate omissions are the slippage
@@ -50,9 +56,33 @@ function money(v: unknown): string {
   return `$${Number(v).toLocaleString("en-US", { maximumFractionDigits: 2 })}`;
 }
 
-export function entrySummary(params: StrategyParams): string {
+/** What `entrySummary` reads. Like `SizingInputs`, wider than `params`: the
+ *  regime gate is a column on the strategy, not an entry rule, and it decides
+ *  entries all the same. `StrategyRow` satisfies it structurally. */
+export interface EntryInputs {
+  params: StrategyParams;
+  asset_class?: "stock" | "crypto";
+  ignore_regime?: boolean;
+}
+
+/** `every 7 days`, `every day` — DCA's cadence, which is the whole entry rule. */
+function cadence(days: number): string {
+  return days === 1 ? "every day" : `every ${num(days)} days`;
+}
+
+export function entrySummary(s: EntryInputs): string {
+  const params = s.params;
   const e = params.entry;
   const parts: string[] = [];
+
+  // A DCA sleeve never reaches evaluate_entry: _consider_entries hands it to
+  // _consider_dca_entries and `continue`s, so the sleeve buys its fixed list on
+  // a calendar and EVERY rule below is dead. Rendering them anyway was not one
+  // number wrong, it was the whole row wrong — the strongest form of the bug
+  // this file was written for. The exit side already knows DCA is different
+  // ("no exit rules — held"); the entry side didn't.
+  const dcaDays = Number(params.dca?.interval_days) || 0;
+  if (dcaDays > 0) return `${cadence(dcaDays)} on schedule — entry rules don't apply`;
 
   // 0 = off, so "+0% day" would advertise a rule that isn't there.
   const minDay = Number(e.min_day_gain_pct) || 0;
@@ -82,6 +112,15 @@ export function entrySummary(params: StrategyParams): string {
 
   if (e.entry_window_start && e.entry_window_end) {
     parts.push(`${e.entry_window_start}–${e.entry_window_end} ET`);
+  }
+
+  // The regime gate lives on the strategy, not in EntryRules, but _consider_entries
+  // checks it and `continue`s — it blocks BUYS, so the Entry row is its home. Only
+  // the override is named: leaving it off is the default, and whether the filter
+  // then actually runs also depends on the account-wide `regime_filter_enabled`
+  // setting, which a card cannot see. Stock-only, matching the engine.
+  if (s.ignore_regime && s.asset_class === "stock") {
+    parts.push("buys even when SPY is below its 200-day");
   }
 
   return parts.join(SEP);
@@ -143,7 +182,6 @@ export interface SizingInputs {
   max_positions: number;
   asset_class?: "stock" | "crypto";
   allow_concurrent_symbol?: boolean;
-  ignore_regime?: boolean;
 }
 
 export function sizingSummary(s: SizingInputs): string {
@@ -155,7 +193,13 @@ export function sizingSummary(s: SizingInputs): string {
   // with no stop multiple computes nothing and sizing falls back to the fixed
   // dollar amount. Two fields, one rule — and the only summary here where a
   // field can be set and still not be what's running.
-  const atrSizing = riskUsd > 0 && stopMult > 0;
+  // A DCA sleeve is the third way ATR sizing can be configured and not running:
+  // _consider_dca_entries calls open_trade WITHOUT the sizing_usd override that
+  // the momentum path computes from atr_position_size, so a scheduled lot is
+  // always the fixed dollar amount. Found while auditing the Entry row, in this
+  // row — the same override that kills the entry rules also kills ATR sizing.
+  const isDca = (Number(s.params.dca?.interval_days) || 0) > 0;
+  const atrSizing = riskUsd > 0 && stopMult > 0 && !isDca;
   const parts: string[] = [];
 
   if (atrSizing) {
@@ -167,8 +211,15 @@ export function sizingSummary(s: SizingInputs): string {
     parts.push(`${money(s.sizing_usd)} / trade`);
     // Half-configured ATR sizing is worth a line of its own. Silence here reads
     // as "the risk budget you typed is in force", which is the failure this
-    // whole file exists to stop.
-    if (riskUsd > 0) parts.push(`ATR risk ${money(riskUsd)} unused — needs an ATR stop`);
+    // whole file exists to stop. The two reasons it can be inert are different
+    // problems, so they don't share a sentence.
+    if (riskUsd > 0) {
+      parts.push(
+        isDca
+          ? `ATR risk ${money(riskUsd)} unused — DCA lots buy the fixed size`
+          : `ATR risk ${money(riskUsd)} unused — needs an ATR stop`,
+      );
+    }
   }
 
   // With ATR sizing on the sleeve does double duty: atr_position_size caps every
@@ -184,12 +235,11 @@ export function sizingSummary(s: SizingInputs): string {
     parts.push(s.asset_class === "crypto" ? "market orders" : "market orders, fractional shares");
   }
 
-  // Both rails live under the editor's "volatility stops & sizing" section, and
-  // both change how much money is exposed rather than which rule fires.
+  // An exposure rail rather than a rule: it does gate an entry (the already-open
+  // -symbol check), but what it CHANGES is how much of one name you can end up
+  // owning, so it reads here and not on the Entry row. `ignore_regime`, which
+  // sits beside it in the editor, went the other way — see entrySummary.
   if (s.allow_concurrent_symbol) parts.push("may double up on a symbol held elsewhere");
-  // Stock-only in the engine (crypto has no SPY regime), so saying it on a
-  // crypto card would advertise a rule that cannot fire.
-  if (s.ignore_regime && s.asset_class === "stock") parts.push("buys regardless of market regime");
 
   return parts.join(SEP);
 }
