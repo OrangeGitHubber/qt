@@ -36,6 +36,7 @@ import {
 import { fmtClock, fmtDateTime, zoneAbbr } from "../lib/datetime";
 import { consumeNav, requestNav } from "../lib/nav";
 import { entrySummary, exitSummary, sizingSummary } from "../lib/strategySummary";
+import { defaultEntryWindow, stockOnlyWarnings, type AssetClass } from "../lib/strategyForm";
 
 const RANK_LABELS: Record<RankBy, string> = {
   momentum_today: "Today's % move (momentum)",
@@ -498,14 +499,19 @@ function Editor({
   const maxConcurrent = sizing > 0 ? Math.floor(sleeve / sizing) : 0;
   const stopPct = s.params?.exit.stop_loss_pct ?? 0;
   // A tight stop held overnight is hit by normal daily noise — a swing killer.
-  const tightSwingStop = !!s.swing_mode && stopPct > 0 && stopPct < 3;
+  const { tightSwingStop, vwapOnSwing } = stockOnlyWarnings({
+    assetClass: s.asset_class as AssetClass,
+    swingMode: !!s.swing_mode,
+    stopPct,
+    requireAboveVwap: !!s.params?.entry.require_above_vwap,
+  });
   // Setting the sleeve below what the strategy already holds sells nothing — it
   // just freezes NEW buys until exits free up room. Reassure, don't alarm.
   const sleeveBelowHoldings = heldExposure != null && sleeve > 0 && sleeve < heldExposure;
   // VWAP is an INTRADAY measure (it resets each session), so requiring it forces
   // intraday-bar backtests and doesn't belong in a daily/swing rotation whose
   // signals (RSI, MACD, relative strength) are all daily. Warn on swing + VWAP.
-  const vwapOnSwing = !!s.swing_mode && !!s.params?.entry.require_above_vwap;
+
 
   // --- How many positions can actually be open at once? Three separate caps the
   // engine applies (capital, the Max-positions knob, the universe size), shown
@@ -1007,8 +1013,9 @@ function Editor({
                 checked={windowOn}
                 onChange={(e) => {
                   if (e.target.checked) {
-                    setEntry("entry_window_start", "09:30");
-                    setEntry("entry_window_end", "15:30");
+                    const w = defaultEntryWindow(s.asset_class as AssetClass);
+                    setEntry("entry_window_start", w.start);
+                    setEntry("entry_window_end", w.end);
                   } else {
                     setEntry("entry_window_start", null);
                     setEntry("entry_window_end", null);

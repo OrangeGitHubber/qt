@@ -3,6 +3,34 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Three form decisions that got the asset class wrong (2026-08-07)
+
+All three were written inline, all three looked obviously right, and each was
+wrong for exactly one of the two asset classes — because none of them asked
+which one you were on.
+
+**A crypto backtest that took no trades said crypto was free.** The note branched
+on "were any fees charged", and zero fees is also what a run with zero trades
+looks like. So it announced that Alpaca charges no commission — about the single
+largest cost a crypto strategy carries. Crypto is 0.15–0.25% per side; on BTC
+that is roughly 98% of the entire round-trip cost. It now says no trades were
+taken, and what you would actually pay.
+
+**Turning on "limit entries to a time window" seeded 09:30–15:30 on crypto.** A
+US session on a 24/7 market silently discards about three quarters of the day.
+Switching a strategy to crypto already cleared that pair for exactly this
+reason; the checkbox put it straight back. Crypto now starts at the whole day,
+so switching the toggle on restricts nothing until you narrow it yourself.
+
+**Two warnings told crypto strategies to change a control they cannot see.**
+Both the tight-stop and the VWAP warning end with "set Trading style to
+Intraday" — and Trading style is not rendered for crypto at all. They are stock
+warnings now. (Swing mode does nothing for crypto in any case: the engine
+disables that deferral outright for a 24/7 asset.)
+
+All three moved into `strategyForm.ts`, where a test can execute them instead of
+searching the page for them.
+
 ## Long MACD settings now fetch enough history to work (2026-08-07)
 
 If you set a MACD slower than the 12/26/9 default, the backtest fetched the same

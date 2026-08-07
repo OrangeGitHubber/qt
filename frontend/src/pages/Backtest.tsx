@@ -19,6 +19,7 @@ import UniverseChips, { resolveUniverse } from "../components/UniverseChips";
 import { IconEdit, IconWarn } from "../components/icons";
 import { calendarDayMs, fmtCalendarDate, fmtDate, instantMs, zoneAbbr } from "../lib/datetime";
 import { consumeNav, requestNav } from "../lib/nav";
+import { feeNote, type AssetClass } from "../lib/strategyForm";
 
 type TradeEvent = {
   at: string; // ISO timestamp — drives ordering
@@ -1091,10 +1092,22 @@ export default function Backtest() {
                 crypto commission at the entry volume tier. Every result above is <strong>after</strong> those.
               </p>
             )}
-            {result.fees_paid === 0 && (
+            {/* Branch on the ASSET CLASS, not on the fee total. `fees_paid === 0`
+                is also true of a crypto run that simply took no trades, and this
+                note then told you crypto was commission-free — the opposite of
+                the truth, and the single largest cost in a crypto strategy
+                (0.25% a side is ~98% of BTC's whole round trip). */}
+            {feeNote((strategy?.asset_class ?? "stock") as AssetClass, result.fees_paid ?? 0) === "stock-free" && (
               <p className="hint">
                 No trading fees modelled: Alpaca charges no commission on US stocks (a sell carries a few cents of
                 regulatory fees, too small to model). Crypto is <em>not</em> free — it's charged 0.15–0.25% per side.
+              </p>
+            )}
+            {feeNote((strategy?.asset_class ?? "stock") as AssetClass, result.fees_paid ?? 0) === "crypto-untraded" && (
+              <p className="hint">
+                No fees appear above because this run took <strong>no trades</strong> — not because crypto is free.
+                Alpaca charges <strong>0.15–0.25% per side</strong>, so a round trip costs up to 0.5%. On a strategy
+                that trades often that is usually the largest single cost.
               </p>
             )}
             {result.scanner_replay &&
