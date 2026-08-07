@@ -796,12 +796,30 @@ def atr_position_size(
 
 
 def _daily_lookback_days(params: dict, want_atr: bool) -> int:
-    """Calendar-day window for the daily-bars fetch. MACD-only keeps the original
-    120-day window (so MACD-only fetches are unchanged); ATR widens it when its
-    period is large enough to need more than that."""
-    if not want_atr:
-        return MACD_LOOKBACK_DAYS
-    return max(MACD_LOOKBACK_DAYS, _atr_period(params) * 2 + 10)
+    """Calendar-day window for the daily-bars fetch, from the strategy's OWN
+    indicator periods.
+
+    `MACD_LOOKBACK_DAYS` is the floor, not the answer. It was the answer for
+    MACD until 2026-08-07, which made `warmup_days_for`'s promise — "from the
+    strategy's own indicator settings rather than one constant for everybody" —
+    true of ATR and false of MACD. The schema allows `slow` up to 200 and
+    `signal` up to 100, i.e. ~300 completed bars, against a flat 120 CALENDAR
+    days (~83 trading bars for a stock). The MACD was then undefined across the
+    opening stretch of the window, and an undefined MACD silently drops every
+    entry that asked for it — the failure looks like a strategy that does not
+    fire, not like a fetch that was too short.
+
+    Both terms use the same `n * 2 + 10` shape ATR already used: a calendar
+    window roughly double the bars needed, plus a margin for holidays. MACD
+    needs `slow + signal` bars for its signal line to exist at all.
+
+    Defaults are deliberately unchanged: 12/26/9 asks for (26+9)*2+10 = 80,
+    below the 120 floor, so every existing MACD-only fetch is byte-identical."""
+    _fast, slow, signal = _macd_periods(params)
+    need = max(MACD_LOOKBACK_DAYS, (slow + signal) * 2 + 10)
+    if want_atr:
+        need = max(need, _atr_period(params) * 2 + 10)
+    return need
 
 
 def _completed_daily_bars(bars: list[dict], asset_class: str) -> list[dict]:

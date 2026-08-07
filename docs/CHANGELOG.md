@@ -3,6 +3,31 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Long MACD settings now fetch enough history to work (2026-08-07)
+
+If you set a MACD slower than the 12/26/9 default, the backtest fetched the same
+120 days of history it always did — and a 100/50 MACD needs about 300 days
+before its signal line exists at all. The indicator was then **undefined** over
+the opening stretch of the window, and an undefined MACD does not complain: it
+silently refuses every entry that asked for it. The symptom is a strategy that
+mysteriously never fires, with nothing in the report pointing at the cause.
+
+The window is now sized from your own periods, the same way it already was for
+ATR. **Defaults are unchanged** — 12/26/9 asks for less than the 120-day floor,
+so every existing MACD strategy fetches exactly what it did yesterday.
+
+## Two rails were already fixed; the to-do list had not caught up (2026-08-07)
+
+Checked before changing anything, and both turned out to be done:
+
+- The replay's daily trade limit and daily-loss kill switch already reset at the
+  New York boundary, matching the live engine, rather than at midnight UTC.
+- Stablecoins are already skipped when the cache is read, so a backtest cannot
+  trade a USDC pair the live engine refuses.
+
+Both landed in an earlier session and stayed on the list. Recorded here because
+"already fixed" is worth as much as "fixed" when you are deciding what to trust.
+
 ## The backtest no longer sells when the market is shut (2026-08-07)
 
 A backtest could stop out at 08:15 in the morning or flatten at 16:30 in the
