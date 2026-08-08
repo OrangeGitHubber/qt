@@ -3,6 +3,41 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## "Flatten before close" gives up where the return actually is (2026-08-08)
+
+Measured on five large-cap US names over 318 sessions from this app's own bar
+cache, splitting each day into the **gap** (previous close → next open, held
+while the market is shut) and the **session** (open → close):
+
+|      | $100 gap only | $100 session only | $100 buy & hold |
+|------|---------------|-------------------|-----------------|
+| MSFT | **118.96**    | 98.82             | 115.90          |
+| AAPL | 114.15        | 128.83            | 149.91          |
+| AMD  | **328.14**    | 152.44            | 486.58          |
+| AAL  | **165.51**    | 96.09             | 158.87          |
+| NVDA | **198.23**    | 101.27            | 197.09          |
+
+On four of the five, every point of gain arrived overnight and the session
+contributed nothing or lost money. NVDA's entire 97% is overnight; MSFT's and
+AAL's sessions are net negative. The overnight period was also the **less
+volatile** of the two on four of five — so a rule that guarantees a flat book at
+the close is not trading risk for return, it gives up more return than risk.
+
+Two things that do **not** follow, and are said explicitly so nobody builds them:
+trading the gap instead is 318 round trips a year and loses to buy-and-hold on
+all five names after 3bp; and none of it applies to **crypto**, which has no
+session and therefore no gap.
+
+Nothing was silently reconfigured — no live strategy was touched. What changed:
+the one shipped template that flattens (`Template · Intraday scanner rider`) now
+carries the measurement in its notes, where it used to say only that the setting
+"guarantees no overnight gap risk". True, and half the ledger.
+
+The audit that produced this also checked the rest of the surface: no preset
+flattens, no other template caps holding inside a session, the schema defaults
+are off, and the optimizer never searches either knob — so this cannot arrive by
+machine. All four are now asserted rather than trusted.
+
 ## A DCA sleeve's backtest was replaying a different strategy (2026-08-07)
 
 `DCA baseline sleeve (weekly)` is one of the presets in the dropdown. Backtest

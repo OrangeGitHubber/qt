@@ -140,7 +140,36 @@ that closes the same day. Leave it off.
 THE TIME WINDOW
 10:00-15:30 ET. The first half hour is the widest spreads and the most reversals
 of the day; the last half hour is where you want to be closing, not opening.
-"Flatten before close" then guarantees no overnight gap risk.
+
+WHAT "FLATTEN BEFORE CLOSE" ACTUALLY COSTS — READ THIS FIRST
+It does remove overnight gap risk. It also removes overnight gap RETURN, and on
+large-cap US equities that is where nearly all the return is. Measured on five
+names over 318 sessions (May 2025 - Aug 2026), splitting each session into the
+gap (previous close -> next open) and the session (open -> close):
+
+    $100 held ONLY overnight    $100 held ONLY during the session
+    MSFT   118.96                        98.82
+    AAPL   114.15                       128.83
+    AMD    328.14                       152.44
+    AAL    165.51                        96.09
+    NVDA   198.23                       101.27
+
+On four of the five, the session you are trading contributes nothing or loses
+money, and every point of gain arrived while the market was shut. The overnight
+period was also the LESS volatile of the two on four of five (MSFT 119bp vs
+135bp per period, AAPL 92 vs 132, AAL 195 vs 250, NVDA 139 vs 191) — so this is
+not a risk-for-return trade, it gives up more return than risk.
+
+Two things that do NOT follow from that, and are worth being clear about:
+  - It is not an argument for trading the gap instead. Capturing every night is
+    318 round trips; at 3bp that is ~9.5% of cost and it loses to buy-and-hold
+    on all five names. Nor is it selective — conditioning the night's gap on the
+    day's session return produces no ladder that clears a shuffle control.
+  - It does not apply to CRYPTO, which has no session and therefore no gap. A
+    holding cap on a crypto strategy is a different decision entirely.
+
+Turn this on because you want a flat book overnight for reasons of your own —
+margin, sleep, a hard risk mandate. Do not turn it on expecting it to be free.
 
 WHY THE STOPS ARE TIGHT
 Intraday moves are smaller, so a 10% trail would never trigger before the close
@@ -158,7 +187,10 @@ This style needs intraday bars, so its backtests are slower and cover shorter
 windows than the daily-bar styles. A 90-day test is a realistic maximum.
 
 EVIDENCE
-None. Coherent design, not a measured result."""
+The design is coherent but unmeasured. What HAS been measured is the cost of its
+defining setting, above — and it points against this style on large-cap equities.
+Kept as a template because the mechanics are the app's only worked example of an
+intraday style, not because the style is recommended."""
 
 
 ROTATION_NOTES = """WHAT THIS IS
