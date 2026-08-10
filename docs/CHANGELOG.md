@@ -3,6 +3,43 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## One strategy's exit could liquidate another strategy's position (2026-08-10)
+
+The broker reports **one net position per symbol**. Once two strategies may hold
+the same coin, the quantity Alpaca reports is both their lots added together —
+and the exit path clamped to it:
+
+    held = await _broker_held_qty(client, trade.symbol)
+    if held is not None and held < trade.qty:
+        sell_qty = held                      # <-- everyone's coins
+
+So whenever a trade's journal read higher than the broker's total, the exit sold
+the **whole symbol**, including lots belonging to strategies that had not asked
+to exit anything. Their trade rows then stayed open against nothing, for ever.
+
+Found in the live journal on AVAX/USD, with three strategies holding it at once:
+
+    2026-08-06 09:14  SELL 14.7277 AVAX/USD  (strategy 18, trailing stop)
+    2026-08-06 09:21  SELL 14.8231 AVAX/USD  (strategy 22, trailing stop)
+    2026-08-06 10:04  SELL NOT SUBMITTED — 0.139527 left is worth $0.90
+    2026-08-06 14:13  SELL FAILED — insufficient balance for AVAX
+                      (requested: 15.055479, available: 0.13952706)
+
+Strategy 27's trade had been open against a position that does not exist since
+2026-08-07, and was the source of a quantity-mismatch alert every 15 minutes.
+
+**The rule is now pro rata.** When the broker holds less than the open trades
+claim between them, each trade may sell its own proportional share and no more.
+The alternatives were both worse: first-come lets one strategy take another's
+lot in full (the bug itself), and refusing to sell strands a falling position
+with a live stop-loss against it — the one outcome an exit exists to prevent.
+Pro rata is also the rule reconciliation already applies to the same shape of
+problem, scaling each trade in a group "in proportion to its own size".
+
+With no sibling trade the answer is `min(mine, held)` — exactly the old
+behaviour, so the ordinary single-strategy case is unchanged. The P&L side
+needed no change: the close already books on what the broker actually filled.
+
 ## Reconciliation was sending ~500 Slack messages a day (2026-08-10)
 
 Five warnings a minute, repeating all day:

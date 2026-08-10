@@ -118,6 +118,67 @@ async def _await_fill(client: AlpacaClient, order_id: str) -> tuple[dict | None,
     return None, order
 
 
+def attributable_qty(mine: float, siblings: float, held: float) -> float:
+    """How much of a shared broker position this ONE trade may sell.
+
+    The broker reports a single net position per symbol, so `held` is every
+    strategy's coins added together. Selling `held` because it is smaller than
+    this trade's own quantity — which is what the code did — hands one
+    strategy's stop-loss the other strategies' lots.
+
+    MEASURED on AVAX/USD, three strategies holding it at once:
+        2026-08-06 14:13  SELL FAILED — insufficient balance for AVAX
+                          (requested: 15.055479, available: 0.13952706)
+    By then two exits had already taken everything, and the third strategy's
+    trade has been open against a position that does not exist ever since.
+
+    PRO RATA when the broker holds less than the open trades claim between them,
+    rather than first-come-first-served. Three reasons:
+      * Nobody's lot gets taken. First-come lets trade A sell trade B's coins in
+        full and leaves B with nothing.
+      * A stop-loss still fires. Refusing to sell at all would be "safe" in the
+        accounting sense and would strand a falling position, which is the one
+        outcome an exit exists to prevent.
+      * It is the rule the codebase already uses for the same shape of problem:
+        reconcile's fee-in-kind adjustment scales every trade in the group "in
+        proportion to its own size".
+
+    With no siblings this returns min(mine, held) — exactly the old behaviour,
+    so the single-strategy case is unchanged.
+
+    ONE expression, deliberately. The first version carried an explicit
+    `if held < claims else mine` branch for the surplus case, and three separate
+    mutations survived because of it: the branch made the `min` unreachable, the
+    `min` made the `max` unreachable, and skipping the division hid the fact that
+    the zero guard was load-bearing. Removing it makes every remaining piece do
+    real work — the `min` caps a surplus, the `max` refuses a negative (a short
+    position at the broker), the guard prevents a division by zero.
+    """
+    claims = mine + siblings
+    if claims <= 0:
+        return 0.0
+    return max(0.0, min(mine, held * (mine / claims)))
+
+
+def _sibling_open_qty(session: Session, trade: Trade) -> float:
+    """What the OTHER open trades on this symbol claim, in the same mode.
+
+    `status == "open"` matches reconcile's own definition of the set that
+    divides up a broker position, so the two cannot disagree about who has a
+    claim on it."""
+    rows = (
+        session.query(Trade.qty)
+        .filter(
+            Trade.mode == trade.mode,
+            Trade.symbol == trade.symbol,
+            Trade.status == "open",
+            Trade.id != trade.id,
+        )
+        .all()
+    )
+    return sum(float(q or 0.0) for (q,) in rows)
+
+
 async def _broker_held_qty(client: AlpacaClient, symbol: str) -> float | None:
     """How much of `symbol` the broker actually holds right now, or None if we
     could not ask (never a guess — the caller must fall back to the journal).
@@ -342,17 +403,23 @@ async def close_trade(
         tif = "gtc" if trade.asset_class == "crypto" else "day"
         attempts = _exit_attempts.get(trade.id, 0)
 
-        # Never ask for more than the broker can deliver. Crypto only: the
-        # shortfall is the fee-in-kind haircut (see _broker_held_qty), and stock
-        # quantities are whole shares that the journal already matches.
+        # Never ask for more than the broker can deliver, and never for more
+        # than THIS trade's share of it — the broker reports one net position
+        # per symbol, so a clamp to the raw held quantity sells whatever the
+        # other strategies still hold. Crypto only: the routine shortfall is the
+        # fee-in-kind haircut (see _broker_held_qty), and stock quantities are
+        # whole shares that the journal already matches.
         sell_qty = trade.qty
         if trade.asset_class == "crypto":
             from qt.services.reconcile import CRYPTO_FEE_IN_KIND_MAX_PCT
 
             held = await _broker_held_qty(client, trade.symbol)
-            if held is not None and held < trade.qty:
-                sell_qty = held
-                shortfall_pct = (trade.qty - held) / trade.qty * 100 if trade.qty else 0.0
+            if held is not None:
+                # `held` is the whole symbol's position — every strategy's coins
+                # in one number. Take only this trade's share of it.
+                mine = attributable_qty(trade.qty, _sibling_open_qty(session, trade), held)
+                sell_qty = min(sell_qty, mine)
+                shortfall_pct = (trade.qty - sell_qty) / trade.qty * 100 if trade.qty else 0.0
                 if 0 < shortfall_pct <= CRYPTO_FEE_IN_KIND_MAX_PCT:
                     # Inside the fee band this IS the fee, and reconcile would
                     # make exactly this correction on its next pass. Doing it
@@ -360,8 +427,14 @@ async def close_trade(
                     # A LARGER gap is left alone: reconcile deliberately never
                     # auto-corrects unexplained drift, and neither do we — we
                     # simply refuse to order more than exists.
-                    trade.qty = held
-                    trade.notional = (trade.entry_price or price) * held
+                    #
+                    # Aligned to SELL_QTY, not to `held`. With a sibling trade on
+                    # the same symbol `held` is both lots, so writing it here
+                    # would inflate this trade's journal to the other one's coins
+                    # as well — the same confusion this whole block now fixes,
+                    # arriving by the back door.
+                    trade.qty = sell_qty
+                    trade.notional = (trade.entry_price or price) * sell_qty
 
         # An order the broker must reject is not worth placing. Below the
         # minimum there is nothing to retry INTO, so this is the give-up branch
