@@ -16,11 +16,13 @@ strategies one at a time. Get the direction wrong — a max() instead of a min()
 and the global kill switch silently becomes a global go-live. Most of this file
 exists to pin that one direction down.
 
-LIVE IS BUILT BUT NOT REACHABLE. The column, the grouping and the ceiling are all
-real and tested; the API refuses to SET live while `LIVE_ENABLED` is False,
-because the broker layer still routes every order to the paper endpoint. A
-strategy marked live today would place paper orders while claiming otherwise,
-which is worse than refusing outright.
+LIVE IS GATED ON CREDENTIALS EXISTING, not on a constant in the source. The API
+refuses to set live while no live key pair is stored, because a strategy marked
+live with no live credentials could not place a live order anyway — it would sit
+there looking armed and trading nothing. A source-level flag was the first design
+and was wrong in both directions: too hard to turn off (needs a deploy) and too
+easy to turn on (one flip, for everyone). See test_audit_live_broker_routing.py
+for the routing that gate protects.
 
 MODE IS NOT PART OF `StrategyBody`, deliberately. It is the only field that
 decides whether real money moves, and putting it on the ordinary save would let
@@ -33,7 +35,6 @@ import pytest
 from qt.db import session_scope
 from qt.models import Strategy
 from qt.services.engine import (
-    LIVE_ENABLED,
     MODE_RANK,
     STRATEGY_MODES,
     effective_mode,
@@ -185,16 +186,25 @@ def test_cooling_down_never_asks(client):
         assert s.get(Strategy, sid).mode == "shadow"
 
 
-def test_live_is_refused_while_the_broker_cannot_route_it(client):
-    """Live is refused for a SPECIFIC reason, and the message has to say it: the
-    broker layer still points at the paper endpoint, so a strategy marked live
-    would place paper orders while the UI claimed real ones. Silently trading
-    paper under a live label is worse than not offering live."""
-    assert LIVE_ENABLED is False, "this test guards the not-yet-reachable state"
+def test_live_is_refused_with_no_live_credentials(client):
+    """Live is gated on CREDENTIALS EXISTING, not on a constant in the source.
+
+    A hardcoded flag would be both too hard to turn off (needs a deploy) and too
+    easy to turn on (one flip, for everyone). Werner's live keys are his to add
+    and his to delete, and deleting them is the fastest route back to
+    unreachable. The message has to say what is missing and where to fix it,
+    because "not available" alone sends you to the source."""
+    from qt.broker.factory import live_credentials_stored
+
+    with session_scope() as s:
+        assert live_credentials_stored(s) is False, "precondition: no live keys"
     sid = _create(client, "too eager")
     r = _set_mode(client, sid, "live", confirm=True)
     assert r.status_code == 409, r.text
-    assert "paper endpoint" in r.json()["detail"]
+    detail = r.json()["detail"]
+    assert "credentials" in detail and "Setup" in detail
+    assert "does not start live trading" in detail, (
+        "storing keys must not read as consent to trade live")
     with session_scope() as s:
         assert s.get(Strategy, sid).mode == "shadow"
 

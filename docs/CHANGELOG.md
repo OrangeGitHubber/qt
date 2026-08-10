@@ -3,6 +3,49 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Live orders now reach a live account — and nothing else does (2026-08-10)
+
+**Step two of live trading.** Step one made mode a per-strategy attribute; this
+is the part that makes a live strategy actually reach a different broker.
+
+QT now stores a **second** Alpaca key pair alongside the paper one, because the
+whole point of per-strategy mode is that both books run at once. The engine
+builds a client per mode and each pass uses its own.
+
+**The invariant:** the live credentials appear with the live host and nowhere
+else, and the live host appears with the live credentials and nowhere else.
+Cross-wiring is not symmetric — paper keys against the live host just 401, but a
+*paper*-mode client pointed at the live host places real orders while every label
+in the app says paper. So the routing is one table, and it's asserted in both
+directions.
+
+Choices worth stating:
+
+- **Shadow uses the paper credentials on purpose.** It places no order but does
+  read quotes and bars, and those calls need a key. Handing it the live pair
+  would leave the live account one bug away from the mode whose entire job is to
+  touch nothing.
+- **Equity is read per account.** Position sizing and the exposure rail are both
+  fractions of equity, so running the live pass on the paper account's equity
+  would size real money against imaginary money.
+- **Live keys are verified against Alpaca's live endpoint before being stored.**
+  Paper keys pasted into the live slot are rejected by Alpaca rather than by a
+  guess of ours about key formats. Without that, they'd store fine and then fail
+  every order — the worst outcome, since the UI would say live and nothing would
+  trade.
+- **Storing keys does not repoint `current_account_id`**, which tags new trades.
+  The paper book is still running.
+- **Live is gated on credentials existing**, not on a constant in the source. A
+  source flag was the first design and was wrong both ways: too hard to turn off
+  (needs a deploy) and too easy to turn on (one flip, for everyone). Deleting the
+  keys is the fastest route back to unreachable, and it's a single endpoint.
+- **One book failing doesn't stop the others.** An unreachable live account skips
+  the live pass; paper keeps trading.
+
+**You enter the live keys yourself.** QT verifies and stores them; no assistant
+handles them. And storing them still isn't enough to move money — the strategy's
+own mode and the master switch are both required, each with its own confirmation.
+
 ## Mode is now per strategy, so shadow, paper and live can run side by side (2026-08-10)
 
 **Step one of live trading.** The engine ran in exactly one mode — a single

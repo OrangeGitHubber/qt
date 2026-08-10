@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 from qt.broker.factory import get_client
 from qt.db import get_session
 from qt.models import AuditLog, Strategy, StrategyConfigVersion, Trade
-from qt.services.engine import LIVE_ENABLED, MODE_RANK, STRATEGY_MODES
+from qt.services.engine import MODE_RANK, STRATEGY_MODES, live_available
 from qt.services.presets import PRESETS
 from qt.timeutil import iso_utc
 
@@ -477,15 +477,16 @@ def set_strategy_mode(
         raise HTTPException(
             status_code=422, detail=f"Mode must be one of {list(STRATEGY_MODES)}."
         )
-    if want == "live" and not LIVE_ENABLED:
+    if want == "live" and not live_available(session):
         raise HTTPException(
             status_code=409,
             detail=(
-                "Live trading is not available yet. The per-strategy plumbing is in "
-                "place, but QT has no live Alpaca credentials and the broker layer "
-                "still routes every order to the paper endpoint — so a strategy set "
-                "to live would place paper orders while claiming otherwise, which is "
-                "worse than refusing."
+                "No live Alpaca credentials are stored, so this strategy could not "
+                "place a live order even if it were set to live. Add them under "
+                "Setup first — live and paper keys are different, and QT verifies "
+                "them against Alpaca's live endpoint before storing them. Storing "
+                "keys does not start live trading: this strategy's mode and the "
+                "master engine mode are both still required."
             ),
         )
 

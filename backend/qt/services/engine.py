@@ -37,7 +37,7 @@ from qt.settings_service import get_setting, set_setting
 log = logging.getLogger("qt.engine")
 ET = ZoneInfo("America/New_York")
 
-ENGINE_MODES = ("off", "shadow", "paper")
+ENGINE_MODES = ("off", "shadow", "paper", "live")
 
 RISK_DEFAULTS: dict = {
     "max_daily_loss_usd": 200.0,
@@ -72,12 +72,21 @@ MODE_RANK = {"off": 0, "shadow": 1, "paper": 2, "live": 3}
 # running" is how one of them gets forgotten.
 STRATEGY_MODES = ("shadow", "paper", "live")
 
-# Live is BUILT BUT NOT REACHABLE until live credentials exist and the broker
-# layer routes to them. Until then the API refuses to set it, so the column, the
-# grouping and the ceiling can all be exercised and tested without a single code
-# path that could reach real money. Flipping this on is a deliberate, separate
-# act — see docs and the live-credentials work.
-LIVE_ENABLED = False
+def live_available(session: Session) -> bool:
+    """Whether `live` may be selected at all.
+
+    Gated on CREDENTIALS EXISTING rather than on a constant in the source. A
+    hardcoded flag would have to be flipped by a deploy, which is both too hard
+    (you cannot turn it off in a hurry) and too easy (it turns on for everyone
+    at once). Live keys are Werner's to enter and his to delete, and deleting
+    them is the fastest way back to unreachable.
+
+    Storing keys is NOT consent to trade live. It makes the option exist; the
+    strategy's own mode and the master switch are still required, each with its
+    own confirmation."""
+    from qt.broker.factory import live_credentials_stored
+
+    return live_credentials_stored(session)
 
 
 def effective_mode(master: str | None, strategy_mode: str | None) -> str:
@@ -1034,8 +1043,10 @@ async def tick(leverage_unlocked: bool = False) -> None:
             return
 
         equity = float(account.get("equity") or 0)
-        # Remember the live account so new trades get tagged with it — even if the
+        # Remember the PAPER account so new trades get tagged with it — even if the
         # keys were saved before per-account tagging existed. Write only on change.
+        # Deliberately never written from a live account: this stamps new trades,
+        # and the paper book keeps trading alongside the live one.
         acct_num = account.get("account_number")
         if acct_num and get_setting(session, "current_account_id") != acct_num:
             set_setting(session, "current_account_id", acct_num)
@@ -1066,6 +1077,20 @@ async def tick(leverage_unlocked: bool = False) -> None:
         # every mode that has open trades — including one whose strategies were
         # all disabled or demoted since. Otherwise demoting a strategy to shadow
         # would abandon its open paper positions with their stops unwatched.
+        # EACH MODE GETS ITS OWN CLIENT, pointed at its own host with its own
+        # credentials — a live pass must not be executed through the paper
+        # client, which is the single mistake that would make every "live" order
+        # a silent paper one. `client` above stays the paper client and is what
+        # the clock and the account tag come from.
+        def client_for(run_as: str) -> AlpacaClient | None:
+            if run_as not in _mode_clients:
+                _mode_clients[run_as] = (
+                    client if run_as in ("shadow", "paper") else get_client(session, run_as)
+                )
+            return _mode_clients[run_as]
+
+        _mode_clients: dict[str, AlpacaClient | None] = {}
+
         for run_as in sorted(
             {t.mode for t in session.query(Trade.mode)
              .filter(Trade.status == "open").distinct()}
@@ -1074,15 +1099,42 @@ async def tick(leverage_unlocked: bool = False) -> None:
         ):
             if effective_mode(mode, run_as) != run_as:
                 continue  # the master switch has this book cooled off
-            await _manage_exits(session, client, run_as, market_open, closes_soon)
+            mode_client = client_for(run_as)
+            if mode_client is None:
+                # Live with no credentials stored. Nothing to exit through, and
+                # nothing was ever opened through it either.
+                log.warning("tick: no broker client for %s — skipping its exits", run_as)
+                continue
+            await _manage_exits(session, mode_client, run_as, market_open, closes_soon)
 
         if lifecycle.is_shutting_down():
             log.info("shutdown requested — skipping new entries this tick")
         else:
             for run_as, members in groups.items():
+                mode_client = client_for(run_as)
+                if mode_client is None:
+                    log.warning(
+                        "tick: %d strategy(s) are set to %s but no %s credentials are "
+                        "stored — not trading them", len(members), run_as, run_as
+                    )
+                    continue
+                # EQUITY COMES FROM THAT MODE'S OWN ACCOUNT. Position sizing and
+                # the exposure rail are both fractions of it, so sizing a live
+                # order against the paper account's equity would size real money
+                # against imaginary money.
+                mode_equity = equity
+                if mode_client is not client:
+                    try:
+                        mode_equity = float((await mode_client.account()).get("equity") or 0)
+                    except Exception as exc:  # noqa: BLE001 — AlpacaError or network
+                        log.warning(
+                            "tick: could not read the %s account — not trading it "
+                            "this cycle: %s", run_as, exc
+                        )
+                        continue
                 await _consider_entries(
-                    session, client, run_as, equity, market_open, leverage_unlocked,
-                    strategies=members,
+                    session, mode_client, run_as, mode_equity, market_open,
+                    leverage_unlocked, strategies=members,
                 )
 
         # Heartbeat: this tick completed the decision loop successfully.

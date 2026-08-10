@@ -21,6 +21,14 @@ DATA_BASE_URL = "https://data.alpaca.markets"
 SECRET_KEY_ID = "alpaca_paper_key_id"
 SECRET_KEY_SECRET = "alpaca_paper_key_secret"
 
+# LIVE keys are a SECOND pair, stored alongside the paper ones rather than
+# replacing them — the whole point of per-strategy mode is that both books run at
+# once, so both sets of credentials have to exist at once. Alpaca issues
+# different keys for the two endpoints and a paper key is rejected outright by
+# the live host, which is what makes validation at save time meaningful.
+LIVE_SECRET_KEY_ID = "alpaca_live_key_id"
+LIVE_SECRET_KEY_SECRET = "alpaca_live_key_secret"
+
 # Free-tier accounts get the IEX feed; SIP requires a paid data plan.
 STOCK_FEED = "iex"
 

@@ -223,3 +223,119 @@ def test_the_daily_loss_rail_counts_only_its_own_mode(world):
         assert engine._daily_loss(s, "paper", day_start) == 50.0
         assert engine._daily_loss(s, "live", day_start) == 777.0
         assert engine._daily_loss(s, "shadow", day_start) == 999.0
+
+
+# ── per-mode clients (stage 2) ───────────────────────────────────────────────
+async def _run_tick_capturing_clients():
+    """Like `_run_tick`, but returns the CLIENT and equity each entry pass got."""
+    entries = AsyncMock()
+    exits = AsyncMock()
+    with patch.multiple(
+        AlpacaClient,
+        account=AsyncMock(return_value=ACCOUNT),
+        clock=AsyncMock(return_value=CLOCK_OPEN),
+    ), patch.object(engine, "_consider_entries", entries), \
+            patch.object(engine, "_manage_exits", exits):
+        await tick(leverage_unlocked=False)
+    return {c.args[2]: (c.args[1], c.args[3]) for c in entries.call_args_list}
+
+
+@pytest.fixture()
+def live_keys():
+    from qt.broker.alpaca import LIVE_SECRET_KEY_ID, LIVE_SECRET_KEY_SECRET
+
+    with session_scope() as s:
+        security.set_secret(s, LIVE_SECRET_KEY_ID, "live-id")
+        security.set_secret(s, LIVE_SECRET_KEY_SECRET, "live-secret")
+    yield
+    with session_scope() as s:
+        security.delete_secret(s, LIVE_SECRET_KEY_ID)
+        security.delete_secret(s, LIVE_SECRET_KEY_SECRET)
+
+
+async def test_the_live_pass_uses_the_live_client(world, live_keys):
+    """THE POINT OF STAGE 2. Running a live pass through the paper client is the
+    single mistake that makes every 'live' order a silent paper one."""
+    from qt.broker.alpaca import LIVE_BASE_URL, PAPER_BASE_URL
+
+    _strategy("paper", "p")
+    _strategy("live", "l")
+    calls = await _run_tick_capturing_clients()
+    assert calls["paper"][0].base_url == PAPER_BASE_URL
+    assert calls["live"][0].base_url == LIVE_BASE_URL
+    assert calls["live"][0].key_id == "live-id"
+
+
+async def test_a_live_strategy_does_not_trade_without_live_keys(world):
+    """No credentials, no live pass — however the strategy is configured. The
+    paper book must keep running regardless."""
+    _strategy("paper", "p")
+    _strategy("live", "l")
+    calls = await _run_tick_capturing_clients()
+    assert "paper" in calls
+    assert "live" not in calls, "traded live with no credentials stored"
+
+
+async def test_the_live_pass_is_sized_on_the_live_account(world, live_keys):
+    """Position size and the exposure rail are both fractions of equity, so a
+    live pass on the paper account's equity sizes real money against imaginary
+    money."""
+    async def _account(self):
+        from qt.broker.alpaca import LIVE_BASE_URL
+
+        return {"equity": "7777" if self.base_url == LIVE_BASE_URL else "100000",
+                "cash": "1", "account_number": "X"}
+
+    entries = AsyncMock()
+    _strategy("paper", "p")
+    _strategy("live", "l")
+    with patch.object(AlpacaClient, "account", _account), \
+            patch.object(AlpacaClient, "clock", AsyncMock(return_value=CLOCK_OPEN)), \
+            patch.object(engine, "_consider_entries", entries), \
+            patch.object(engine, "_manage_exits", AsyncMock()):
+        await tick(leverage_unlocked=False)
+    got = {c.args[2]: c.args[3] for c in entries.call_args_list}
+    assert got["paper"] == 100000.0
+    assert got["live"] == 7777.0, "live sized against the paper account"
+
+
+async def test_an_unreadable_live_account_skips_only_the_live_pass(world, live_keys):
+    """A broker failure on one book must not stop the others. The paper strategy
+    has to keep trading while the live account is unreachable."""
+    async def _account(self):
+        from qt.broker.alpaca import LIVE_BASE_URL
+
+        if self.base_url == LIVE_BASE_URL:
+            raise RuntimeError("live account unreachable")
+        return ACCOUNT
+
+    entries = AsyncMock()
+    _strategy("paper", "p")
+    _strategy("live", "l")
+    with patch.object(AlpacaClient, "account", _account), \
+            patch.object(AlpacaClient, "clock", AsyncMock(return_value=CLOCK_OPEN)), \
+            patch.object(engine, "_consider_entries", entries), \
+            patch.object(engine, "_manage_exits", AsyncMock()):
+        await tick(leverage_unlocked=False)
+    modes = {c.args[2] for c in entries.call_args_list}
+    assert modes == {"paper"}, modes
+
+
+async def test_missing_live_credentials_are_named_as_the_reason(world, caplog):
+    """The None-client guard survived its first mutation because the equity
+    fetch below it already swallowed the failure — an AttributeError caught by a
+    broad `except` and logged as "could not read the live account", which is a
+    different and misleading problem. The guard's real contribution is saying
+    what is actually wrong, so that is what is asserted.
+
+    A user whose live strategy silently does nothing needs to be told it has no
+    credentials, not that the account was unreadable."""
+    import logging
+
+    _strategy("live", "l")
+    with caplog.at_level(logging.WARNING, logger="qt.engine"):
+        await _run_tick_capturing_clients()
+    text = " ".join(r.getMessage() for r in caplog.records)
+    assert "credentials" in text, text
+    assert "could not read" not in text, (
+        "reported as an unreadable account rather than as missing credentials")
