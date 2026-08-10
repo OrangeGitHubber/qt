@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from qt.broker.factory import get_client
 from qt.db import get_session
 from qt.models import AuditLog, Strategy, StrategyConfigVersion, Trade
+from qt.services.engine import LIVE_ENABLED, MODE_RANK, STRATEGY_MODES
 from qt.services.presets import PRESETS
 from qt.timeutil import iso_utc
 
@@ -261,6 +262,7 @@ def _serialize(s: Strategy) -> dict:
         "name": s.name,
         "enabled": s.enabled,
         "template": bool(s.template),
+        "mode": s.mode or "shadow",
         "enabled_at": iso_utc(s.enabled_at),
         "asset_class": s.asset_class,
         "universe": s.universe,
@@ -438,6 +440,74 @@ def toggle_strategy(strategy_id: int, session: Session = Depends(get_session)) -
         strategy.enabled_at = datetime.now(timezone.utc)
     state = "ENABLED" if strategy.enabled else "paused"
     session.add(AuditLog(category="strategy", message=f"Strategy '{strategy.name}' {state}"))
+    return _serialize(strategy)
+
+
+class ModeBody(BaseModel):
+    mode: str
+    # Required to move to a HOTTER mode. Not a nag: it is the one place a
+    # strategy starts spending differently, and the UI can put the consequence
+    # in front of you before the request is sent.
+    confirm: bool = False
+
+
+@router.post("/{strategy_id}/mode")
+def set_strategy_mode(
+    strategy_id: int, body: ModeBody, session: Session = Depends(get_session)
+) -> dict:
+    """Move ONE strategy between shadow, paper and live.
+
+    DELIBERATELY NOT PART OF `StrategyBody`. Mode is the only field that decides
+    whether real money moves, and every ordinary save would otherwise be able to
+    change it — including the optimizer's "save as draft", which constructs a
+    whole StrategyBody from a search result. A knob that dangerous does not
+    belong on the same form as the trailing-stop percentage.
+
+    Cooling DOWN is always allowed and never needs confirming: reaching for the
+    brake must never be the thing that asks you an extra question. Heating UP
+    needs `confirm`.
+    """
+    strategy = session.get(Strategy, strategy_id)
+    if not strategy:
+        raise HTTPException(status_code=404, detail="Strategy not found.")
+    _refuse_if_template(strategy, "switched between modes")
+
+    want = (body.mode or "").strip().lower()
+    if want not in STRATEGY_MODES:
+        raise HTTPException(
+            status_code=422, detail=f"Mode must be one of {list(STRATEGY_MODES)}."
+        )
+    if want == "live" and not LIVE_ENABLED:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Live trading is not available yet. The per-strategy plumbing is in "
+                "place, but QT has no live Alpaca credentials and the broker layer "
+                "still routes every order to the paper endpoint — so a strategy set "
+                "to live would place paper orders while claiming otherwise, which is "
+                "worse than refusing."
+            ),
+        )
+
+    current = strategy.mode or "shadow"
+    if want == current:
+        return _serialize(strategy)
+    heating = MODE_RANK.get(want, 0) > MODE_RANK.get(current, 0)
+    if heating and not body.confirm:
+        raise HTTPException(
+            status_code=428,
+            detail=(
+                f"Moving '{strategy.name}' from {current} to {want} makes it place "
+                f"{'real' if want == 'live' else 'simulated broker'} orders. Confirm to proceed."
+            ),
+        )
+
+    strategy.mode = want
+    session.add(AuditLog(
+        category="strategy",
+        message=f"Strategy '{strategy.name}' mode {current.upper()} -> {want.upper()}",
+        detail=("promoted" if heating else "cooled down"),
+    ))
     return _serialize(strategy)
 
 

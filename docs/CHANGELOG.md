@@ -3,6 +3,52 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Mode is now per strategy, so shadow, paper and live can run side by side (2026-08-10)
+
+**Step one of live trading.** The engine ran in exactly one mode — a single
+`engine_mode` setting applied to everything enabled — which makes "go live" an
+all-or-nothing switch over every strategy at once. This account has 18 enabled
+strategies, several of them named "tester".
+
+Each strategy now carries its own mode. The global setting survives as a **master
+switch and a ceiling**: a strategy runs at the *cooler* of (master, its own
+mode). So setting the master to shadow stops the whole instance touching the
+broker without editing 18 strategies one at a time, and the master can never
+*promote* a strategy that you put somewhere safe.
+
+That direction is the whole design. A `max()` where there should be a `min()`
+would turn the global kill switch into a global go-live, so most of the new tests
+exist to pin it down.
+
+Other safety choices, each deliberate:
+
+- **New strategies start in `shadow`** — the mode that places no order at all.
+  You have to promote a strategy on purpose; it can never arrive somewhere hotter
+  by omission. Clones and optimizer drafts inherit that, not their parent's mode.
+- **Mode is not part of the ordinary save.** It has its own endpoint. Putting it
+  on `StrategyBody` would let any form write it — including the optimizer's "save
+  as draft", which builds a whole body out of a parameter search.
+- **Heating up asks for confirmation; cooling down never does.** Reaching for the
+  brake must not be the thing that asks you an extra question.
+- **Existing strategies were backfilled from the current global mode**, read from
+  the database rather than assumed, so upgrading changes the behaviour of nothing.
+  Templates stay in shadow regardless — one carrying a hot mode would be cloned
+  into a hot strategy by a single click.
+- **Exits are keyed on the trade's own mode**, not on any strategy's. Demote a
+  strategy to shadow and its open paper positions still get their stops watched.
+
+**Live is built but deliberately not reachable.** The column, the grouping and
+the ceiling are all real and tested, and the API refuses to *set* live: QT has no
+live credentials and the broker layer still routes every order to the paper
+endpoint, so a strategy marked live would place paper orders while claiming
+otherwise. That is worse than refusing. Turning it on is a separate, deliberate
+piece of work.
+
+Worth recording: the pre-existing suite sets `engine_mode = "paper"` in eight
+places but builds its trade rows directly, so none of it reached the new
+grouping. The suite going green was not evidence any of this worked — the tests
+that check it had to be written.
+
 ## Every reconciled close booked a profit, because it could not book anything else (2026-08-10)
 
 A "reconciled close" is what QT does when a position leaves the account without

@@ -70,6 +70,18 @@ class Strategy(Base):
     # strategy and stop being a reliable starting point. See
     # qt.services.starter_strategies.
     template: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("0"))
+    # WHICH BOOK THIS STRATEGY TRADES: shadow | paper | live. Per strategy, not
+    # global, so all three can run side by side in one instance — that is the
+    # whole point (see 0017). Defaults to `shadow`, the mode that places no order
+    # at all: a strategy must be deliberately promoted, and can never arrive at a
+    # hotter mode by omission.
+    #
+    # The global `engine_mode` setting survives as a master switch and a CEILING,
+    # never a floor — see engine.effective_mode. Setting it to shadow stops every
+    # strategy touching the broker without editing any of them.
+    mode: Mapped[str] = mapped_column(
+        String(16), default="shadow", server_default=text("'shadow'"), index=True
+    )
     asset_class: Mapped[str] = mapped_column(String(16))  # stock | crypto
     universe: Mapped[str] = mapped_column(String(16), default="scanner")  # scanner | watchlist | both | basket | custom
     # When it was last switched ON. The moment the engine was allowed to act, so

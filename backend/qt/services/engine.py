@@ -57,7 +57,60 @@ def get_risk(session: Session) -> dict:
 
 
 def get_mode(session: Session) -> str:
+    """The MASTER switch. Not what any given strategy trades — see
+    `effective_mode`, which is what the engine actually acts on."""
     return get_setting(session, "engine_mode") or "off"
+
+
+# How hot each mode is. `off` touches nothing; `shadow` journals a decision and
+# places no order; `paper` places real orders against Alpaca's paper account;
+# `live` spends real money.
+MODE_RANK = {"off": 0, "shadow": 1, "paper": 2, "live": 3}
+
+# What a strategy may be SET to. `off` is deliberately absent: a strategy that
+# should not run is disabled, and having two independent ways to express "not
+# running" is how one of them gets forgotten.
+STRATEGY_MODES = ("shadow", "paper", "live")
+
+# Live is BUILT BUT NOT REACHABLE until live credentials exist and the broker
+# layer routes to them. Until then the API refuses to set it, so the column, the
+# grouping and the ceiling can all be exercised and tested without a single code
+# path that could reach real money. Flipping this on is a deliberate, separate
+# act — see docs and the live-credentials work.
+LIVE_ENABLED = False
+
+
+def effective_mode(master: str | None, strategy_mode: str | None) -> str:
+    """What a strategy ACTUALLY runs as, given the master switch.
+
+    The master is a CEILING, never a floor. A strategy can only ever run at or
+    below it, so:
+
+      * master 'off'    -> nothing runs, whatever the strategies say
+      * master 'shadow' -> everything degrades to shadow: one setting stops the
+                           whole instance touching the broker without editing 18
+                           strategies one at a time
+      * master 'live'   -> each strategy runs at its own mode, and a paper
+                           strategy stays paper
+
+    Taking the COOLER of the two is the property that matters. A max() here — or
+    treating the master as "the mode everything runs in", which is what the code
+    did before per-strategy mode existed — would let the master PROMOTE a shadow
+    strategy into spending money, and the one-click global kill switch would
+    become a one-click global go-live.
+
+    Unknown values on either side collapse to 'off'. A mode nobody recognises is
+    not a reason to guess, and every wrong guess here is a wrong guess about
+    whether real money moves."""
+    m = MODE_RANK.get((master or "off").strip().lower())
+    s = MODE_RANK.get((strategy_mode or "").strip().lower())
+    if m is None or s is None:
+        return "off"
+    rank = min(m, s)
+    for name, value in MODE_RANK.items():
+        if value == rank:
+            return name
+    return "off"
 
 
 # --------------------------------------------------------------------------
@@ -997,13 +1050,40 @@ async def tick(leverage_unlocked: bool = False) -> None:
         # Exits always run — closing positions during shutdown is desirable and
         # a mid-close order is never abandoned. New entries are skipped once a
         # shutdown has been requested so we don't open a position we can't mind.
-        await _manage_exits(session, client, mode, market_open, closes_soon)
+        # ONE PASS PER MODE. Each mode is its own book: `Trade.mode` partitions
+        # every rail query (daily loss, exposure, trade-rate, cooldown), so a
+        # paper strategy's losses must never eat a live strategy's budget or the
+        # other way round. Running the modes as separate passes is what keeps
+        # that partition true rather than merely likely.
+        groups: dict[str, list[Strategy]] = {}
+        for strategy in session.query(Strategy).filter(Strategy.enabled.is_(True)).all():
+            run_as = effective_mode(mode, strategy.mode)
+            if run_as == "off":
+                continue
+            groups.setdefault(run_as, []).append(strategy)
+
+        # Exits are keyed on the trade's OWN recorded mode, so they must run for
+        # every mode that has open trades — including one whose strategies were
+        # all disabled or demoted since. Otherwise demoting a strategy to shadow
+        # would abandon its open paper positions with their stops unwatched.
+        for run_as in sorted(
+            {t.mode for t in session.query(Trade.mode)
+             .filter(Trade.status == "open").distinct()}
+            | set(groups),
+            key=lambda m: MODE_RANK.get(m, 0),
+        ):
+            if effective_mode(mode, run_as) != run_as:
+                continue  # the master switch has this book cooled off
+            await _manage_exits(session, client, run_as, market_open, closes_soon)
+
         if lifecycle.is_shutting_down():
             log.info("shutdown requested — skipping new entries this tick")
         else:
-            await _consider_entries(
-                session, client, mode, equity, market_open, leverage_unlocked
-            )
+            for run_as, members in groups.items():
+                await _consider_entries(
+                    session, client, run_as, equity, market_open, leverage_unlocked,
+                    strategies=members,
+                )
 
         # Heartbeat: this tick completed the decision loop successfully.
         watchdog.record_heartbeat(session)
@@ -1264,6 +1344,7 @@ async def _consider_entries(
     equity: float,
     market_open: bool,
     leverage_unlocked: bool,
+    strategies: list[Strategy] | None = None,
 ) -> None:
     # Non-negotiable persistence guard: if we've CONFIDENTLY detected that /data
     # is ephemeral (the trade journal won't survive a restart), do NOT open new
@@ -1284,7 +1365,14 @@ async def _consider_entries(
             _entries_frozen_logged = True
         return
 
-    strategies = session.query(Strategy).filter(Strategy.enabled.is_(True)).all()
+    # `tick` passes the group it resolved for THIS mode. The query is the
+    # fallback for direct callers (tests, and any future caller that has no
+    # grouping to do) and deliberately still returns every enabled strategy —
+    # narrowing it by `Strategy.mode == mode` would be wrong, because the master
+    # switch can cool a paper strategy into the shadow pass and a column filter
+    # cannot see that.
+    if strategies is None:
+        strategies = session.query(Strategy).filter(Strategy.enabled.is_(True)).all()
     if not strategies:
         return
 
