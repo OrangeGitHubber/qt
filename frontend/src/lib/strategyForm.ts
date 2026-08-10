@@ -66,3 +66,59 @@ export function feeNote(assetClass: AssetClass, feesPaid: number): FeeNote {
   if (feesPaid > 0) return "charged";
   return assetClass === "crypto" ? "crypto-untraded" : "stock-free";
 }
+
+/** What a strategy's MODE looks like everywhere it appears.
+ *
+ * Live money must be unmistakable at a glance, in every list, card and table.
+ * The failure mode to design against is a live strategy sitting in the same
+ * list as a paper one, distinguishable only by a small grey label — you scan
+ * past it, edit the wrong row, and the mistake costs real money.
+ *
+ * So the three modes differ on FOUR channels at once — colour, wording, an icon,
+ * and whether the row is emphasised — because any one of them can be lost. A
+ * colour-blind reader, a greyscale screenshot pasted into Slack, a dark theme
+ * that flattens the palette: each of those silently removes exactly one channel,
+ * and none of them may leave live looking like paper.
+ */
+export type StrategyMode = "shadow" | "paper" | "live";
+
+export interface ModeBadge {
+  label: string;
+  /** Tailwind-ish tone key the components map to a colour. */
+  tone: "slate" | "sky" | "red";
+  icon: string;
+  /** Whether the whole ROW should be visually flagged, not just the badge. */
+  emphasise: boolean;
+  title: string;
+}
+
+export function modeBadge(mode: string | null | undefined): ModeBadge {
+  const m = (mode ?? "").trim().toLowerCase();
+  if (m === "live") {
+    return {
+      label: "LIVE",
+      tone: "red",
+      icon: "\u25CF", // filled circle — survives greyscale and copy/paste
+      emphasise: true,
+      title: "Trades REAL MONEY on your live Alpaca account.",
+    };
+  }
+  if (m === "paper") {
+    return {
+      label: "Paper",
+      tone: "sky",
+      icon: "\u25CB",
+      emphasise: false,
+      title: "Places real orders on your Alpaca PAPER account. No real money.",
+    };
+  }
+  // Anything unrecognised reads as shadow — the safest thing to imply, and the
+  // engine agrees: an unknown mode resolves to off and trades nothing.
+  return {
+    label: "Shadow",
+    tone: "slate",
+    icon: "\u25CC",
+    emphasise: false,
+    title: "Journals decisions only. Places no orders at all.",
+  };
+}

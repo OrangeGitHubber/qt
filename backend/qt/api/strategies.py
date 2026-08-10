@@ -443,6 +443,64 @@ def toggle_strategy(strategy_id: int, session: Session = Depends(get_session)) -
     return _serialize(strategy)
 
 
+# How much PAPER history a strategy must have before it may be promoted to live.
+# Not a quality bar — nothing here judges whether the strategy is any good, and
+# it deliberately does not require the record to be PROFITABLE. Werner's own
+# measurements this session found seven mechanisms that beat nothing, so a
+# profit filter would mostly select for luck, and "20 winning paper trades" is a
+# number a bad strategy reaches by accident.
+#
+# What it does require is that this exact config has been THROUGH the machinery:
+# entries filled, exits fired, reconciliation seen it. Every serious bug found on
+# 2026-08-10 — an exit that liquidated another strategy's lot, a P&L path that
+# could not book a loss, dust that reconciliation could not clear — surfaced only
+# because trades were actually running. A strategy that has never placed an order
+# has not tested the code it is about to trust with real money.
+LIVE_MIN_CLOSED_TRADES = 20
+LIVE_MIN_DAYS_RUNNING = 7
+
+
+def live_promotion_blocker(session: Session, strategy: Strategy) -> str | None:
+    """Why this strategy may NOT go live yet, or None if it may.
+
+    Deliberately counts trades in PAPER only. Shadow fills are assumptions — the
+    execution layer never ran — so shadow history proves nothing about whether
+    this strategy's orders actually fill."""
+    closed = (
+        session.query(func.count(Trade.id))
+        .filter(
+            Trade.strategy_id == strategy.id,
+            Trade.mode == "paper",
+            Trade.status == "closed",
+        )
+        .scalar()
+    ) or 0
+    if closed < LIVE_MIN_CLOSED_TRADES:
+        return (
+            f"'{strategy.name}' has {closed} closed paper trade(s); "
+            f"{LIVE_MIN_CLOSED_TRADES} are required before it can go live. This is not "
+            "a check on whether the strategy is any good — it is a check that this "
+            "config has actually been through the order path, because bugs there only "
+            "surface once trades run."
+        )
+
+    first = (
+        session.query(func.min(Trade.entry_at))
+        .filter(Trade.strategy_id == strategy.id, Trade.mode == "paper")
+        .scalar()
+    )
+    if first is not None:
+        started = first if first.tzinfo else first.replace(tzinfo=timezone.utc)
+        days = (datetime.now(timezone.utc) - started).days
+        if days < LIVE_MIN_DAYS_RUNNING:
+            return (
+                f"'{strategy.name}' has only been trading on paper for {days} day(s); "
+                f"{LIVE_MIN_DAYS_RUNNING} are required. Twenty trades in an afternoon "
+                "is one market condition, not a track record."
+            )
+    return None
+
+
 class ModeBody(BaseModel):
     mode: str
     # Required to move to a HOTTER mode. Not a nag: it is the one place a
@@ -477,18 +535,32 @@ def set_strategy_mode(
         raise HTTPException(
             status_code=422, detail=f"Mode must be one of {list(STRATEGY_MODES)}."
         )
-    if want == "live" and not live_available(session):
-        raise HTTPException(
-            status_code=409,
-            detail=(
+    if want == "live":
+        # ALL the reasons at once, not the first one. The two gates are fixed in
+        # very different ways — adding credentials takes a minute, building a
+        # paper track record takes a week — so reporting them one at a time sends
+        # you off to do the quick one and only then tells you about the long one.
+        blockers = []
+        if not live_available(session):
+            blockers.append(
                 "No live Alpaca credentials are stored, so this strategy could not "
                 "place a live order even if it were set to live. Add them under "
-                "Setup first — live and paper keys are different, and QT verifies "
-                "them against Alpaca's live endpoint before storing them. Storing "
-                "keys does not start live trading: this strategy's mode and the "
-                "master engine mode are both still required."
-            ),
-        )
+                "Setup — live and paper keys are different, and QT verifies them "
+                "against Alpaca's live endpoint before storing them."
+            )
+        record = live_promotion_blocker(session, strategy)
+        if record:
+            blockers.append(record)
+        if blockers:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    " ".join(blockers)
+                    + " (Storing keys does not start live trading on its own: this "
+                    "strategy's mode and the master engine mode are both still "
+                    "required, each with a confirmation.)"
+                ),
+            )
 
     current = strategy.mode or "shadow"
     if want == current:

@@ -100,6 +100,8 @@ export interface StrategyRow {
    *  one — clone it and change the clone. Optional so an older server build that
    *  doesn't send the field reads as `false` rather than crashing the page. */
   template?: boolean;
+  /** shadow | paper | live — which book this strategy trades. See modeBadge. */
+  mode?: string;
   asset_class: "stock" | "crypto";
   universe: "scanner" | "watchlist" | "both" | "basket" | "custom";
   basket_id: number | null;

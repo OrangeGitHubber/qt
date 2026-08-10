@@ -460,7 +460,9 @@ async def force_close_position(trade_id: int, session: Session = Depends(get_ses
     from qt.services import notify
 
     await notify.slack_cat(
-        session, "trades", f":warning: Force-closed {trade.symbol} at market (manual override)."
+        session, "trades",
+        f":warning: *{trade.mode.upper()}* force-closed {trade.symbol} at market "
+        "(manual override).",
     )
     return {"ok": True, "symbol": trade.symbol, "mode": trade.mode}
 

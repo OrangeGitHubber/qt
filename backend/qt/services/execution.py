@@ -374,7 +374,7 @@ async def _alert_stuck_exit(session: Session, trade: Trade, attempts: int) -> No
     await notify.slack_cat(
         session,
         "reconciliation",
-        f":warning: *PAPER* has failed to exit *{trade.symbol}* {attempts} times in a row "
+        f":warning: *{trade.mode.upper()}* has failed to exit *{trade.symbol}* {attempts} times in a row "
         f"({trade.qty:g} units). Still retrying — check whether the order can fill at all.",
     )
 
@@ -460,14 +460,14 @@ async def close_trade(
                 session.add(
                     AuditLog(
                         category="trade",
-                        message=f"[paper] SELL {trade.symbol} NOT SUBMITTED — {gone}",
+                        message=f"[{trade.mode}] SELL {trade.symbol} NOT SUBMITTED — {gone}",
                         detail=f"wanted to exit ({reason}) but no sellable quantity remains",
                     )
                 )
                 await notify.slack_cat(
                     session,
                     "reconciliation",
-                    f":warning: *PAPER* cannot exit *{trade.symbol}* — {gone}. QT has stopped "
+                    f":warning: *{trade.mode.upper()}* cannot exit *{trade.symbol}* — {gone}. QT has stopped "
                     "retrying this order; the position needs closing by hand.",
                 )
             return False
@@ -492,7 +492,7 @@ async def close_trade(
             session.add(
                 AuditLog(
                     category="trade",
-                    message=f"[paper] SELL {trade.symbol} FAILED — will retry next cycle",
+                    message=f"[{trade.mode}] SELL {trade.symbol} FAILED — will retry next cycle",
                     detail=str(exc),
                 )
             )
@@ -539,7 +539,7 @@ async def close_trade(
                 session.add(
                     AuditLog(
                         category="trade",
-                        message=f"[paper] SELL {trade.symbol} PART-FILLED {sold:g} @ "
+                        message=f"[{trade.mode}] SELL {trade.symbol} PART-FILLED {sold:g} @ "
                         f"${sold_price:,.4f} — {remaining:g} still held, retrying next cycle",
                         detail=f"realized ${slice_pnl:,.2f} on the part sold; the trade's own "
                         f"P&L will cover the remaining {remaining:g} only. Reason: {reason}",
@@ -548,7 +548,7 @@ async def close_trade(
                 await notify.slack_cat(
                     session,
                     "trade_confirmations",
-                    f":large_yellow_circle: *PAPER* part-sold {sold:g} × *{trade.symbol}* @ "
+                    f":large_yellow_circle: *{trade.mode.upper()}* part-sold {sold:g} × *{trade.symbol}* @ "
                     f"${sold_price:,.4f} (realized ${slice_pnl:,.2f}); {remaining:g} still held.",
                 )
                 return False
@@ -558,7 +558,7 @@ async def close_trade(
                 session.add(
                     AuditLog(
                         category="trade",
-                        message=f"[paper] SELL {trade.symbol} did not fill {miss} "
+                        message=f"[{trade.mode}] SELL {trade.symbol} did not fill {miss} "
                         f"(attempt {attempts + 1}) — will retry next cycle",
                         detail=f"broker status: {(last_seen or {}).get('status') or 'unknown'}",
                     )

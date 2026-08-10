@@ -36,7 +36,7 @@ import {
 import { fmtClock, fmtDateTime, zoneAbbr } from "../lib/datetime";
 import { consumeNav, requestNav } from "../lib/nav";
 import { entrySummary, exitSummary, sizingSummary } from "../lib/strategySummary";
-import { defaultEntryWindow, stockOnlyWarnings, type AssetClass } from "../lib/strategyForm";
+import { defaultEntryWindow, modeBadge, stockOnlyWarnings, type AssetClass } from "../lib/strategyForm";
 
 const RANK_LABELS: Record<RankBy, string> = {
   momentum_today: "Today's % move (momentum)",
@@ -1816,9 +1816,28 @@ export default function Strategies() {
                 TEMPLATE · clone to use
               </span>
             ) : (
-              <span className={`pill ${r.enabled ? "ok pill-live" : "muted"}`}>
-                {r.enabled ? "● ENABLED" : "disabled"}
-              </span>
+              <>
+                <span className={`pill ${r.enabled ? "ok pill-live" : "muted"}`}>
+                  {r.enabled ? "● ENABLED" : "disabled"}
+                </span>
+                {/* WHICH BOOK. Modes run side by side, so this list is exactly
+                    where a live row sits next to a paper one — and scanning past
+                    the difference is how you pause or promote the wrong one. The
+                    badge carries colour, wording, an icon and (for live) row
+                    emphasis, because any single channel can be lost to a
+                    greyscale screenshot or a colour-blind reader. */}
+                {(() => {
+                  const badge = modeBadge(r.mode);
+                  return (
+                    <span
+                      className={`pill mode-${badge.tone}${badge.emphasise ? " pill-danger" : ""}`}
+                      title={badge.title}
+                    >
+                      <span aria-hidden>{badge.icon}</span> {badge.label}
+                    </span>
+                  );
+                })()}
+              </>
             )}
             {gen > 1 && (
               <span

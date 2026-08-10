@@ -257,3 +257,120 @@ def test_the_move_is_recorded_in_the_audit_log(client, mode):
         )
         if mode != "shadow":  # shadow -> shadow is a no-op and logs nothing
             assert hits, "no audit row for the mode change"
+
+
+# ── the promotion path demands a track record (stage 4) ──────────────────────
+def _paper_history(sid: int, n: int, days_ago: int) -> None:
+    """n closed PAPER trades, the earliest `days_ago` days back."""
+    from datetime import datetime, timedelta, timezone
+
+    from qt.models import Trade
+
+    start = datetime.now(timezone.utc) - timedelta(days=days_ago)
+    with session_scope() as s:
+        for i in range(n):
+            s.add(Trade(
+                strategy_id=sid, mode="paper", symbol="AAA", asset_class="stock",
+                qty=1, notional=100, status="closed", entry_price=100.0,
+                exit_price=101.0, pnl=1.0, entry_at=start + timedelta(hours=i),
+                exit_at=start + timedelta(hours=i + 1),
+            ))
+
+
+def _blocker(sid: int) -> str | None:
+    from qt.api.strategies import live_promotion_blocker
+    from qt.models import Strategy as S
+
+    with session_scope() as s:
+        return live_promotion_blocker(s, s.get(S, sid))
+
+
+def test_a_brand_new_strategy_cannot_go_live(client):
+    """The gate that matters most. Every serious bug found on 2026-08-10 —
+    an exit that liquidated another strategy's lot, a P&L path that could not
+    book a loss — surfaced only because trades were actually running. A config
+    that has never placed an order has not tested the code it is about to trust
+    with real money."""
+    sid = _create(client, "untested")
+    reason = _blocker(sid)
+    assert reason and "closed paper trade" in reason
+
+
+def test_enough_trades_over_enough_days_clears_it(client):
+    from qt.api.strategies import LIVE_MIN_CLOSED_TRADES, LIVE_MIN_DAYS_RUNNING
+
+    sid = _create(client, "seasoned")
+    _paper_history(sid, LIVE_MIN_CLOSED_TRADES, LIVE_MIN_DAYS_RUNNING + 1)
+    assert _blocker(sid) is None
+
+
+def test_trades_alone_are_not_enough(client):
+    """Twenty trades in an afternoon is one market condition, not a track
+    record. The clock is a separate gate from the count."""
+    from qt.api.strategies import LIVE_MIN_CLOSED_TRADES
+
+    sid = _create(client, "busy afternoon")
+    _paper_history(sid, LIVE_MIN_CLOSED_TRADES + 5, 0)
+    reason = _blocker(sid)
+    assert reason and "day(s)" in reason
+
+
+def test_days_alone_are_not_enough(client):
+    """A strategy enabled a month ago that never filled anything has proved
+    nothing about the order path."""
+    sid = _create(client, "idle month")
+    _paper_history(sid, 2, 60)
+    reason = _blocker(sid)
+    assert reason and "closed paper trade" in reason
+
+
+def test_shadow_history_does_not_count(client):
+    """Shadow fills are ASSUMPTIONS — the execution layer never ran — so shadow
+    history says nothing about whether this strategy's orders fill."""
+    from datetime import datetime, timedelta, timezone
+
+    from qt.models import Trade
+
+    sid = _create(client, "shadow only")
+    start = datetime.now(timezone.utc) - timedelta(days=60)
+    with session_scope() as s:
+        for i in range(50):
+            s.add(Trade(
+                strategy_id=sid, mode="shadow", symbol="AAA", asset_class="stock",
+                qty=1, notional=100, status="closed", entry_price=100.0,
+                exit_price=101.0, pnl=1.0, entry_at=start, exit_at=start,
+            ))
+    reason = _blocker(sid)
+    assert reason and "closed paper trade" in reason
+
+
+def test_the_gate_does_not_require_the_record_to_be_PROFITABLE(client):
+    """Deliberate. Seven mechanisms measured this session beat nothing, so a
+    profit filter would mostly select for luck — and "20 winning paper trades"
+    is a number a bad strategy reaches by accident. This checks the config has
+    been through the machinery, not that it is any good."""
+    from datetime import datetime, timedelta, timezone
+
+    from qt.api.strategies import LIVE_MIN_CLOSED_TRADES, LIVE_MIN_DAYS_RUNNING
+    from qt.models import Trade
+
+    sid = _create(client, "loser")
+    start = datetime.now(timezone.utc) - timedelta(days=LIVE_MIN_DAYS_RUNNING + 1)
+    with session_scope() as s:
+        for i in range(LIVE_MIN_CLOSED_TRADES):
+            s.add(Trade(
+                strategy_id=sid, mode="paper", symbol="AAA", asset_class="stock",
+                qty=1, notional=100, status="closed", entry_price=100.0,
+                exit_price=50.0, pnl=-50.0, entry_at=start, exit_at=start,
+            ))
+    assert _blocker(sid) is None, "a losing record must still be allowed through"
+
+
+def test_the_gate_runs_before_the_credential_check_is_reached(client):
+    """Order of operations. With no live keys stored the endpoint 409s either
+    way, so this pins that an untested strategy is told about its RECORD rather
+    than being sent off to add credentials it will still not be able to use."""
+    sid = _create(client, "no record no keys")
+    detail = _set_mode(client, sid, "live", confirm=True).json()["detail"]
+    assert "closed paper trade" in detail, detail
+    assert "credentials are stored" in detail, "both blockers must be reported at once"

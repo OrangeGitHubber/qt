@@ -3238,3 +3238,36 @@ label.bad {
 label.bad .field-hint {
   color: var(--err);
 }
+
+/* ---- Which BOOK a strategy trades ---------------------------------------
+   Modes run side by side, so the strategies list is exactly where a live row
+   sits next to a paper one. Scanning past that difference is how you pause,
+   edit or promote the wrong strategy — with real money on the other side.
+
+   Four channels, because any one of them can be lost: colour goes for a
+   colour-blind reader, colour AND background go in a greyscale screenshot
+   pasted into Slack, the glyph can be dropped by a font that lacks it, and a
+   narrow column truncates the label. Live has to survive losing any one.
+
+   The red here is deliberately NOT the same red as an error. An error is
+   something that went wrong; this is something working exactly as configured,
+   and conflating the two teaches you to dismiss it. */
+.pill.mode-slate {
+  background: #23262b;
+  color: #9aa3ad;
+}
+.pill.mode-sky {
+  background: #102a3a;
+  color: #6fb8e0;
+}
+.pill.mode-red {
+  background: #3a1113;
+  color: #ff8a80;
+  letter-spacing: 0.04em;
+}
+/* Live only. The ring is the channel that survives greyscale, and it is on the
+   badge rather than the row so it still reads when the row is also "enabled"
+   green — two edge colours on one element cancel each other out. */
+.pill.pill-danger {
+  box-shadow: 0 0 0 1.5px rgba(255, 82, 82, 0.85);
+}
