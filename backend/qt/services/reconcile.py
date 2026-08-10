@@ -114,8 +114,64 @@ class Action:
 CRYPTO_FEE_IN_KIND_MAX_PCT = 0.5
 
 
+# Alpaca's paper broker leaves a RESIDUE behind a fully-liquidated position:
+# quantities like 1e-09, which are not a holding in any sense — 1e-09 TEAM is
+# two ten-millionths of a cent. The old test was `abs(qty) > 1e-12`, a float
+# epsilon rather than an economic one, so every residue read as a real position
+# and produced either an orphan alert or a quantity mismatch on EVERY cycle,
+# for ever, with no action available that could ever clear it.
+#
+# Judged in dollars where a price is known, because that is the question being
+# asked: is there anything here worth reconciling? The quantity fallback is for
+# the priceless case and is set three orders of magnitude above the residues and
+# far below anything real — the smallest genuine position in this account is
+# 0.0015 BTC.
+DUST_MAX_VALUE_USD = 0.01
+DUST_MAX_QTY = 1e-6
+
+# How long a STANDING alert stays quiet after being raised. Both alerts below
+# are deliberately not self-healing ("check manually"), so the condition
+# persists by design until a human acts — and at one reconcile every 15 minutes
+# that was 96 identical Slack messages a day per stuck symbol. The condition is
+# still recorded in the audit log every cycle; only the notification is spaced.
+STANDING_ALERT_REPEAT_HOURS = 24
+
+
+def _alerted_since(session, key: str, since) -> bool:
+    """Has this exact condition already been notified since `since`?
+
+    Reads the audit log rather than keeping its own state table: the audit entry
+    is written on every cycle regardless, so it is already a complete record of
+    when each condition was seen, and a second store could disagree with it.
+
+    Deliberately keyed on the audit `message` alone. `detail` carries the
+    quantities, which move; the message is the identity of the problem."""
+    from qt.models import AuditLog
+
+    return session.query(AuditLog.id).filter(
+        AuditLog.category == "reconcile",
+        AuditLog.message == key,
+        AuditLog.at >= since,
+    ).first() is not None
+
+
 def _nonzero(qty: float) -> bool:
     return abs(qty) > 1e-12
+
+
+def _is_dust(pos: "PositionView") -> bool:
+    """Whether a broker position is too small to be a holding.
+
+    Treated as ABSENT everywhere, not merely un-alerted. That means a QT trade
+    whose broker position has decayed to dust now books a reconciled close
+    rather than alerting for ever — which is the same reading the code already
+    gives a position that is missing outright, and dust is not distinguishable
+    from missing in any way that matters."""
+    if not _nonzero(pos.qty):
+        return True
+    if pos.current_price:
+        return abs(pos.qty) * pos.current_price < DUST_MAX_VALUE_USD
+    return abs(pos.qty) < DUST_MAX_QTY
 
 
 def _norm(symbol: str) -> str:
@@ -132,7 +188,7 @@ def reconcile(
     orders: list[OrderView],
 ) -> list[Action]:
     """Pure reconciliation. Returns the actions the shell should apply."""
-    pos_by_symbol = {_norm(p.symbol): p for p in positions if _nonzero(p.qty)}
+    pos_by_symbol = {_norm(p.symbol): p for p in positions if not _is_dust(p)}
     orders_by_id = {o.id: o for o in orders}
     db_symbols = {_norm(t.symbol) for t in trades}
     # A symbol can now be held by more than one strategy, so "which trade does
@@ -286,7 +342,7 @@ async def apply_reconciliation(session, client, mode: str) -> list[Action]:
 
     Best-effort: any broker error aborts without touching the journal — a
     reconciliation we can't trust must never mutate state."""
-    from datetime import datetime, timezone
+    from datetime import datetime, timedelta, timezone
 
     from qt.models import AuditLog, Trade
     from qt.services import notify
@@ -336,6 +392,7 @@ async def apply_reconciliation(session, client, mode: str) -> list[Action]:
 
     actions = reconcile(views, positions, orders)
     now = datetime.now(timezone.utc)
+    repeat_window = timedelta(hours=STANDING_ALERT_REPEAT_HOURS)
 
     for action in actions:
         trade = trades_by_id.get(action.trade_id) if action.trade_id else None
@@ -402,32 +459,42 @@ async def apply_reconciliation(session, client, mode: str) -> list[Action]:
             log.info("reconcile: %s %s", action.symbol, action.reason)
 
         elif action.kind == "alert_orphan_position":
+            # The quantity moved out of `message` and into `detail` so the
+            # message is a stable IDENTITY for the condition. A key that carried
+            # the quantity would make an orphan whose size drifts look like a
+            # brand-new problem on every cycle, which is the repetition this is
+            # meant to stop.
+            key = f"[{mode}] ORPHAN position at broker: {action.symbol}"
+            already = _alerted_since(session, key, now - repeat_window)
             session.add(AuditLog(
-                category="reconcile",
-                message=f"[{mode}] ORPHAN position at broker: {action.qty:g} {action.symbol}",
-                detail=action.reason,
+                category="reconcile", message=key,
+                detail=f"{action.qty:g} {action.symbol} — {action.reason}",
             ))
-            await notify.slack_cat(
-                session,
-                "reconciliation",
-                f":warning: *{mode.upper()}* Alpaca holds {action.qty:g} {action.symbol} that QT "
-                "has no open trade for. Not auto-adopting — check manually.",
-            )
+            if not already:
+                await notify.slack_cat(
+                    session,
+                    "reconciliation",
+                    f":warning: *{mode.upper()}* Alpaca holds {action.qty:g} {action.symbol} "
+                    "that QT has no open trade for. Not auto-adopting — check manually. "
+                    f"(Repeats suppressed for {STANDING_ALERT_REPEAT_HOURS}h; still in the "
+                    "audit log every cycle.)",
+                )
 
         elif action.kind == "alert_qty_mismatch":
             # Deliberately not self-healing. We know the totals disagree; we do
             # NOT know which strategy's row is wrong, and picking one would
             # either invent shares or write off real ones.
-            session.add(AuditLog(
-                category="reconcile",
-                message=f"[{mode}] QUANTITY MISMATCH on {action.symbol}",
-                detail=action.reason,
-            ))
-            await notify.slack_cat(
-                session,
-                "reconciliation",
-                f":warning: *{mode.upper()}* {action.reason}. Not auto-corrected — check manually.",
-            )
+            key = f"[{mode}] QUANTITY MISMATCH on {action.symbol}"
+            already = _alerted_since(session, key, now - repeat_window)
+            session.add(AuditLog(category="reconcile", message=key, detail=action.reason))
+            if not already:
+                await notify.slack_cat(
+                    session,
+                    "reconciliation",
+                    f":warning: *{mode.upper()}* {action.reason}. Not auto-corrected — check "
+                    f"manually. (Repeats suppressed for {STANDING_ALERT_REPEAT_HOURS}h; still "
+                    "in the audit log every cycle.)",
+                )
 
     if actions:
         log.info("reconciliation applied %d action(s) in %s mode", len(actions), mode)

@@ -3,6 +3,42 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Reconciliation was sending ~500 Slack messages a day (2026-08-10)
+
+Five warnings a minute, repeating all day:
+
+    PAPER QT's open trades total 15.1506 AVAX/USD but the broker holds 0.149527
+    PAPER Alpaca holds 1e-09 DOGEUSD that QT has no open trade for
+    PAPER Alpaca holds 1e-09 TEAM   that QT has no open trade for
+    ...
+
+**Two separate faults**, and both had to be fixed — either one alone leaves you
+with a flooded channel.
+
+**Dust was being read as a position.** `1e-09` is what Alpaca's paper broker
+leaves behind a fully-liquidated position. QT's test for "is anything held
+here?" was `abs(qty) > 1e-12` — a *float* epsilon rather than an economic one —
+so a residue worth two ten-millionths of a cent counted as a holding you needed
+to go and check. It is now judged in dollars where a price is known, and dust is
+treated as **absent** rather than merely un-alerted: a trade whose broker
+position has decayed to dust books a reconciled close, exactly as it already
+does when the position is missing outright.
+
+**Nothing suppressed repeats.** Both of these alerts are deliberately *not*
+self-healing — they say "check manually" precisely because QT must not guess
+which strategy drifted. So the condition survives by design until you act, and
+reconciliation runs every 15 minutes: 96 identical messages per stuck symbol per
+day. A repeat is now held for 24 hours per condition, keyed per symbol so one
+noisy name cannot silence the next.
+
+What did **not** change: neither alert became self-healing, and the audit log
+still records the condition on **every** cycle. Only the notification is spaced —
+a silenced problem and a solved problem must not look the same.
+
+Your AVAX warning was real, and still fires: QT claims 15.1506 and the broker
+holds 0.149527, which is 99% of a position missing. That is not dust and not a
+crypto fee, and it is worth looking at.
+
 ## "Flatten before close" gives up where the return actually is (2026-08-08)
 
 Measured on five large-cap US names over 318 sessions from this app's own bar
