@@ -3,6 +3,45 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## Every reconciled close booked a profit, because it could not book anything else (2026-08-10)
+
+A "reconciled close" is what QT does when a position leaves the account without
+it seeing the exit. It then has to write down an exit price — and what it wrote
+down was `high_water`, the highest price the position reached while held.
+
+`high_water >= entry_price` by construction, so `(price − entry) × qty` **cannot
+come out negative**. The live journal on 2026-08-10:
+
+| | |
+|---|---|
+| reconciled closes | 105 |
+| total P&L | **+$101.36** |
+| sum of gains only | **+$101.36** |
+
+Identical, so there was not one loss anywhere in the set. 105 for 105 is not a
+good run, it is an arithmetic guarantee — and it flattered every strategy that
+ever had a position reconciled.
+
+**QT now asks instead of guessing.** Alpaca records every fill under account
+activities, so the exit price was never unknowable, just never fetched. The last
+sell of that symbol at or after the entry — the one that emptied the position —
+is what gets booked.
+
+When there is no fill to find (it aged out of the window, or the call failed),
+the close books at the **entry** price so the P&L reads zero. Zero is wrong too;
+it is chosen because it is wrong without leaning. An exit QT could not observe
+must not be allowed to flatter the strategy that owned it. Each trade records
+which of the two happened in its exit reason, so a zero from ignorance is never
+mistaken for a genuine scratch.
+
+The activities call is only made on cycles that actually close something, and a
+failure downgrades to the zero-P&L fallback rather than raising — reconciliation
+is the recovery path, and one that dies leaves the journal in exactly the state
+it was called to repair.
+
+Historic P&L is **not** rewritten. The 105 closed rows keep their numbers; there
+is no honest way to recover a price that was never recorded.
+
 ## One strategy's exit could liquidate another strategy's position (2026-08-10)
 
 The broker reports **one net position per symbol**. Once two strategies may hold

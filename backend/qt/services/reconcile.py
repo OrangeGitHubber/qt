@@ -70,7 +70,13 @@ class OpenTradeView:
     qty: float
     entry_order_id: str | None
     entry_confirmed: bool  # did we record a confirmed entry fill?
-    last_price: float | None  # best price to book a reconciled close at
+    # The FALLBACK price for a reconciled close, used only when the broker has no
+    # fill to show us. It is the entry price, so an unknown exit books zero
+    # rather than a number. It used to be `high_water or entry_price` — the PEAK
+    # the position ever reached, which is >= entry by definition, so every
+    # reconciled close in the live journal booked a profit: 105 of them, +$101.36
+    # total, and not one loss among them. See `exit_fill_price`.
+    last_price: float | None
     asset_class: str = "stock"  # crypto pays its fee IN THE COIN — see case (d)
 
 
@@ -135,6 +141,67 @@ DUST_MAX_QTY = 1e-6
 # that was 96 identical Slack messages a day per stuck symbol. The condition is
 # still recorded in the audit log every cycle; only the notification is spaced.
 STANDING_ALERT_REPEAT_HOURS = 24
+
+
+def _fill_time(raw):
+    """Alpaca's `transaction_time`, as an aware UTC datetime, or None.
+
+    Tolerant on purpose: the field arrives with a 'Z', with a numeric offset, and
+    occasionally with no timezone at all depending on the endpoint. A parse
+    failure must drop the one fill, never raise — this runs inside the recovery
+    path, and a reconciliation that crashes on a malformed timestamp leaves the
+    journal in exactly the state it was called to repair."""
+    from datetime import datetime, timezone
+
+    if not raw:
+        return None
+    text = str(raw).strip().replace("Z", "+00:00")
+    try:
+        got = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    return got if got.tzinfo else got.replace(tzinfo=timezone.utc)
+
+
+def exit_fill_price(fills, symbol: str, entry_at) -> float | None:
+    """What the broker says this position actually sold for, or None.
+
+    THE POINT. A reconciled close means the position left the account without QT
+    seeing it, so the exit price is not something QT knows — it is something QT
+    must ask for. It used to guess, and the guess was `high_water`: the highest
+    price the position ever traded at while held. That is >= the entry price by
+    construction, so `(price - entry) * qty` could not come out negative. In the
+    live journal every one of 105 reconciled closes booked a profit, +$101.36
+    between them, with no loss anywhere in the set. That is not a good run, it is
+    an arithmetic guarantee.
+
+    Alpaca records every fill under account activities, so the answer exists. We
+    take the LAST sell of this symbol at or after the entry — the one that
+    emptied the position — and book that price.
+
+    Returns None when no such fill is visible, and the caller must then book at
+    the entry price so the P&L reads zero. Zero is wrong too, but it is wrong in
+    a way that does not lean: an unknown exit should not flatter the strategy
+    that owned it."""
+    key = _norm(symbol)
+    best_ts, best_price = None, None
+    for fill in fills or []:
+        if _norm(str(fill.get("symbol") or "")) != key:
+            continue
+        if str(fill.get("side") or "").lower() != "sell":
+            continue
+        when = _fill_time(fill.get("transaction_time"))
+        if when is None or (entry_at is not None and when < entry_at):
+            continue
+        try:
+            price = float(fill.get("price"))
+        except (TypeError, ValueError):
+            continue
+        if price <= 0:
+            continue
+        if best_ts is None or when >= best_ts:
+            best_ts, best_price = when, price
+    return best_price
 
 
 def _alerted_since(session, key: str, since) -> bool:
@@ -366,7 +433,7 @@ async def apply_reconciliation(session, client, mode: str) -> list[Action]:
             qty=t.qty,
             entry_order_id=t.entry_order_id,
             entry_confirmed=t.entry_price is not None and t.entry_order_id is not None,
-            last_price=t.high_water or t.entry_price,
+            last_price=t.entry_price,
             asset_class=t.asset_class or "stock",
         )
         for t in open_trades
@@ -394,14 +461,57 @@ async def apply_reconciliation(session, client, mode: str) -> list[Action]:
     now = datetime.now(timezone.utc)
     repeat_window = timedelta(hours=STANDING_ALERT_REPEAT_HOURS)
 
+    def _aware(when):
+        """SQLite hands back naive datetimes; broker fills are aware. Comparing
+        the two raises, and inside the recovery path that would be a crash."""
+        if when is None:
+            return None
+        return when if when.tzinfo else when.replace(tzinfo=timezone.utc)
+
+    # Only ask the broker for fills if something is actually being closed — this
+    # runs every 15 minutes and most cycles close nothing.
+    sell_fills: list[dict] = []
+    closing = [a for a in actions if a.kind == "close_reconciled"]
+    if closing:
+        earliest = min(
+            (_aware(trades_by_id[a.trade_id].entry_at) for a in closing
+             if trades_by_id.get(a.trade_id) and trades_by_id[a.trade_id].entry_at),
+            default=now,
+        )
+        try:
+            sell_fills = await client.account_activities(
+                "FILL",
+                after=(earliest - timedelta(days=1)).strftime("%Y-%m-%d"),
+                until=(now + timedelta(days=1)).strftime("%Y-%m-%d"),
+            )
+        except Exception as exc:  # noqa: BLE001 — AlpacaError or network
+            # Not fatal. Without fills every close books at entry (P&L zero),
+            # which is the honest answer for "we could not find out".
+            log.warning("reconcile: could not read fills, closes will book zero: %s", exc)
+
     for action in actions:
         trade = trades_by_id.get(action.trade_id) if action.trade_id else None
 
         if action.kind == "close_reconciled" and trade is not None:
-            price = action.price or trade.entry_price or 0.0
+            # Ask the broker what it actually sold for. Only fall back to the
+            # entry price — which books zero — when there is no fill to find.
+            observed = exit_fill_price(sell_fills, trade.symbol, _aware(trade.entry_at))
+            if observed is not None:
+                price = observed
+                priced = "at the broker's own fill price"
+            else:
+                # `action.price` — i.e. OpenTradeView.last_price — deliberately,
+                # not `trade.entry_price` read again here. Reading the trade
+                # directly made last_price dead code, and a mutation restoring
+                # `high_water or entry_price` to it then survived: the constant
+                # that caused the bug had become untestable. The pure function
+                # proposes the fallback; the shell only overrides it with a fill.
+                price = action.price or trade.entry_price or 0.0
+                priced = ("no matching broker fill — booked at entry, so the P&L reads "
+                          "zero rather than a guess")
             trade.exit_price = price
             trade.exit_at = now
-            trade.exit_reason = action.reason
+            trade.exit_reason = f"{action.reason} ({priced})"
             trade.pnl = round((price - (trade.entry_price or price)) * trade.qty, 2)
             trade.status = "closed"
             session.add(AuditLog(

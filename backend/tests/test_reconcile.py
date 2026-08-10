@@ -157,10 +157,22 @@ def paper_trade_world(client):
 
 
 async def test_apply_reconciliation_closes_missing_position(paper_trade_world):
+    """Books at the BROKER'S FILL, not at the high-water mark.
+
+    This used to assert 105.0 — the peak the position reached while held. That
+    is >= the entry by construction, so `(price - entry) * qty` could never come
+    out negative, and the live journal duly showed 105 reconciled closes worth
+    +$101.36 with not one loss among them. The fill is the answer to a question
+    QT cannot answer itself, so it asks."""
+    fills = [
+        {"symbol": "AAA", "side": "sell", "price": "96.5",
+         "transaction_time": "2099-01-01T00:00:00Z"},
+    ]
     with patch.multiple(
         AlpacaClient,
         list_positions=AsyncMock(return_value=[]),  # broker holds nothing
         list_orders=AsyncMock(return_value=[]),
+        account_activities=AsyncMock(return_value=fills),
     ):
         with session_scope() as s:
             from qt.broker.factory import get_client
@@ -170,5 +182,49 @@ async def test_apply_reconciliation_closes_missing_position(paper_trade_world):
     with session_scope() as s:
         trade = s.query(Trade).filter(Trade.symbol == "AAA").one()
         assert trade.status == "closed"
-        assert trade.exit_price == 105.0  # last known high-water
+        assert trade.exit_price == 96.5, "the broker's fill, not the 105.0 high-water"
+        assert trade.pnl < 0, "a position sold below entry must book a LOSS"
         assert "reconciled" in trade.exit_reason
+
+
+async def test_a_close_with_no_findable_fill_books_zero(paper_trade_world):
+    """The fallback. When the broker shows no matching sell — it aged out of the
+    window, or the call failed — the exit price is genuinely unknown. Booking the
+    entry price makes the P&L read zero, which is also wrong but does not LEAN:
+    an unknown exit must not flatter the strategy that owned it."""
+    with patch.multiple(
+        AlpacaClient,
+        list_positions=AsyncMock(return_value=[]),
+        list_orders=AsyncMock(return_value=[]),
+        account_activities=AsyncMock(return_value=[]),
+    ):
+        with session_scope() as s:
+            from qt.broker.factory import get_client
+
+            await reconcile_mod.apply_reconciliation(s, get_client(s), "paper")
+    with session_scope() as s:
+        trade = s.query(Trade).filter(Trade.symbol == "AAA").one()
+        assert trade.exit_price == 100.0, "entry price, NOT the 105.0 high-water"
+        assert trade.pnl == 0.0
+        assert "no matching broker fill" in trade.exit_reason
+
+
+async def test_a_broker_error_reading_fills_does_not_block_the_close(paper_trade_world):
+    """Reconciliation is the RECOVERY path. If it dies on a failed activities
+    call, the journal is left in exactly the state it was called to repair — so
+    the fill lookup degrades to the zero-P&L fallback rather than raising."""
+    with patch.multiple(
+        AlpacaClient,
+        list_positions=AsyncMock(return_value=[]),
+        list_orders=AsyncMock(return_value=[]),
+        account_activities=AsyncMock(side_effect=RuntimeError("boom")),
+    ):
+        with session_scope() as s:
+            from qt.broker.factory import get_client
+
+            actions = await reconcile_mod.apply_reconciliation(s, get_client(s), "paper")
+    assert [a.kind for a in actions] == ["close_reconciled"]
+    with session_scope() as s:
+        trade = s.query(Trade).filter(Trade.symbol == "AAA").one()
+        assert trade.status == "closed"
+        assert trade.pnl == 0.0
