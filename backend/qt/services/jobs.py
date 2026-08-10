@@ -5,11 +5,11 @@ from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import func
 
-from qt.broker.factory import get_client
+from qt.broker.factory import get_client, places_orders
 from qt.db import session_scope
 from qt.models import Strategy, Trade
 from qt.services import assets, notify, scoreboard
-from qt.services.engine import get_mode
+from qt.services.engine import effective_mode, get_mode
 
 log = logging.getLogger("qt.jobs")
 
@@ -64,19 +64,34 @@ async def backup_database() -> None:
 
 
 async def reconcile_open_trades() -> None:
-    """Reconcile the journal against Alpaca (startup + periodically). No-op when
-    the engine is off or Alpaca isn't configured."""
+    """Reconcile the journal against Alpaca (startup + periodically).
+
+    ONCE PER ORDER-PLACING MODE, each against its own account. This used to read
+    the single global mode and reconcile that one book with one client, which
+    after per-strategy mode meant LIVE POSITIONS WERE NEVER RECONCILED — the
+    book where an unnoticed orphan or a missed exit costs real money would have
+    been the only one nobody checked.
+
+    Shadow is skipped because it places no order, so there is nothing at a broker
+    to compare the journal against."""
     try:
         with session_scope() as session:
-            mode = get_mode(session)
-            if mode in ("off", "shadow"):
-                return  # shadow places no real orders — nothing to reconcile
-            client = get_client(session)
-            if client is None:
+            master = get_mode(session)
+            if master == "off":
                 return
             from qt.services import reconcile
 
-            await reconcile.apply_reconciliation(session, client, mode)
+            for run_as in ("paper", "live"):
+                if not places_orders(run_as):
+                    continue
+                # The master switch is a ceiling here too: with it at shadow,
+                # reconciliation must not reach for a broker either.
+                if effective_mode(master, run_as) != run_as:
+                    continue
+                client = get_client(session, run_as)
+                if client is None:
+                    continue  # that mode has no credentials — nothing to reconcile
+                await reconcile.apply_reconciliation(session, client, run_as)
     except Exception:
         log.exception("reconciliation job failed")
 

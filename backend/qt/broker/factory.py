@@ -33,6 +33,24 @@ _TARGETS: dict[str, tuple[str, str, str]] = {
 }
 
 
+def places_orders(mode: str | None) -> bool:
+    """Whether this mode submits orders to a broker at all.
+
+    THE POINT OF HAVING THIS AT ALL. Before live existed, "does this touch the
+    broker" was written everywhere as `mode == "paper"`, and "not paper" silently
+    meant "do nothing" — a safe default with only shadow and paper, and exactly
+    the wrong one the moment a third mode appears. Left alone, a live strategy
+    would have journalled its decisions and placed NOTHING on the way in, and —
+    worse — could never have been exited on the way out, because `close_trade`
+    asked the same question. A live position with no way to close it is the worst
+    single outcome in this codebase.
+
+    Written as an inclusion list rather than `!= "shadow"` for the same reason:
+    a fourth mode added later must default to NOT trading, and have to be added
+    here deliberately."""
+    return (mode or "").strip().lower() in ("paper", "live")
+
+
 def broker_target(mode: str | None) -> tuple[str, str, str] | None:
     """(key-secret name, secret-secret name, base URL) for a mode, or None.
 

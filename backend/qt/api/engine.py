@@ -16,7 +16,8 @@ from qt.db import get_session
 from qt.models import AuditLog, Strategy, Trade
 from qt.services import regime, scoreboard
 from qt.services.calendar import et_day
-from qt.services.engine import ENGINE_MODES, get_mode, get_risk
+from qt.broker.factory import places_orders
+from qt.services.engine import ENGINE_MODES, get_mode, get_risk, live_available
 from qt.settings_service import get_setting, set_setting
 from qt.timeutil import iso_utc
 
@@ -117,12 +118,47 @@ class ModeBody(BaseModel):
 def set_mode(body: ModeBody, session: Session = Depends(get_session)) -> dict:
     if body.mode not in ENGINE_MODES:
         raise HTTPException(status_code=422, detail=f"Mode must be one of {ENGINE_MODES}.")
-    if body.mode == "paper" and not body.confirm:
+    # `places_orders`, not `== "paper"`. The old test waved LIVE straight through
+    # with no confirmation and no configured-strategy check — the master switch
+    # is the last of the three gates in front of real money, and it was the only
+    # one that would not have asked.
+    if places_orders(body.mode) and not body.confirm:
+        where = (
+            "your REAL Alpaca account with real money"
+            if body.mode == "live"
+            else "your Alpaca paper account"
+        )
         raise HTTPException(
             status_code=428,
-            detail="Paper mode places simulated orders on your Alpaca paper account. Confirm to proceed.",
+            detail=(
+                f"{body.mode.capitalize()} mode places orders on {where}. Confirm to proceed."
+            ),
         )
-    if body.mode == "paper":
+    if body.mode == "live" and not live_available(session):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "No live Alpaca credentials are stored, so nothing could trade live. "
+                "Add them under Setup first."
+            ),
+        )
+    if body.mode == "live":
+        # The master switch is a CEILING: setting it to live promotes nothing on
+        # its own, and a user who flips it expecting to "go live" needs to know
+        # that. Refusing outright would be wrong — arming the ceiling ahead of
+        # promoting a strategy is a legitimate order of operations — so this
+        # checks rather than blocks.
+        live_strategies = (
+            session.query(func.count(Strategy.id))
+            .filter(Strategy.enabled.is_(True), Strategy.mode == "live")
+            .scalar()
+        )
+        if not live_strategies:
+            log.info(
+                "master mode set to LIVE with no live strategies — nothing will "
+                "trade live until a strategy's own mode is set to live"
+            )
+    if places_orders(body.mode):
         enabled = session.query(func.count(Strategy.id)).filter(Strategy.enabled.is_(True)).scalar()
         if not enabled:
             raise HTTPException(status_code=409, detail="Enable at least one strategy first.")

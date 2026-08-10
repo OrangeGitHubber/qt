@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from sqlalchemy.orm import Session
 
 from qt.broker.alpaca import AlpacaClient, AlpacaError
+from qt.broker.factory import places_orders
 from qt.models import AuditLog, Strategy, Trade
 from qt.services import notify
 from qt.services.engine import Candidate
@@ -268,7 +269,11 @@ async def open_trade(
         entry_price=cand.price, entry_at=now, high_water=cand.price,
     )
 
-    if mode == "paper":
+    # `places_orders`, not `mode == "paper"`. The old test meant "not paper -> do
+    # nothing", which was safe while shadow was the only other mode and silently
+    # wrong the moment live arrived: a live strategy would have journalled this
+    # entry and placed no order.
+    if places_orders(mode):
         client_order_id = f"qt-{uuid.uuid4().hex[:20]}"
         tif = _entry_tif(cand.asset_class, is_market)
         try:
@@ -387,7 +392,12 @@ async def close_trade(
 ) -> bool:
     exit_price = price
 
-    if trade.mode == "paper":
+    # THE DANGEROUS HALF of the same bug. On `mode == "paper"` a LIVE position
+    # would fall straight past every order-placing branch to the journal update
+    # below — QT would mark the trade closed, book a P&L, and leave the position
+    # open at the broker with no stop and nobody watching it. A live position
+    # with no way to close it is the worst single outcome in this codebase.
+    if places_orders(trade.mode):
         client_order_id = f"qt-x-{uuid.uuid4().hex[:18]}"
         # Exits deliberately do NOT use the IOC that crypto market ENTRIES use.
         # An entry that only half-fills is fine — we journal the half and move on.

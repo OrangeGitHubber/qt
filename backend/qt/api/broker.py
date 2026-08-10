@@ -15,6 +15,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from qt.api.market import require_client
+from qt.broker.factory import get_client
 from qt.broker.alpaca import AlpacaClient, AlpacaError
 from qt.db import get_session
 from qt.models import AuditLog, Trade
@@ -38,16 +39,23 @@ def _norm(symbol: str) -> str:
     return symbol.replace("/", "").upper()
 
 
-@router.post("/liquidate")
-async def liquidate(
-    body: LiquidateBody = Body(default=LiquidateBody()),
-    session: Session = Depends(get_session),
-    client: AlpacaClient = Depends(require_client),
+async def _liquidate_one_book(
+    session: Session,
+    client: AlpacaClient,
+    mode: str,
+    body: "LiquidateBody",
+    now: datetime,
 ) -> dict:
-    """Flatten holdings and mark the engine's open trades closed. By default this
-    closes ONLY the positions QT tracks (by exact quantity, so a co-existing bot's
-    shares are untouched); set include_orphans to also flatten positions QT
-    doesn't track. Irreversible — the UI requires a typed confirmation."""
+    """Flatten ONE mode's book, through THAT mode's own broker client.
+
+    Split out of the endpoint because the original selected every non-shadow
+    trade and closed them all through a single (paper) client. Once live exists
+    that is the worst shape of bug in this file: the paper account does not hold
+    the live positions, so every close would error — and the loop below marks
+    trades closed regardless of whether the close succeeded. QT would record a
+    flat book while the live positions were still open, with the stops now
+    unwatched because the trades are closed.
+    """
     try:
         raw = await client.list_positions()
     except AlpacaError as exc:
@@ -65,10 +73,13 @@ async def liquidate(
         if sym and qty:
             pos_by_norm[_norm(sym)] = {"symbol": sym, "qty": qty, "price": price}
 
-    now = datetime.now(timezone.utc)
-    # Only real (paper/live) trades correspond to broker positions; shadow trades
-    # are hypothetical, so leave them be.
-    open_trades = session.query(Trade).filter(Trade.status == "open", Trade.mode != "shadow").all()
+    # THIS MODE'S trades only. `!= "shadow"` was right when paper was the only
+    # other mode and became a cross-account bug the moment live appeared.
+    open_trades = (
+        session.query(Trade)
+        .filter(Trade.status == "open", Trade.mode == mode)
+        .all()
+    )
     tracked_norms = {_norm(t.symbol) for t in open_trades}
     errors: list[str] = []
     positions_closed = 0
@@ -109,8 +120,56 @@ async def liquidate(
         if t.entry_price and t.qty:
             t.pnl = round((exit_price - t.entry_price) * t.qty, 2)
 
+    return {
+        "book": mode,
+        "positions_closed": positions_closed,
+        "trades_reconciled": len(open_trades),
+        "orphans_cleared": orphans_cleared,
+        "orphans_left": orphans_left,
+        "errors": [f"[{mode}] {e}" for e in errors],
+    }
+
+
+@router.post("/liquidate")
+async def liquidate(
+    body: LiquidateBody = Body(default=LiquidateBody()),
+    session: Session = Depends(get_session),
+    client: AlpacaClient = Depends(require_client),
+) -> dict:
+    """Flatten holdings and mark the engine's open trades closed. By default this
+    closes ONLY the positions QT tracks (by exact quantity, so a co-existing bot's
+    shares are untouched); set include_orphans to also flatten positions QT
+    doesn't track. Irreversible — the UI requires a typed confirmation.
+
+    EVERY ORDER-PLACING BOOK, each through its own client. This is the panic
+    button, so "flatten everything" has to mean everything — a version that
+    silently skipped the live account would be worse than one that did nothing,
+    because it would report success. A book with no credentials stored has no
+    positions to flatten and is skipped.
+
+    Shadow is untouched: those trades are hypothetical and correspond to no
+    broker position.
+    """
+    now = datetime.now(timezone.utc)
+    books: list[dict] = []
+    for mode in ("paper", "live"):
+        mode_client = client if mode == "paper" else get_client(session, mode)
+        if mode_client is None:
+            continue
+        books.append(await _liquidate_one_book(session, mode_client, mode, body, now))
+
+    positions_closed = sum(b["positions_closed"] for b in books)
+    trades_reconciled = sum(b["trades_reconciled"] for b in books)
+    orphans_cleared = sorted({s for b in books for s in b["orphans_cleared"]})
+    orphans_left = sorted({s for b in books for s in b["orphans_left"]})
+    errors = [e for b in books for e in b["errors"]]
+
     scope = "whole account" if body.include_orphans else "QT holdings only"
-    msg = f"Manual liquidation ({scope}): closed {positions_closed} position(s), reconciled {len(open_trades)} engine trade(s)."
+    touched = ", ".join(b["book"] for b in books) or "none"
+    msg = (
+        f"Manual liquidation ({scope}, books: {touched}): closed {positions_closed} "
+        f"position(s), reconciled {trades_reconciled} engine trade(s)."
+    )
     detail = f"orphans_cleared={orphans_cleared} orphans_left={orphans_left} errors={errors}"
     session.add(AuditLog(category="broker", message=msg, detail=detail))
     extra = ""
@@ -125,8 +184,9 @@ async def liquidate(
     return {
         "ok": True,
         "mode": "full" if body.include_orphans else "qt_only",
+        "books": [b["book"] for b in books],
         "positions_closed": positions_closed,
-        "trades_reconciled": len(open_trades),
+        "trades_reconciled": trades_reconciled,
         "orphans_cleared": orphans_cleared,
         "orphans_left": orphans_left,
         "errors": errors,

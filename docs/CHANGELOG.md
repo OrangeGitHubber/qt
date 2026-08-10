@@ -3,6 +3,35 @@
 Newest first. Each phase links to the technical details in
 [how-it-works.md](how-it-works.md) and the reasoning in [decisions.md](decisions.md).
 
+## "Not paper" meant "don't touch the broker". With live, it means the opposite (2026-08-10)
+
+**Step three of live trading**, and the sharp one. Across the codebase, "does
+this touch a broker?" was written as `mode == "paper"` — which silently made
+*anything else* mean *do nothing*. That was a safe default while shadow was the
+only other mode, and exactly the wrong one the moment live existed.
+
+Four sites. Two would have broken live outright:
+
+| where | what would have happened |
+|---|---|
+| `execution.open_trade` | a live strategy journals its entry and places **no order** |
+| `execution.close_trade` | a live position falls past every order-placing branch to the journal update — QT marks the trade closed, books a P&L, and **leaves the position open at the broker with no stop and nobody watching it** |
+| `jobs.reconcile_open_trades` | read the one global mode, so **live positions would never have been reconciled** — the only book where an unnoticed orphan costs real money would have been the only one nobody checked |
+| `api.broker.liquidate` | selected every non-shadow trade and closed them through the **paper** client; the panic button would have errored on each live position and marked it closed anyway, reporting a flat book while the live positions stayed open |
+
+All four now go through a named predicate, `places_orders`, deliberately written
+as an inclusion list rather than `!= "shadow"` — a mode added later must default
+to **not** trading and have to be added on purpose.
+
+The master switch was the last gate in front of real money and the only one that
+wouldn't have asked: it required confirmation for paper and would have waved
+`live` straight through. It now confirms for both, says which account it's about,
+and refuses live outright when no live credentials are stored.
+
+Reconciliation and liquidation now run **once per book, each through its own
+client**, and skip any book whose credentials aren't stored. The master switch is
+a ceiling for both — at shadow, neither reaches for a broker at all.
+
 ## Live orders now reach a live account — and nothing else does (2026-08-10)
 
 **Step two of live trading.** Step one made mode a per-strategy attribute; this
