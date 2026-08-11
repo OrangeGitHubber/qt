@@ -1539,6 +1539,29 @@ export default function Strategies() {
   const [baskets, setBaskets] = useState<Basket[]>([]);
   const [editing, setEditing] = useState<Partial<StrategyRow> | null>(null);
   const [note, setNote] = useState<string | null>(null);
+  // Whether `note` is a REFUSAL/failure rather than an announcement. One state
+  // carried both, so "this strategy cannot go live yet" rendered identically to
+  // "Copied X → Y" — see .card.note.warn.
+  const [noteIsProblem, setNoteIsProblem] = useState(false);
+
+  /** An announcement — something worked. */
+  const showNote = (text: string) => {
+    setNote(text);
+    setNoteIsProblem(false);
+  };
+  /** A refusal or a failure — something did NOT happen, and this says why.
+   *
+   * Paired with showNote rather than left as two setState calls at each site,
+   * because the failure mode is forgetting the second one: the note appears and
+   * silently keeps whichever tone the previous note had. */
+  const showProblem = (text: string) => {
+    setNote(text);
+    setNoteIsProblem(true);
+  };
+  const clearNote = () => {
+    setNote(null);
+    setNoteIsProblem(false);
+  };
   const [equity, setEquity] = useState<number | null>(null);
   const editorRef = useRef<HTMLDivElement>(null);
 
@@ -1583,7 +1606,7 @@ export default function Strategies() {
   }
 
   const refresh = useCallback(() => {
-    getStrategies().then(setRows).catch((e: Error) => setNote(e.message));
+    getStrategies().then(setRows).catch((e: Error) => showProblem(e.message));
   }, []);
 
   const refreshBaskets = useCallback(() => {
@@ -1643,7 +1666,7 @@ export default function Strategies() {
       // The server refuses to delete a strategy with trade history — that rail
       // is by design. Keep the dialog open so the reason is read rather than
       // flashing past behind a closing panel.
-      setNote((e as Error).message);
+      showProblem((e as Error).message);
     } finally {
       setDeletingId(null);
     }
@@ -1763,7 +1786,7 @@ export default function Strategies() {
       // 428 = "confirm to proceed". Anything else is a blocker, not a prompt.
       const needsConfirm = /confirm to proceed/i.test(msg);
       if (!needsConfirm) {
-        setNote(msg);
+        showProblem(msg);
         return;
       }
       if (!window.confirm(msg)) return;
@@ -1771,7 +1794,7 @@ export default function Strategies() {
         await setStrategyMode(row.id, mode, true);
         refresh();
       } catch (e2) {
-        setNote((e2 as Error).message);
+        showProblem((e2 as Error).message);
       }
     } finally {
       setModeBusyId(null);
@@ -1812,7 +1835,7 @@ export default function Strategies() {
       // A disabled copy of an enabled strategy goes straight into that family's
       // fold, so without this the button looks like it did nothing.
       setOpenFamilies((cur) => new Set(cur).add(rootIdOf(row)));
-      setNote(
+      showNote(
         row.template
           ? `Made “${created.name}” from the ${row.name.replace(/^Template · /, "")} template. It's yours now — disabled, and fully editable.`
           : `Copied “${row.name}” → “${created.name}”. It's disabled, and listed under the original.`
@@ -1820,7 +1843,7 @@ export default function Strategies() {
       setCloneTarget(null);
       refresh();
     } catch (e) {
-      setNote((e as Error).message);
+      showProblem((e as Error).message);
     } finally {
       setCloningId(null);
     }
@@ -2169,7 +2192,11 @@ export default function Strategies() {
         </button>
       </div>
       {note && (
-        <div className="card note" onClick={() => setNote(null)}>
+        <div
+          className={noteIsProblem ? "card note warn" : "card note"}
+          role={noteIsProblem ? "alert" : undefined}
+          onClick={clearNote}
+        >
           {note}
         </div>
       )}

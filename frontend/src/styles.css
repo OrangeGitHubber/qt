@@ -3302,3 +3302,23 @@ label.bad .field-hint {
 .mode-switch-row button:disabled {
   opacity: 1; /* the ACTIVE mode is disabled; greying it hides which one is on */
 }
+
+/* A REFUSAL, not a failure. The server declined and is explaining what is
+   missing — "this strategy needs 20 closed paper trades", "no live credentials
+   are stored". Nothing is broken, so `.card.error`'s red overstates it; but it
+   rendered in the plain info card, which understated it to the point of
+   invisibility: the blocker that stops a strategy going live looked exactly
+   like "Copied X → Y".
+
+   Orange is the honest middle. The left bar carries it too, so the tone
+   survives the text being skim-read. */
+.card.note.warn {
+  border-color: var(--warn);
+  border-left-width: 4px;
+  color: var(--text);
+}
+.card.note.warn::before {
+  content: "⚠ ";
+  color: var(--warn);
+  font-weight: 700;
+}
