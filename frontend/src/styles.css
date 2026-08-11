@@ -3271,3 +3271,34 @@ label.bad .field-hint {
 .pill.pill-danger {
   box-shadow: 0 0 0 1.5px rgba(255, 82, 82, 0.85);
 }
+
+/* The master switch's LIVE button. It arms real money for every strategy whose
+   own mode is already live, so it must not look like its three neighbours —
+   which, until 2026-08-10, it did: a fallback label rendered it as "Paper". */
+.mode-switch button.mode-live-btn {
+  color: #ff8a80;
+  border-color: rgba(255, 82, 82, 0.5);
+  letter-spacing: 0.04em;
+}
+.mode-switch button.mode-live-btn.mode-active {
+  background: #3a1113;
+  color: #ffb4ad;
+  border-color: rgba(255, 82, 82, 0.9);
+  box-shadow: 0 0 0 1.5px rgba(255, 82, 82, 0.7);
+}
+
+/* The per-strategy mode switch, in the row's action bar. Tighter than the
+   dashboard's master switch — it sits among Pause/Edit/Clone and must not
+   dominate them — but the LIVE button keeps its red, because the one control
+   on this page that can arm real money should not blend into a toolbar. */
+.mode-switch-row {
+  display: inline-flex;
+  gap: 0.25rem;
+  margin: 0;
+}
+.mode-switch-row button {
+  margin: 0;
+}
+.mode-switch-row button:disabled {
+  opacity: 1; /* the ACTIVE mode is disabled; greying it hides which one is on */
+}

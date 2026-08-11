@@ -16,6 +16,7 @@ import {
   StrategyLastRun,
   StrategyRanking,
   StrategyRow,
+  setStrategyMode,
   toggleStrategy,
   updateStrategy,
 } from "../api";
@@ -1738,6 +1739,44 @@ export default function Strategies() {
   // ConfirmDialog already existed and was used for smaller things.
   const [deleteTarget, setDeleteTarget] = useState<StrategyRow | null>(null);
   const [deletingId, setDeletingId] = useState<number | null>(null);
+  // Which row's mode change is in flight.
+  const [modeBusyId, setModeBusyId] = useState<number | null>(null);
+
+  /** Move ONE strategy between shadow / paper / live.
+   *
+   * Sends without `confirm` FIRST and lets the server decide whether one is
+   * needed. The alternative — the page working out for itself which direction
+   * is "hotter" — puts the definition of that in two places, and the copy that
+   * drifts is the one guarding real money. The server's 428 carries the exact
+   * sentence to show, naming the account the orders would land on.
+   *
+   * A 409 (no live credentials, or no paper track record) is NOT re-askable, so
+   * it is surfaced as-is: it tells you what to go and fix.
+   */
+  async function changeMode(row: StrategyRow, mode: string) {
+    setModeBusyId(row.id);
+    try {
+      await setStrategyMode(row.id, mode, false);
+      refresh();
+    } catch (e) {
+      const msg = (e as Error).message;
+      // 428 = "confirm to proceed". Anything else is a blocker, not a prompt.
+      const needsConfirm = /confirm to proceed/i.test(msg);
+      if (!needsConfirm) {
+        setNote(msg);
+        return;
+      }
+      if (!window.confirm(msg)) return;
+      try {
+        await setStrategyMode(row.id, mode, true);
+        refresh();
+      } catch (e2) {
+        setNote((e2 as Error).message);
+      }
+    } finally {
+      setModeBusyId(null);
+    }
+  }
 
   /** Copy a strategy so a variant can be TRIED instead of retyped. Verbatim
    *  params, born disabled (the create endpoint forces `enabled=False`, it is
@@ -1972,6 +2011,35 @@ export default function Strategies() {
                 <IconEdit />
                 Edit
               </button>
+            )}
+            {/* WHICH BOOK this strategy trades. Deliberately its own control and
+                NOT a field on the Edit form: mode is the only setting that
+                decides whether real money moves, and the server refuses to take
+                it on the ordinary save for exactly that reason. Cooling down is
+                one click; heating up is confirmed; live additionally needs live
+                credentials and a paper track record, and the server says which
+                is missing. */}
+            {!r.template && (
+              <div className="mode-switch mode-switch-row">
+                {(["shadow", "paper", "live"] as const).map((m) => {
+                  const b = modeBadge(m);
+                  const on = (r.mode ?? "shadow") === m;
+                  return (
+                    <button
+                      key={m}
+                      type="button"
+                      className={`small ${on ? "mode-active" : ""}${
+                        m === "live" ? " mode-live-btn" : ""
+                      }`}
+                      disabled={on || modeBusyId === r.id}
+                      title={b.title}
+                      onClick={() => changeMode(r, m)}
+                    >
+                      {b.label}
+                    </button>
+                  );
+                })}
+              </div>
             )}
             {/* Text-only ghost like Backtest, deliberately: Clone belongs to the
                 quiet half of this row, not next to Pause/Delete. */}

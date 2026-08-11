@@ -122,3 +122,33 @@ export function modeBadge(mode: string | null | undefined): ModeBadge {
     title: "Journals decisions only. Places no orders at all.",
   };
 }
+
+/** The MASTER switch's label for one mode.
+ *
+ * Separate from `modeBadge` because the master has a fourth value — `off` — that
+ * no strategy can hold, and because its unknown-value behaviour has to differ.
+ *
+ * A CHAIN OF TERNARIES ENDING IN `: "Paper"` IS WHAT THIS REPLACES, and it
+ * shipped: adding `live` to ENGINE_MODES gave the dashboard a fourth button that
+ * read "Paper" and set the mode to LIVE. Nothing about the button said what it
+ * did. That is the same failure as the `*PAPER*` literals in the Slack alerts —
+ * a hardcoded fallback asserting the safe answer for a case it has never seen.
+ *
+ * So an unrecognised mode renders its own RAW VALUE, upper-cased. It will look
+ * odd, and odd is the point: a label nobody chose is a label nobody should
+ * trust, and showing "PROD" is honest where showing "Paper" is a lie.
+ */
+export function masterModeLabel(mode: string): string {
+  const known: Record<string, string> = {
+    off: "Off",
+    shadow: "Shadow",
+    paper: "Paper",
+    live: "LIVE",
+  };
+  return known[(mode ?? "").trim().toLowerCase()] ?? String(mode ?? "").toUpperCase();
+}
+
+/** Whether this master mode should be visually flagged as spending real money. */
+export function masterModeIsLive(mode: string): boolean {
+  return (mode ?? "").trim().toLowerCase() === "live";
+}

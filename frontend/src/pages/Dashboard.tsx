@@ -24,6 +24,7 @@ import InfoTip from "../components/InfoTip";
 import LineChart, { benchmarkColor, ChartMarker, DayHolding } from "../components/LineChart";
 import StackedPnlBars, { PnlSeries } from "../components/StackedPnlBars";
 import { IconWarn } from "../components/icons";
+import { masterModeIsLive, masterModeLabel } from "../lib/strategyForm";
 
 // Categorical palette for per-strategy colors (chart + table swatch share it).
 const PALETTE = ["#4f8cff", "#2ecc71", "#f39c12", "#a78bfa", "#22d3ee", "#f472b6", "#e74c3c", "#94a3b8"];
@@ -575,10 +576,17 @@ function EngineCard({ heartbeat }: { heartbeat: { stale: boolean; label: string 
         {engine.modes.map((m) => (
           <button
             key={m}
-            className={`small ${engine.mode === m ? "mode-active" : ""}`}
+            className={`small ${engine.mode === m ? "mode-active" : ""}${
+              masterModeIsLive(m) ? " mode-live-btn" : ""
+            }`}
             onClick={() => engine.mode !== m && switchMode(m)}
+            title={
+              masterModeIsLive(m)
+                ? "Master switch for REAL MONEY. It is a ceiling, not a promotion: strategies still only trade live if their own mode is live."
+                : undefined
+            }
           >
-            {m === "off" ? "Off" : m === "shadow" ? "Shadow" : "Paper"}
+            {masterModeLabel(m)}
           </button>
         ))}
       </div>

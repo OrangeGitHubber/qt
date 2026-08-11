@@ -496,9 +496,15 @@ export default function Settings() {
             </label>
             <div className="toolbar">
               <button disabled={brokerBusy}>{brokerBusy ? "Verifying…" : "Verify & save"}</button>
+              {/* FULL-SIZE ghost, not `small`. styles.css already documents the
+                  convention — "a full-size ghost sits beside a primary button
+                  (e.g. Save/Cancel): absorb its 1px border into the padding so
+                  the two are exactly the same height" — and `button.small` also
+                  zeroes the 1.2rem top margin the primary keeps, so this pair
+                  was mismatched in both height and baseline. */}
               <button
                 type="button"
-                className="small btn-ghost"
+                className="btn-ghost"
                 onClick={() => {
                   setShowKeyForm(false);
                   setKeyId("");

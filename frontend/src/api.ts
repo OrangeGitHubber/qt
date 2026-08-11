@@ -316,6 +316,16 @@ export const updateStrategy = (id: number, b: Partial<StrategyRow>) =>
   fetch(`/api/strategies/${id}`, { ...json(b), method: "PUT" }).then((r) => handle<StrategyRow>(r));
 export const toggleStrategy = (id: number) =>
   fetch(`/api/strategies/${id}/toggle`, { method: "POST" }).then((r) => handle<StrategyRow>(r));
+/** Move ONE strategy between shadow / paper / live. Its own endpoint, never the
+ *  ordinary save: mode is the only field that decides whether real money moves,
+ *  and the server refuses it on StrategyBody for that reason. `confirm` is
+ *  required to move to a HOTTER mode; cooling down never needs it. */
+export const setStrategyMode = (id: number, mode: string, confirm: boolean) =>
+  fetch(`/api/strategies/${id}/mode`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ mode, confirm }),
+  }).then((r) => handle<StrategyRow>(r));
 export const deleteStrategy = (id: number) =>
   fetch(`/api/strategies/${id}`, { method: "DELETE" }).then((r) => handle(r));
 

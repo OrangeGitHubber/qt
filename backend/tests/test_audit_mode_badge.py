@@ -35,10 +35,12 @@ FORM_TS = Path(__file__).resolve().parents[2] / "frontend" / "src" / "lib" / "st
 
 _DRIVER = """
 import { readFileSync } from "node:fs";
-import { modeBadge } from %(module)s;
+import { masterModeIsLive, masterModeLabel, modeBadge } from %(module)s;
 
 const modes = JSON.parse(readFileSync(process.argv[2], "utf8"));
-process.stdout.write(JSON.stringify(modes.map((m) => modeBadge(m))));
+process.stdout.write(JSON.stringify(modes.map((m) => ({
+  ...modeBadge(m), master: masterModeLabel(m), masterIsLive: masterModeIsLive(m),
+}))));
 """
 
 
@@ -207,3 +209,70 @@ def test_the_force_close_alert_names_the_mode():
 
     src = inspect.getsource(engine_api.force_close_position)
     assert "trade.mode.upper()" in src
+
+
+# ── the MASTER switch's labels (the bug that shipped) ────────────────────────
+def test_the_master_switch_labels_live_as_live(badge):
+    """THE BUG, and it reached Werner's dashboard.
+
+    The dashboard rendered its buttons with
+        m === "off" ? "Off" : m === "shadow" ? "Shadow" : "Paper"
+    a fallback chain whose last arm asserts "Paper" for every value it has never
+    seen. Adding `live` to ENGINE_MODES in stage two therefore produced a fourth
+    button reading "Paper" that set the master mode to LIVE. He saw two Paper
+    buttons and asked why.
+
+    It is the same defect as the hardcoded `*PAPER*` in the Slack alerts, found
+    the same day and fixed one commit earlier: a default that states the safe
+    answer for a case it cannot recognise. A label nobody chose is a label
+    nobody should trust."""
+    got = {m: b["master"] for m, b in zip(
+        ["off", "shadow", "paper", "live"],
+        badge(["off", "shadow", "paper", "live"]))}
+    assert got == {"off": "Off", "shadow": "Shadow", "paper": "Paper", "live": "LIVE"}, got
+
+
+def test_no_two_master_modes_share_a_label(badge):
+    """Stated separately because this is exactly what went wrong: two buttons
+    reading "Paper", one of which was not."""
+    labels = [b["master"] for b in badge(["off", "shadow", "paper", "live"])]
+    assert len(set(labels)) == 4, labels
+
+
+def test_an_unknown_master_mode_shows_its_raw_value(badge):
+    """NOT a friendly guess. If a fifth mode arrives before this function hears
+    about it, the button must look odd — odd is a prompt to go and look, whereas
+    "Paper" is a confident answer that happens to be false. Showing "PROD" is
+    honest; showing "Paper" is a lie."""
+    for junk in ["prod", "real", "nonsense"]:
+        assert badge([junk])[0]["master"] == junk.upper(), junk
+
+
+def test_the_master_labels_cover_every_mode_the_server_offers():
+    """The two lists are edited in different files. A mode the API accepts and
+    the dashboard cannot name is how this happened in the first place."""
+    from qt.services.engine import ENGINE_MODES
+
+    assert set(ENGINE_MODES) == {"off", "shadow", "paper", "live"}, (
+        f"ENGINE_MODES changed to {ENGINE_MODES} — masterModeLabel must learn the "
+        "new value, or the dashboard will render it as its raw upper-cased string")
+
+
+def test_the_master_label_survives_case_and_whitespace(badge):
+    """The value is a JSON string from the server and is hand-editable in the
+    settings table. ' Live ' falling through to the raw-value branch would show
+    a button reading " LIVE " with quotes' worth of stray space — cosmetic, but
+    it also means `masterModeIsLive` and the label would be deciding on
+    different inputs, and only one of them controls the red."""
+    for variant in [" live ", "LIVE", "Live"]:
+        assert badge([variant])[0]["master"] == "LIVE", variant
+
+
+def test_only_live_is_flagged_as_real_money(badge):
+    """The flag that paints the button red. If it stops firing, the master
+    switch's most consequential control looks exactly like the other three —
+    which is the state Werner was looking at when he asked about this."""
+    got = {m: b["masterIsLive"] for m, b in zip(
+        ["off", "shadow", "paper", "live"], badge(["off", "shadow", "paper", "live"]))}
+    assert got == {"off": False, "shadow": False, "paper": False, "live": True}, got
+    assert badge([" LIVE "])[0]["masterIsLive"] is True
